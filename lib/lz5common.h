@@ -312,11 +312,15 @@ static const LZ5HC_parameters LZ5HC_defaultParameters[LZ5HC_MAX_CLEVEL+1] =
     { MAXD_LOG,   MAXD_LOG, 19, 16,     1,  4,     0,  0, LZ5HC_lowest_price     }, // level 8
     { MAXD_LOG,   MAXD_LOG, 23, 16,     3,  4,     0,  0, LZ5HC_lowest_price     }, // level 9
     { MAXD_LOG,   MAXD_LOG, 23, 16,     8,  4,     0,  0, LZ5HC_lowest_price     }, // level 10
-    { MAXD_LOG,   MAXD_LOG, 23, 16,     8,  4,    12,  0, LZ5HC_optimal_price    }, // level 11
-    { MAXD_LOG,   MAXD_LOG, 23, 16,     8,  4,    64,  0, LZ5HC_optimal_price    }, // level 12
-    { MAXD_LOG, MAXD_LOG+1, 23, 16,     8,  4,    64,  1, LZ5HC_optimal_price_bt }, // level 13
-    { MAXD_LOG, MAXD_LOG+1, 23, 16,   128,  4,    64,  1, LZ5HC_optimal_price_bt }, // level 14
-    { MAXD_LOG, MAXD_LOG+1, 23, 16, 1<<10,  4, 1<<10,  1, LZ5HC_optimal_price_bt }, // level 15 (EXPERIMENT: hashLog 28->23, hashLog3 24->16)
+    { MAXD_LOG, MAXD_LOG+1, 23, 16,    16,  4,    32,  0, LZ5HC_optimal_price    }, // level 11
+    { MAXD_LOG, MAXD_LOG+1, 23, 16,    32,  4,    32,  0, LZ5HC_optimal_price    }, // level 12
+    { MAXD_LOG, MAXD_LOG+1, 23, 16,    64,  4,    32,  1, LZ5HC_optimal_price    }, // level 13
+    { MAXD_LOG, MAXD_LOG+1, 23, 16,   128,  4,    32,  1, LZ5HC_optimal_price    }, // level 14
+    { MAXD_LOG, MAXD_LOG+1, 23, 16,   256,  4,    32,  1, LZ5HC_optimal_price    }, // level 15
+    // Recalibrated 2026-06: sufficientLength sweet-spot is ~32 (higher HURTS ratio, against
+    // the old comment); optimal_price beats optimal_price_bt on ratio at every searchNum on
+    // both test corpora, so the BT strategy is no longer used by default. searchNum now scales
+    // the ladder monotonically. Old top end was non-monotonic (L12 beat L13/14/15).
 //  {       10,         10, 10,  0,     0,  4,     0,  0, LZ5HC_fast          }, // min values
 //  {       24,         24, 28, 24, 1<<24,  7, 1<<24,  2, LZ5HC_optimal_price }, // max values
 };

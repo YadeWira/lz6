@@ -33,3 +33,6 @@ visual/
 
 # Visual Studio files
 projects/VS2010
+programs/lz5
+lib/*.o
+programs/*.o
