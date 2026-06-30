@@ -935,13 +935,18 @@ FORCE_INLINE int LZ5HC_encodeSequence (
     int length;
     BYTE* token;
 
+    /* repeat-offset: reuse last offset via the 1-byte (flag 011) codeword, no offset bytes.
+       Two callers signal a rep differently: the optimal parser passes off==0 (match==ip),
+       the lowest_price parser passes the actual offset which equals last_off. Both => rep. */
+    const int isRep = ((U32)(*ip - match) == 0) || ((U32)(*ip - match) == ctx->last_off);
+
     /* Encode Literal length */
     length = (int)(*ip - *anchor);
     token = (*op)++;
 
     if ((limitedOutputBuffer) && ((*op + (length>>8) + length + (2 + 1 + LASTLITERALS)) > oend)) return 1;   /* Check output limit */
 
-    if (*ip-match >= LZ5_SHORT_OFFSET_DISTANCE && *ip-match < LZ5_MID_OFFSET_DISTANCE && (U32)(*ip-match) != 0)
+    if (!isRep && *ip-match >= LZ5_SHORT_OFFSET_DISTANCE && *ip-match < LZ5_MID_OFFSET_DISTANCE)
     {
         if (length>=(int)RUN_MASK) { int len; *token=(RUN_MASK<<ML_BITS); len = length-RUN_MASK; for(; len > 254 ; len-=255) *(*op)++ = 255;  *(*op)++ = (BYTE)len; }
         else *token = (BYTE)(length<<ML_BITS);
@@ -958,7 +963,7 @@ FORCE_INLINE int LZ5HC_encodeSequence (
     *op += length;
 
     /* Encode Offset */
-    if ((U32)(*ip-match) == 0)
+    if (isRep)
     {
         *token+=(3<<ML_RUN_BITS2);
     }
