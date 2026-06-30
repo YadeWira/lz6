@@ -1,5 +1,5 @@
 # ##########################################################################
-# LZ5 programs - Makefile
+# LZ6 programs - Makefile
 # Copyright (C) Yann Collet 2011-2015
 #
 # GPL v2 License
@@ -19,28 +19,28 @@
 # 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
 #
 # You can contact the author at :
-#  - LZ5 source repository : https://github.com/inikep/lz5
-#  - LZ5 public forum : https://groups.google.com/forum/#!forum/lz5c
+#  - LZ6 source repository : https://github.com/inikep/lz6
+#  - LZ6 public forum : https://groups.google.com/forum/#!forum/lz6c
 # ##########################################################################
-# lz5 : Command Line Utility, supporting gzip-like arguments
-# lz5_32: Same as lz5, but forced to compile in 32-bits mode
-# frametest  : Test tool, to check lz5frame integrity on target platform
+# lz6 : Command Line Utility, supporting gzip-like arguments
+# lz6_32: Same as lz6, but forced to compile in 32-bits mode
+# frametest  : Test tool, to check lz6frame integrity on target platform
 # frametest32: Same as frametest, but forced to compile in 32-bits mode
-# fullbench  : Precisely measure speed for each LZ5 function variant
+# fullbench  : Precisely measure speed for each LZ6 function variant
 # fullbench32: Same as fullbench, but forced to compile in 32-bits mode
 # datagen : generates synthetic data samples for tests & benchmarks
 # ##########################################################################
 
 BINDIR  := $(PREFIX)/bin
 MANDIR  := $(PREFIX)/share/man/man1
-LZ5DIR  := ../lib
+LZ6DIR  := ../lib
 
 DESTDIR  ?=
 PREFIX   ?= /usr/local
 CFLAGS   ?= -O3 -std=gnu99    # can select customized optimized flags such as for example: make CFLAGS="-g"
 FFLAGS   ?= -fomit-frame-pointer -fstrict-aliasing -fforce-addr -ffast-math
 WFLAGS   ?= -Wall -Wextra -Wundef -Wshadow -Wcast-align -Wcast-qual -Wstrict-prototypes -pedantic -Wno-variadic-macros
-CPPFLAGS := -I$(LZ5DIR) -DXXH_NAMESPACE=LZ5_ 
+CPPFLAGS := -I$(LZ6DIR) -DXXH_NAMESPACE=LZ6_ 
 FLAGS    := $(CFLAGS) $(CPPFLAGS) $(WFLAGS) $(LDFLAGS) $(MOREFLAGS)
 
 
@@ -59,30 +59,30 @@ TEST_FILES   := COPYING
 FUZZER_TIME  := -T9mn
 
 
-default: lz5
+default: lz6
 
-m32: lz5_32 fullbench32 frametest32
+m32: lz6_32 fullbench32 frametest32
 
-bins: lz5 fullbench frametest datagen
+bins: lz6 fullbench frametest datagen
 
 all: bins m32
 
-lz5: $(LZ5DIR)/lz5.o $(LZ5DIR)/lz5hc.o $(LZ5DIR)/lz5frame.o $(LZ5DIR)/xxhash.o bench.o lz5io.o lz5cli.o
+lz6: $(LZ6DIR)/lz6.o $(LZ6DIR)/lz6hc.o $(LZ6DIR)/lz6frame.o $(LZ6DIR)/xxhash.o bench.o lz6io.o lz6cli.o
 	$(CC) $(FLAGS) $^ -o $@$(EXT)
 
-lz5_32: $(LZ5DIR)/lz5.c $(LZ5DIR)/lz5hc.c $(LZ5DIR)/lz5frame.c $(LZ5DIR)/xxhash.c bench.c lz5io.c lz5cli.c
+lz6_32: $(LZ6DIR)/lz6.c $(LZ6DIR)/lz6hc.c $(LZ6DIR)/lz6frame.c $(LZ6DIR)/xxhash.c bench.c lz6io.c lz6cli.c
 	$(CC) -m32 $(FLAGS) $^ -o $@$(EXT)
 
-fullbench: $(LZ5DIR)/lz5.o $(LZ5DIR)/lz5hc.o $(LZ5DIR)/lz5frame.o $(LZ5DIR)/xxhash.o fullbench.o
+fullbench: $(LZ6DIR)/lz6.o $(LZ6DIR)/lz6hc.o $(LZ6DIR)/lz6frame.o $(LZ6DIR)/xxhash.o fullbench.o
 	$(CC) $(FLAGS) $^ -o $@$(EXT)
 
-fullbench32: $(LZ5DIR)/lz5.c $(LZ5DIR)/lz5hc.c $(LZ5DIR)/lz5frame.c $(LZ5DIR)/xxhash.c fullbench.c
+fullbench32: $(LZ6DIR)/lz6.c $(LZ6DIR)/lz6hc.c $(LZ6DIR)/lz6frame.c $(LZ6DIR)/xxhash.c fullbench.c
 	$(CC) -m32 $(FLAGS) $^ -o $@$(EXT)
 
-frametest: $(LZ5DIR)/lz5frame.o $(LZ5DIR)/lz5.o $(LZ5DIR)/lz5hc.o $(LZ5DIR)/xxhash.o frametest.c
+frametest: $(LZ6DIR)/lz6frame.o $(LZ6DIR)/lz6.o $(LZ6DIR)/lz6hc.o $(LZ6DIR)/xxhash.o frametest.c
 	$(CC) $(FLAGS) $^ -o $@$(EXT)
 
-frametest32: $(LZ5DIR)/lz5frame.c $(LZ5DIR)/lz5.c $(LZ5DIR)/lz5hc.c $(LZ5DIR)/xxhash.c frametest.c
+frametest32: $(LZ6DIR)/lz6frame.c $(LZ6DIR)/lz6.c $(LZ6DIR)/lz6hc.c $(LZ6DIR)/xxhash.c frametest.c
 	$(CC) -m32 $(FLAGS) $^ -o $@$(EXT)
 
 datagen : datagen.o datagencli.c
@@ -92,9 +92,9 @@ datagen : datagen.o datagencli.c
 	$(CC) $(FLAGS) $< -c -o $@
 
 clean:
-	@$(MAKE) -C $(LZ5DIR) $@
+	@$(MAKE) -C $(LZ6DIR) $@
 	@rm -f core *.o *.test tmp* \
-        lz5$(EXT) lz5_32$(EXT) \
+        lz6$(EXT) lz6_32$(EXT) \
         fullbench$(EXT) fullbench32$(EXT) \
         frametest$(EXT) frametest32$(EXT) \
         datagen$(EXT)
@@ -105,144 +105,144 @@ clean:
 #make install is validated only for Linux, OSX, kFreeBSD and Hurd targets
 ifneq (,$(filter $(shell uname),Linux Darwin GNU/kFreeBSD GNU MSYS_NT-10.0))
 
-install: lz5 
+install: lz6 
 	@echo Installing binaries
 	@install -d -m 755 $(DESTDIR)$(BINDIR)/ $(DESTDIR)$(MANDIR)/
-	@install -m 755 lz5 $(DESTDIR)$(BINDIR)/lz5
-	@ln -sf lz5 $(DESTDIR)$(BINDIR)/lz5cat
-	@ln -sf lz5 $(DESTDIR)$(BINDIR)/unlz5
+	@install -m 755 lz6 $(DESTDIR)$(BINDIR)/lz6
+	@ln -sf lz6 $(DESTDIR)$(BINDIR)/lz6cat
+	@ln -sf lz6 $(DESTDIR)$(BINDIR)/unlz6
 	@echo Installing man pages
-	@install -m 644 lz5.1 $(DESTDIR)$(MANDIR)/lz5.1
-	@ln -sf lz5.1 $(DESTDIR)$(MANDIR)/lz5cat.1
-	@ln -sf lz5.1 $(DESTDIR)$(MANDIR)/unlz5.1
-	@echo lz5 installation completed
+	@install -m 644 lz6.1 $(DESTDIR)$(MANDIR)/lz6.1
+	@ln -sf lz6.1 $(DESTDIR)$(MANDIR)/lz6cat.1
+	@ln -sf lz6.1 $(DESTDIR)$(MANDIR)/unlz6.1
+	@echo lz6 installation completed
 
 uninstall:
-	rm -f $(DESTDIR)$(BINDIR)/lz5cat
-	rm -f $(DESTDIR)$(BINDIR)/unlz5
-	[ -x $(DESTDIR)$(BINDIR)/lz5 ] && rm -f $(DESTDIR)$(BINDIR)/lz5
-	[ -f $(DESTDIR)$(MANDIR)/lz5.1 ] && rm -f $(DESTDIR)$(MANDIR)/lz5.1
-	rm -f $(DESTDIR)$(MANDIR)/lz5cat.1
-	rm -f $(DESTDIR)$(MANDIR)/unlz5.1
-	@echo lz5 programs successfully uninstalled
+	rm -f $(DESTDIR)$(BINDIR)/lz6cat
+	rm -f $(DESTDIR)$(BINDIR)/unlz6
+	[ -x $(DESTDIR)$(BINDIR)/lz6 ] && rm -f $(DESTDIR)$(BINDIR)/lz6
+	[ -f $(DESTDIR)$(MANDIR)/lz6.1 ] && rm -f $(DESTDIR)$(MANDIR)/lz6.1
+	rm -f $(DESTDIR)$(MANDIR)/lz6cat.1
+	rm -f $(DESTDIR)$(MANDIR)/unlz6.1
+	@echo lz6 programs successfully uninstalled
 
-test: test-lz5 test-frametest test-fullbench test-mem
+test: test-lz6 test-frametest test-fullbench test-mem
 
-test32: test-lz5_32 test-frametest32 test-fullbench32 test-mem32
+test32: test-lz6_32 test-frametest32 test-fullbench32 test-mem32
 
 test-all: test test32
 
-test-lz5-sparse: lz5 datagen
+test-lz6-sparse: lz6 datagen
 	@echo "\n ---- test sparse file support ----"
 	./datagen -g5M  -P100 > tmpSrc
-	./lz5 -B4 tmpSrc | ./lz5 -dv --sparse > tmpB4
+	./lz6 -B4 tmpSrc | ./lz6 -dv --sparse > tmpB4
 	diff -s tmpSrc tmpB4
-	./lz5 -B5 tmpSrc | ./lz5 -dv --sparse > tmpB5
+	./lz6 -B5 tmpSrc | ./lz6 -dv --sparse > tmpB5
 	diff -s tmpSrc tmpB5
-	./lz5 -B6 tmpSrc | ./lz5 -dv --sparse > tmpB6
+	./lz6 -B6 tmpSrc | ./lz6 -dv --sparse > tmpB6
 	diff -s tmpSrc tmpB6
-	./lz5 -B7 tmpSrc | ./lz5 -dv --sparse > tmpB7
+	./lz6 -B7 tmpSrc | ./lz6 -dv --sparse > tmpB7
 	diff -s tmpSrc tmpB7
-	./lz5 tmpSrc | ./lz5 -dv --no-sparse > tmpNoSparse
+	./lz6 tmpSrc | ./lz6 -dv --no-sparse > tmpNoSparse
 	diff -s tmpSrc tmpNoSparse
 	ls -ls tmp*
-	./datagen -s1 -g1200007 -P100 | ./lz5 | ./lz5 -dv --sparse > tmpOdd   # Odd size file (to generate non-full last block)
+	./datagen -s1 -g1200007 -P100 | ./lz6 | ./lz6 -dv --sparse > tmpOdd   # Odd size file (to generate non-full last block)
 	./datagen -s1 -g1200007 -P100 | diff -s - tmpOdd
 	ls -ls tmpOdd
 	@rm tmp*
 	@echo "\n Compatibility with Console :"
-	echo "Hello World 1 !" | ./lz5 | ./lz5 -d -c
-	echo "Hello World 2 !" | ./lz5 | ./lz5 -d | cat
-	echo "Hello World 3 !" | ./lz5 --no-frame-crc | ./lz5 -d -c
+	echo "Hello World 1 !" | ./lz6 | ./lz6 -d -c
+	echo "Hello World 2 !" | ./lz6 | ./lz6 -d | cat
+	echo "Hello World 3 !" | ./lz6 --no-frame-crc | ./lz6 -d -c
 	@echo "\n Compatibility with Append :"
 	./datagen -P100 -g1M > tmp1M
 	cat tmp1M tmp1M > tmp2M
-	./lz5 -B5 -v tmp1M tmpC
-	./lz5 -d -v tmpC tmpR
-	./lz5 -d -v tmpC >> tmpR
+	./lz6 -B5 -v tmp1M tmpC
+	./lz6 -d -v tmpC tmpR
+	./lz6 -d -v tmpC >> tmpR
 	ls -ls tmp*
 	diff tmp2M tmpR
 	@rm tmp*
 
-test-lz5-contentSize: lz5 datagen
+test-lz6-contentSize: lz6 datagen
 	@echo "\n ---- test original size support ----"
 	./datagen -g15M > tmp
-	./lz5 -v tmp | ./lz5 -t
-	./lz5 -v --content-size tmp | ./lz5 -d > tmp2
+	./lz6 -v tmp | ./lz6 -t
+	./lz6 -v --content-size tmp | ./lz6 -d > tmp2
 	diff -s tmp tmp2
 	# test large size [2-4] GB
-	@./datagen -g3G -P100 | ./lz5 | ./lz5 --decompress --force --sparse - tmp
+	@./datagen -g3G -P100 | ./lz6 | ./lz6 --decompress --force --sparse - tmp
 	@ls -ls tmp
-	./lz5 --quiet --content-size tmp | ./lz5 --verbose --decompress --force --sparse - tmp2
+	./lz6 --quiet --content-size tmp | ./lz6 --verbose --decompress --force --sparse - tmp2
 	@ls -ls tmp2
 	@rm tmp*
 
-test-lz5-frame-concatenation: lz5 datagen
+test-lz6-frame-concatenation: lz6 datagen
 	@echo "\n ---- test frame concatenation ----"
 	@echo -n > empty.test
 	@echo hi > nonempty.test
 	cat nonempty.test empty.test nonempty.test > orig.test
-	@./lz5 -zq empty.test > empty.lz5.test
-	@./lz5 -zq nonempty.test > nonempty.lz5.test
-	cat nonempty.lz5.test empty.lz5.test nonempty.lz5.test > concat.lz5.test
-	./lz5 -d concat.lz5.test > result.test
+	@./lz6 -zq empty.test > empty.lz6.test
+	@./lz6 -zq nonempty.test > nonempty.lz6.test
+	cat nonempty.lz6.test empty.lz6.test nonempty.lz6.test > concat.lz6.test
+	./lz6 -d concat.lz6.test > result.test
 	sdiff orig.test result.test
 	@rm *.test
 	@echo frame concatenation test completed
 
-test-lz5-multiple: lz5 datagen
+test-lz6-multiple: lz6 datagen
 	@echo "\n ---- test multiple files ----"
 	@./datagen -s1        > tmp1 2> $(VOID)
 	@./datagen -s2 -g100K > tmp2 2> $(VOID)
 	@./datagen -s3 -g1M   > tmp3 2> $(VOID)
-	./lz5 -f -m tmp*
+	./lz6 -f -m tmp*
 	ls -ls tmp*
 	rm tmp1 tmp2 tmp3
-	./lz5 -df -m *.lz5
+	./lz6 -df -m *.lz6
 	ls -ls tmp*
-	./lz5 -f -m tmp1 notHere tmp2; echo $$?
+	./lz6 -f -m tmp1 notHere tmp2; echo $$?
 	@rm tmp*
 
-test-lz5-basic: lz5 datagen
-	@echo "\n ---- test lz5 basic compression/decompression ----"
-	./datagen -g0     | ./lz5 -v     | ./lz5 -t
-	./datagen -g16KB  | ./lz5 -9     | ./lz5 -t
+test-lz6-basic: lz6 datagen
+	@echo "\n ---- test lz6 basic compression/decompression ----"
+	./datagen -g0     | ./lz6 -v     | ./lz6 -t
+	./datagen -g16KB  | ./lz6 -9     | ./lz6 -t
 	./datagen -g20KB > tmpSrc
-	./lz5 < tmpSrc | ./lz5 -d > tmpRes
+	./lz6 < tmpSrc | ./lz6 -d > tmpRes
 	diff -q tmpSrc tmpRes
-	./lz5 --no-frame-crc < tmpSrc | ./lz5 -d > tmpRes
+	./lz6 --no-frame-crc < tmpSrc | ./lz6 -d > tmpRes
 	diff -q tmpSrc tmpRes
-	./datagen         | ./lz5        | ./lz5 -t
-	./datagen -g6M -P99 | ./lz5 -9B | ./lz5 -t
-	./datagen -g17M   | ./lz5 -9v    | ./lz5 -qt
-	./datagen -g33M   | ./lz5 --no-frame-crc | ./lz5 -t
-	./datagen -g256MB | ./lz5 -vqB4 | ./lz5 -t
-	./datagen -g6GB   | ./lz5 -vqB5 | ./lz5 -qt
-	./datagen -g6GB   | ./lz5 -vq9B | ./lz5 -qt
+	./datagen         | ./lz6        | ./lz6 -t
+	./datagen -g6M -P99 | ./lz6 -9B | ./lz6 -t
+	./datagen -g17M   | ./lz6 -9v    | ./lz6 -qt
+	./datagen -g33M   | ./lz6 --no-frame-crc | ./lz6 -t
+	./datagen -g256MB | ./lz6 -vqB4 | ./lz6 -t
+	./datagen -g6GB   | ./lz6 -vqB5 | ./lz6 -qt
+	./datagen -g6GB   | ./lz6 -vq9B | ./lz6 -qt
 	@rm tmp*
 
-test-lz5: lz5 datagen test-lz5-basic test-lz5-multiple test-lz5-sparse test-lz5-contentSize test-lz5-frame-concatenation
+test-lz6: lz6 datagen test-lz6-basic test-lz6-multiple test-lz6-sparse test-lz6-contentSize test-lz6-frame-concatenation
 	@echo "\n ---- test pass-through ----"
-	./datagen | ./lz5 -tf
+	./datagen | ./lz6 -tf
 
-test-interop-32-64: lz5 lz5_32 datagen
+test-interop-32-64: lz6 lz6_32 datagen
 	@echo "\n ---- test interoperability 32-bits -vs- 64 bits ----"
-	./datagen -g16KB  | ./lz5_32 -9     | ./lz5    -t
-	./datagen -P10    | ./lz5    -9B4   | ./lz5_32 -t
-	./datagen         | ./lz5_32        | ./lz5    -t
-	./datagen -g1M    | ./lz5    -3B5   | ./lz5_32 -t
-	./datagen -g256MB | ./lz5_32 -vqB4  | ./lz5    -qt
-	./datagen -g1G -P90 | ./lz5         | ./lz5_32 -t
-	./datagen -g6GB   | ./lz5_32 -vq9B  | ./lz5    -qt
+	./datagen -g16KB  | ./lz6_32 -9     | ./lz6    -t
+	./datagen -P10    | ./lz6    -9B4   | ./lz6_32 -t
+	./datagen         | ./lz6_32        | ./lz6    -t
+	./datagen -g1M    | ./lz6    -3B5   | ./lz6_32 -t
+	./datagen -g256MB | ./lz6_32 -vqB4  | ./lz6    -qt
+	./datagen -g1G -P90 | ./lz6         | ./lz6_32 -t
+	./datagen -g6GB   | ./lz6_32 -vq9B  | ./lz6    -qt
 
-test-lz5_32-basic: lz5_32 datagen
-	@echo "\n ---- test lz5_32 32-bits version ----"
-	./datagen -g16KB  | ./lz5_32 -9     | ./lz5_32 -t
-	./datagen         | ./lz5_32        | ./lz5_32 -t
-	./datagen -g256MB | ./lz5_32 -vqB4  | ./lz5_32 -qt
-	./datagen -g6GB   | ./lz5_32 -vqB5  | ./lz5_32 -qt
+test-lz6_32-basic: lz6_32 datagen
+	@echo "\n ---- test lz6_32 32-bits version ----"
+	./datagen -g16KB  | ./lz6_32 -9     | ./lz6_32 -t
+	./datagen         | ./lz6_32        | ./lz6_32 -t
+	./datagen -g256MB | ./lz6_32 -vqB4  | ./lz6_32 -qt
+	./datagen -g6GB   | ./lz6_32 -vqB5  | ./lz6_32 -qt
 
-test-lz5_32: test-lz5_32-basic test-interop-32-64
+test-lz6_32: test-lz6_32-basic test-interop-32-64
 
 test-fullbench: fullbench
 	./fullbench --no-prompt $(NB_LOOPS) $(TEST_FILES)
@@ -266,25 +266,25 @@ test-frametest: frametest
 test-frametest32: frametest32
 	./frametest32 $(FUZZER_TIME)
 
-test-mem: lz5 datagen frametest fullbench
+test-mem: lz6 datagen frametest fullbench
 	@echo "\n ---- valgrind tests : memory analyzer ----"
 	valgrind --leak-check=yes --error-exitcode=1 ./datagen -g50M > $(VOID)
 	./datagen -g16KB > tmp
-	valgrind --leak-check=yes --error-exitcode=1 ./lz5 -9 -B -f tmp $(VOID)
+	valgrind --leak-check=yes --error-exitcode=1 ./lz6 -9 -B -f tmp $(VOID)
 	./datagen -g16KB -s2 > tmp2
 	./datagen -g16KB -s3 > tmp3
-	valgrind --leak-check=yes --error-exitcode=1 ./lz5 --force --multiple tmp tmp2 tmp3
+	valgrind --leak-check=yes --error-exitcode=1 ./lz6 --force --multiple tmp tmp2 tmp3
 	./datagen -g16MB > tmp
-	valgrind --leak-check=yes --error-exitcode=1 ./lz5 -9 -B5 -f tmp tmp2
-	valgrind --leak-check=yes --error-exitcode=1 ./lz5 -t tmp2
-	valgrind --leak-check=yes --error-exitcode=1 ./lz5 -bi1 tmp
+	valgrind --leak-check=yes --error-exitcode=1 ./lz6 -9 -B5 -f tmp tmp2
+	valgrind --leak-check=yes --error-exitcode=1 ./lz6 -t tmp2
+	valgrind --leak-check=yes --error-exitcode=1 ./lz6 -bi1 tmp
 	valgrind --leak-check=yes --error-exitcode=1 ./fullbench -i1 tmp tmp2
 	./datagen -g256MB > tmp
-	valgrind --leak-check=yes --error-exitcode=1 ./lz5 -B4 -f -vq tmp $(VOID)
+	valgrind --leak-check=yes --error-exitcode=1 ./lz6 -B4 -f -vq tmp $(VOID)
 	rm tmp*
 	valgrind --leak-check=yes --error-exitcode=1 ./frametest -i256
 
-test-mem32: lz5_32 datagen
+test-mem32: lz6_32 datagen
 # unfortunately, valgrind doesn't seem to work with non-native binary...
 
 endif

@@ -1,16 +1,16 @@
-LZ5 Block Format Description
+LZ6 Block Format Description
 ============================
 Last revised: 2016-01-22
 Authors : Yann Collet, Przemyslaw Skibinski
 
 
 This specification is intended for developers
-willing to produce LZ5-compatible compressed data blocks
+willing to produce LZ6-compatible compressed data blocks
 using any programming language.
 
-LZ5 is an LZ77-type compressor with a fixed, byte-oriented encoding.
+LZ6 is an LZ77-type compressor with a fixed, byte-oriented encoding.
 There is no entropy encoder back-end nor framing layer.
-The latter is assumed to be handled by other parts of the system (see [LZ5 Frame format]).
+The latter is assumed to be handled by other parts of the system (see [LZ6 Frame format]).
 This design is assumed to favor simplicity and speed.
 It helps later on for optimizations, compactness, and features.
 
@@ -19,24 +19,24 @@ not how the compressor nor decompressor actually work.
 The correctness of the decompressor should not depend
 on implementation details of the compressor, and vice versa.
 
-[LZ5 Frame format]: lz5_Frame_format.md
+[LZ6 Frame format]: lz6_Frame_format.md
 
 
 Compressed block format
 -----------------------
-An LZ5 compressed block is composed of sequences.
+An LZ6 compressed block is composed of sequences.
 A sequence is a suite of literals (not-compressed bytes),
 followed by a match copy.
 
 Each sequence starts with a token.
 The token is a one byte value. It is separated into flag (1, 00, 010, 011), literal length (LL, LLL) and match length (MMM) fields.
-LZ5 uses 4 types of codewords from 1 to 4+ bytes long:
+LZ6 uses 4 types of codewords from 1 to 4+ bytes long:
 - [1_OO_LL_MMM] [OOOOOOOO] - 10-bit offset, 3-bit match length, 2-bit literal length
 - [00_LLL_MMM] [OOOOOOOO] [OOOOOOOO] - 16-bit offset, 3-bit match length, 3-bit literal length
 - [010_LL_MMM] [OOOOOOOO] [OOOOOOOO] [OOOOOOOO] - 24-bit offset, 3-bit match length, 2-bit literal length
 - [011_LL_MMM] - last offset, 3-bit match length, 2-bit literal length
 
-LZ5 uses different output codewords and is not compatible with LZ4. LZ4 output codewords are 3 byte long (24-bit) and look as follows:
+LZ6 uses different output codewords and is not compatible with LZ4. LZ4 output codewords are 3 byte long (24-bit) and look as follows:
 - LLLL_MMMM OOOOOOOO OOOOOOOO - 16-bit offset, 4-bit match length, 4-bit literal length 
 
 The flag field (1, 00, 010, 011) selects the format of a codeword: the lenght of the literal length field and the length of offset.
@@ -133,4 +133,4 @@ or full optimal parsing.
 
 All these trade-off offer distinctive speed/memory/compression advantages.
 Whatever the method used by the compressor, its result will be decodable
-by any LZ5 decoder if it follows the format specification described above.
+by any LZ6 decoder if it follows the format specification described above.

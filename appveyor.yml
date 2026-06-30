@@ -14,13 +14,13 @@ environment:
     CONFIGURATION: "Release"
     PLATFORM: "Win32"
   - COMPILER: "gcc"
-    MAKE_PARAMS: "-C programs lz5 fullbench"
+    MAKE_PARAMS: "-C programs lz6 fullbench"
     PLATFORM: "mingw64"
   - COMPILER: "gcc"
-    MAKE_PARAMS: "-C programs lz5 fullbench"
+    MAKE_PARAMS: "-C programs lz6 fullbench"
     PLATFORM: "mingw32"
   - COMPILER: "gcc"
-    MAKE_PARAMS: '-C programs lz5 fullbench CC=clang MOREFLAGS="--target=x86_64-w64-mingw32 -Werror -Wconversion -Wno-sign-conversion"'
+    MAKE_PARAMS: '-C programs lz6 fullbench CC=clang MOREFLAGS="--target=x86_64-w64-mingw32 -Werror -Wconversion -Wno-sign-conversion"'
     PLATFORM: "clang"
 
 install:
@@ -54,19 +54,19 @@ build_script:
       ECHO *** &&
       ECHO *** Building Visual Studio 2010 %PLATFORM%\%CONFIGURATION% &&
       ECHO *** &&
-      msbuild "projects\VS2010\lz5.sln" %ADDITIONALPARAM% /m /verbosity:minimal /property:PlatformToolset=v100 /t:Clean,Build /p:Platform=%PLATFORM% /p:Configuration=%CONFIGURATION% /logger:"C:\Program Files\AppVeyor\BuildAgent\Appveyor.MSBuildLogger.dll" &&
+      msbuild "projects\VS2010\lz6.sln" %ADDITIONALPARAM% /m /verbosity:minimal /property:PlatformToolset=v100 /t:Clean,Build /p:Platform=%PLATFORM% /p:Configuration=%CONFIGURATION% /logger:"C:\Program Files\AppVeyor\BuildAgent\Appveyor.MSBuildLogger.dll" &&
       ECHO *** &&
       ECHO *** Building Visual Studio 2012 %PLATFORM%\%CONFIGURATION% &&
       ECHO *** &&
-      msbuild "projects\VS2010\lz5.sln" /m /verbosity:minimal /property:PlatformToolset=v110 /t:Clean,Build /p:Platform=%PLATFORM% /p:Configuration=%CONFIGURATION% /logger:"C:\Program Files\AppVeyor\BuildAgent\Appveyor.MSBuildLogger.dll" &&
+      msbuild "projects\VS2010\lz6.sln" /m /verbosity:minimal /property:PlatformToolset=v110 /t:Clean,Build /p:Platform=%PLATFORM% /p:Configuration=%CONFIGURATION% /logger:"C:\Program Files\AppVeyor\BuildAgent\Appveyor.MSBuildLogger.dll" &&
       ECHO *** &&
       ECHO *** Building Visual Studio 2013 %PLATFORM%\%CONFIGURATION% &&
       ECHO *** &&
-      msbuild "projects\VS2010\lz5.sln" /m /verbosity:minimal /property:PlatformToolset=v120 /t:Clean,Build /p:Platform=%PLATFORM% /p:Configuration=%CONFIGURATION% /logger:"C:\Program Files\AppVeyor\BuildAgent\Appveyor.MSBuildLogger.dll" &&
+      msbuild "projects\VS2010\lz6.sln" /m /verbosity:minimal /property:PlatformToolset=v120 /t:Clean,Build /p:Platform=%PLATFORM% /p:Configuration=%CONFIGURATION% /logger:"C:\Program Files\AppVeyor\BuildAgent\Appveyor.MSBuildLogger.dll" &&
       ECHO *** &&
       ECHO *** Building Visual Studio 2015 %PLATFORM%\%CONFIGURATION% &&
       ECHO *** &&
-      msbuild "projects\VS2010\lz5.sln" /m /verbosity:minimal /property:PlatformToolset=v140 /t:Clean,Build /p:Platform=%PLATFORM% /p:Configuration=%CONFIGURATION% /logger:"C:\Program Files\AppVeyor\BuildAgent\Appveyor.MSBuildLogger.dll" &&
+      msbuild "projects\VS2010\lz6.sln" /m /verbosity:minimal /property:PlatformToolset=v140 /t:Clean,Build /p:Platform=%PLATFORM% /p:Configuration=%CONFIGURATION% /logger:"C:\Program Files\AppVeyor\BuildAgent\Appveyor.MSBuildLogger.dll" &&
       COPY projects\VS2010\bin\%PLATFORM%\%CONFIGURATION%\*.exe programs\
     )
 
@@ -76,11 +76,11 @@ test_script:
       ECHO ***
   - if not [%COMPILER%]==[unknown] (
       CD programs &&
-      lz5 -h &&
-      lz5 -i1b lz5.exe && 
-      lz5 -i1b5 lz5.exe &&
-      lz5 -i1b10 lz5.exe &&
-      lz5 -i1b15 lz5.exe &&
-      echo lz5 tested && 
+      lz6 -h &&
+      lz6 -i1b lz6.exe && 
+      lz6 -i1b5 lz6.exe &&
+      lz6 -i1b10 lz6.exe &&
+      lz6 -i1b15 lz6.exe &&
+      echo lz6 tested && 
       fullbench.exe -i1 fullbench.exe
     )

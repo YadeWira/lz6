@@ -21,7 +21,7 @@
 
     You can contact the author at :
    - ZSTD source repository : https://github.com/Cyan4973/zstd
-   - Public forum : https://groups.google.com/forum/#!forum/lz5c
+   - Public forum : https://groups.google.com/forum/#!forum/lz6c
 */
 
 /**************************************

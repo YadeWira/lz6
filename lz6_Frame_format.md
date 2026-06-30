@@ -1,4 +1,4 @@
-LZ5 Frame Format Description
+LZ6 Frame Format Description
 ============================
 
 ###Notices
@@ -28,13 +28,13 @@ The purpose of this document is to define a lossless compressed data format,
 that is independent of CPU type, operating system, 
 file system and character set, suitable for 
 File compression, Pipe and streaming compression 
-using the LZ5 algorithm.
+using the LZ6 algorithm.
 
 The data can be produced or consumed, 
 even for an arbitrarily long sequentially presented input data stream,
 using only an a priori bounded amount of intermediate storage,
 and hence can be used in data communications.
-The format uses the LZ5 compression method,
+The format uses the LZ6 compression method,
 and optional [xxHash-32 checksum method](https://github.com/Cyan4973/xxHash),
 for detection of data corruption.
 
@@ -42,7 +42,7 @@ The data format defined by this specification
 does not attempt to allow random access to compressed data.
 
 This specification is intended for use by implementers of software
-to compress data into LZ5 format and/or decompress data from LZ5 format.
+to compress data into LZ6 format and/or decompress data from LZ6 format.
 The text of the specification assumes a basic background in programming
 at the level of bits and other primitive data representations.
 
@@ -60,7 +60,7 @@ it must produce a non-ambiguous error code
 and associated error message explaining which parameter is unsupported.
 
 
-General Structure of LZ5 Frame format
+General Structure of LZ6 Frame format
 -------------------------------------
 
 | MagicNb | F. Descriptor | Block | (...) | EndMark | C. Checksum |
@@ -70,7 +70,7 @@ General Structure of LZ5 Frame format
 __Magic Number__
 
 4 Bytes, Little endian format.
-Value : 0x184D2205 (it was 0x184D2204 for LZ4)
+Value : 0x184D2206 (it was 0x184D2205 for LZ5, 0x184D2204 for LZ4)
 
 __Frame Descriptor__
 
@@ -113,7 +113,7 @@ The only relation between frames is their sequential order.
 The ability to decode multiple concatenated frames 
 within a single stream or file
 is left outside of this specification. 
-As an example, the reference lz5 command line utility behavior is
+As an example, the reference lz6 command line utility behavior is
 to decode all concatenated frames in their sequential order.
 
  
@@ -152,7 +152,7 @@ __Block Independence flag__
 
 If this flag is set to “1”, blocks are independent. 
 If this flag is set to “0” (CURRENTLY IT'S NOT SUPPORTED), each block depends on previous ones
-(up to LZ5 window size, which is 4 MB).
+(up to LZ6 window size, which is 4 MB).
 In such case, it’s necessary to decode all blocks in sequence.
 
 Block dependency improves compression ratio, especially for small blocks.
@@ -236,7 +236,7 @@ This field uses 4-bytes, format is little-endian.
 
 The highest bit is “1” if data in the block is uncompressed.
 
-The highest bit is “0” if data in the block is compressed by LZ5.
+The highest bit is “0” if data in the block is compressed by LZ6.
 
 All other bits give the size, in bytes, of the following data block
 (the size does not include the block checksum if present).
@@ -282,7 +282,7 @@ For the purpose of facilitating identification,
 it is discouraged to start a flow of concatenated frames with a skippable frame.
 If there is a need to start such a flow with some user data
 encapsulated into a skippable frame,
-it’s recommended to start with a zero-byte LZ5 frame
+it’s recommended to start with a zero-byte LZ6 frame
 followed by a skippable frame.
 This will make it easier for file type identifiers.
 

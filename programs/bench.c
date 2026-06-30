@@ -19,8 +19,8 @@
     51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
 
     You can contact the author at :
-    - LZ5 source repository : https://github.com/inikep/lz5
-    - LZ5 public forum : https://groups.google.com/forum/#!forum/lz5c
+    - LZ6 source repository : https://github.com/inikep/lz6
+    - LZ6 public forum : https://groups.google.com/forum/#!forum/lz6c
 */
 
 /**************************************
@@ -58,11 +58,11 @@
 #  include <sys/time.h>    /* gettimeofday */
 #endif
 
-#include "lz5.h"
-#define COMPRESSOR0 LZ5_compress_local
-static int LZ5_compress_local(const char* src, char* dst, int srcSize, int dstSize, int clevel) { (void)clevel; return LZ5_compress_default(src, dst, srcSize, dstSize); }
-#include "lz5hc.h"
-#define COMPRESSOR1 LZ5_compress_HC
+#include "lz6.h"
+#define COMPRESSOR0 LZ6_compress_local
+static int LZ6_compress_local(const char* src, char* dst, int srcSize, int dstSize, int clevel) { (void)clevel; return LZ6_compress_default(src, dst, srcSize, dstSize); }
+#include "lz6hc.h"
+#define COMPRESSOR1 LZ6_compress_HC
 #define DEFAULTCOMPRESSOR COMPRESSOR0
 
 #include "xxhash.h"
@@ -264,7 +264,7 @@ int BMK_benchFiles(const char** fileNamesTable, int nbFiles, int cLevel)
 #endif
   default : compP.compressionFunction = DEFAULTCOMPRESSOR;
   }
-  compP.decompressionFunction = LZ5_decompress_fast;
+  compP.decompressionFunction = LZ6_decompress_fast;
 
   /* Loop for each file */
   while (fileIdx<nbFiles)
@@ -300,7 +300,7 @@ int BMK_benchFiles(const char** fileNamesTable, int nbFiles, int cLevel)
       chunkP = (struct chunkParameters*) malloc(((benchedSize / (size_t)chunkSize)+1) * sizeof(struct chunkParameters));
       orig_buff = (char*)malloc((size_t)benchedSize);
       nbChunks = (int) ((int)benchedSize / chunkSize) + 1;
-      maxCompressedChunkSize = LZ5_compressBound(chunkSize);
+      maxCompressedChunkSize = LZ6_compressBound(chunkSize);
       compressedBuffSize = nbChunks * maxCompressedChunkSize;
       compressedBuffer = (char*)malloc((size_t)compressedBuffSize);
 
@@ -395,7 +395,7 @@ int BMK_benchFiles(const char** fileNamesTable, int nbFiles, int cLevel)
           while(BMK_GetMilliSpan(milliTime) < TIMELOOP)
           {
             for (chunkNb=0; chunkNb<nbChunks; chunkNb++)
-                chunkP[chunkNb].compressedSize = LZ5_decompress_fast(chunkP[chunkNb].compressedBuffer, chunkP[chunkNb].origBuffer, chunkP[chunkNb].origSize);
+                chunkP[chunkNb].compressedSize = LZ6_decompress_fast(chunkP[chunkNb].compressedBuffer, chunkP[chunkNb].origBuffer, chunkP[chunkNb].origSize);
             nbLoops++;
           }
           milliTime = BMK_GetMilliSpan(milliTime);

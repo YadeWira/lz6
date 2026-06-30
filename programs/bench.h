@@ -17,8 +17,8 @@
     51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
 
     You can contact the author at :
-    - LZ5 source repository : https://github.com/inikep/lz5
-    - LZ5 public forum : https://groups.google.com/forum/#!forum/lz5c
+    - LZ6 source repository : https://github.com/inikep/lz6
+    - LZ6 public forum : https://groups.google.com/forum/#!forum/lz6c
 */
 #pragma once
 

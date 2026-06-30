@@ -1,5 +1,5 @@
 # ################################################################
-# LZ5 - Makefile
+# LZ6 - Makefile
 # Copyright (C) Yann Collet 2011-2015
 # All rights reserved.
 # 
@@ -26,8 +26,8 @@
 # SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 # 
 # You can contact the author at :
-#  - LZ5 source repository : https://github.com/inikep/lz5
-#  - LZ5 forum froup : https://groups.google.com/forum/#!forum/lz5c
+#  - LZ6 source repository : https://github.com/inikep/lz6
+#  - LZ6 forum froup : https://groups.google.com/forum/#!forum/lz6c
 # ################################################################
 
 DESTDIR?=
@@ -36,7 +36,7 @@ PREFIX ?= /usr/local
 LIBDIR ?= $(PREFIX)/lib
 INCLUDEDIR=$(PREFIX)/include
 PRGDIR  = programs
-LZ5DIR  = lib
+LZ6DIR  = lib
 
 
 # Define nul output
@@ -47,21 +47,21 @@ VOID = /dev/null
 endif
 
 
-.PHONY: default all lib lz5programs clean test versionsTest examples
+.PHONY: default all lib lz6programs clean test versionsTest examples
 
-default: lz5programs
+default: lz6programs
 
-all: lib lz5programs
+all: lib lz6programs
 
 lib:
-	@$(MAKE) -C $(LZ5DIR) all
+	@$(MAKE) -C $(LZ6DIR) all
 
-lz5programs:
+lz6programs:
 	@$(MAKE) -C $(PRGDIR)
 
 clean:
 	@$(MAKE) -C $(PRGDIR) $@ > $(VOID)
-	@$(MAKE) -C $(LZ5DIR) $@ > $(VOID)
+	@$(MAKE) -C $(LZ6DIR) $@ > $(VOID)
 	@echo Cleaning completed
 
 
@@ -70,11 +70,11 @@ clean:
 ifneq (,$(filter $(shell uname),Linux Darwin GNU/kFreeBSD GNU))
 
 install:
-	@$(MAKE) -C $(LZ5DIR) $@
+	@$(MAKE) -C $(LZ6DIR) $@
 	@$(MAKE) -C $(PRGDIR) $@
 
 uninstall:
-	@$(MAKE) -C $(LZ5DIR) $@
+	@$(MAKE) -C $(LZ6DIR) $@
 	@$(MAKE) -C $(PRGDIR) $@
 
 test:
@@ -87,18 +87,18 @@ clangtest: clean
 	$(MAKE) all CC=clang MOREFLAGS="-Werror -Wconversion -Wno-sign-conversion"
 
 sanitize: clean
-	$(MAKE) test CC=clang MOREFLAGS="-g -fsanitize=undefined -DLZ5_RESET_MEM" FUZZER_TIME="-T1mn" NB_LOOPS=-i1
+	$(MAKE) test CC=clang MOREFLAGS="-g -fsanitize=undefined -DLZ6_RESET_MEM" FUZZER_TIME="-T1mn" NB_LOOPS=-i1
 
 staticAnalyze: clean
 	MOREFLAGS="-g" scan-build --status-bugs -v $(MAKE) all
 
 armtest: clean
-	$(MAKE) -C $(LZ5DIR) all CC=arm-linux-gnueabi-gcc MOREFLAGS="-Werror"
+	$(MAKE) -C $(LZ6DIR) all CC=arm-linux-gnueabi-gcc MOREFLAGS="-Werror"
 	$(MAKE) -C $(PRGDIR) bins CC=arm-linux-gnueabi-gcc MOREFLAGS="-Werror"
 
 examples:
-	$(MAKE) -C $(LZ5DIR)
-	$(MAKE) -C $(PRGDIR) lz5
+	$(MAKE) -C $(LZ6DIR)
+	$(MAKE) -C $(PRGDIR) lz6
 	$(MAKE) -C examples test
 
 endif

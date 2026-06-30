@@ -1,5 +1,5 @@
 /*
-  LZ5cli - LZ5 Command Line Interface
+  LZ6cli - LZ6 Command Line Interface
   Copyright (C) Yann Collet 2011-2015
 
   GPL v2 License
@@ -19,13 +19,13 @@
   51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
 
   You can contact the author at :
-  - LZ5 source repository : https://github.com/inikep/lz5
-  - LZ5 public forum : https://groups.google.com/forum/#!forum/lz5c
+  - LZ6 source repository : https://github.com/inikep/lz6
+  - LZ6 public forum : https://groups.google.com/forum/#!forum/lz6c
 */
 /*
   Note : this is stand-alone program.
-  It is not part of LZ5 compression library, it is a user program of the LZ5 library.
-  The license of LZ5 library is BSD.
+  It is not part of LZ6 compression library, it is a user program of the LZ6 library.
+  The license of LZ6 library is BSD.
   The license of xxHash library is BSD.
   The license of this compression CLI program is GPLv2.
 */
@@ -48,8 +48,8 @@
 #include <stdlib.h>   /* exit, calloc, free */
 #include <string.h>   /* strcmp, strlen */
 #include "bench.h"    /* BMK_benchFile, BMK_SetNbIterations, BMK_SetBlocksize, BMK_SetPause */
-#include "lz5io.h"    /* LZ5IO_compressFilename, LZ5IO_decompressFilename, LZ5IO_compressMultipleFilenames */
-#include "lz5.h"      // LZ5_VERSION
+#include "lz6io.h"    /* LZ6IO_compressFilename, LZ6IO_decompressFilename, LZ6IO_compressMultipleFilenames */
+#include "lz6.h"      // LZ6_VERSION
 
 
 /*-************************************
@@ -70,14 +70,14 @@
 /*****************************
 *  Constants
 ******************************/
-#define COMPRESSOR_NAME "LZ5 command line interface"
+#define COMPRESSOR_NAME "LZ6 command line interface"
 #define AUTHOR "Y.Collet & P.Skibinski"
-#define WELCOME_MESSAGE "%s %i-bit %s by %s (%s)\n", COMPRESSOR_NAME, (int)(sizeof(void*)*8), LZ5_VERSION, AUTHOR, __DATE__
-#define LZ5_EXTENSION ".lz5"
-#define LZ5CAT "lz5cat"
-#define UNLZ5 "unlz5"
+#define WELCOME_MESSAGE "%s %i-bit %s by %s (%s)\n", COMPRESSOR_NAME, (int)(sizeof(void*)*8), LZ6_VERSION, AUTHOR, __DATE__
+#define LZ6_EXTENSION ".lz6"
+#define LZ6CAT "lz6cat"
+#define UNLZ6 "unlz6"
 
-#define LZ5_BLOCKSIZEID_DEFAULT 4
+#define LZ6_BLOCKSIZEID_DEFAULT 4
 
 
 /**************************************
@@ -115,8 +115,8 @@ static char* programName;
 #define EXTENDED_ARGUMENTS
 #define EXTENDED_HELP
 #define EXTENDED_FORMAT
-#define DEFAULT_COMPRESSOR   LZ5IO_compressFilename
-#define DEFAULT_DECOMPRESSOR LZ5IO_decompressFilename
+#define DEFAULT_COMPRESSOR   LZ6IO_compressFilename
+#define DEFAULT_DECOMPRESSOR LZ6IO_decompressFilename
 
 
 /*****************************
@@ -131,8 +131,8 @@ static int usage(void)
     DISPLAY( "          with no FILE, or when FILE is - or %s, read standard input\n", stdinmark);
     DISPLAY( "Arguments :\n");
     DISPLAY( " -0       : Fast compression (default) \n");
-    DISPLAY( " -1...-%d : High compression; higher number == more compression but slower\n", LZ5HC_MAX_CLEVEL);
-    DISPLAY( " -d       : decompression (default for %s extension)\n", LZ5_EXTENSION);
+    DISPLAY( " -1...-%d : High compression; higher number == more compression but slower\n", LZ6HC_MAX_CLEVEL);
+    DISPLAY( " -d       : decompression (default for %s extension)\n", LZ6_EXTENSION);
     DISPLAY( " -z       : force compression\n");
     DISPLAY( " -f       : overwrite output without prompting \n");
     DISPLAY( " -h/-H    : display help/long help and exit\n");
@@ -180,14 +180,14 @@ static int usage_longhelp(void)
     DISPLAY( "[output] can be left empty. In this case, it receives the following value :\n");
     DISPLAY( "          - if stdout is not the console, then [output] = stdout \n");
     DISPLAY( "          - if stdout is console : \n");
-    DISPLAY( "               + for compression, output to filename%s \n", LZ5_EXTENSION);
-    DISPLAY( "               + for decompression, output to filename without '%s'\n", LZ5_EXTENSION);
-    DISPLAY( "                    > if input filename has no '%s' extension : error \n", LZ5_EXTENSION);
+    DISPLAY( "               + for compression, output to filename%s \n", LZ6_EXTENSION);
+    DISPLAY( "               + for decompression, output to filename without '%s'\n", LZ6_EXTENSION);
+    DISPLAY( "                    > if input filename has no '%s' extension : error \n", LZ6_EXTENSION);
     DISPLAY( "\n");
     DISPLAY( "Compression levels : \n");
     DISPLAY( "---------------------\n");
     DISPLAY( "-0 => Fast compression\n");
-    DISPLAY( "-1 ... -%d => High compression; higher number == more compression but slower\n", LZ5HC_MAX_CLEVEL);
+    DISPLAY( "-1 ... -%d => High compression; higher number == more compression but slower\n", LZ6HC_MAX_CLEVEL);
     DISPLAY( "\n");
     DISPLAY( "stdin, stdout and the console : \n");
     DISPLAY( "--------------------------------\n");
@@ -197,7 +197,7 @@ static int usage_longhelp(void)
     DISPLAY( "\n");
     DISPLAY( "Simple example :\n");
     DISPLAY( "----------------\n");
-    DISPLAY( "1 : compress 'filename' fast, using default output name 'filename.lz5'\n");
+    DISPLAY( "1 : compress 'filename' fast, using default output name 'filename.lz6'\n");
     DISPLAY( "          %s filename\n", programName);
     DISPLAY( "\n");
     DISPLAY( "Short arguments can be aggregated. For example :\n");
@@ -246,17 +246,17 @@ int main(int argc, char** argv)
     const char** inFileNames = NULL;
     unsigned ifnIdx=0;
     char nullOutput[] = NULL_OUTPUT;
-    char extension[] = LZ5_EXTENSION;
+    char extension[] = LZ6_EXTENSION;
     int  blockSize;
 
     /* Init */
     programName = argv[0];
-    LZ5IO_setOverwrite(0);
-    blockSize = LZ5IO_setBlockSizeID(LZ5_BLOCKSIZEID_DEFAULT);
+    LZ6IO_setOverwrite(0);
+    blockSize = LZ6IO_setBlockSizeID(LZ6_BLOCKSIZEID_DEFAULT);
 
-    /* lz5cat predefined behavior */
-    if (!strcmp(programName, LZ5CAT)) { decode=1; forceStdout=1; output_filename=stdoutmark; displayLevel=1; }
-    if (!strcmp(programName, UNLZ5)) { decode=1; }
+    /* lz6cat predefined behavior */
+    if (!strcmp(programName, LZ6CAT)) { decode=1; forceStdout=1; output_filename=stdoutmark; displayLevel=1; }
+    if (!strcmp(programName, UNLZ6)) { decode=1; }
 
     /* command switches */
     for(i=1; i<argc; i++)
@@ -270,17 +270,17 @@ int main(int argc, char** argv)
         if ((!strcmp(argument, "--decompress"))
          || (!strcmp(argument, "--uncompress"))) { decode = 1; continue; }
         if (!strcmp(argument,  "--multiple")) { multiple_inputs = 1; if (inFileNames==NULL) inFileNames = (const char**)malloc(argc * sizeof(char*)); continue; }
-        if (!strcmp(argument,  "--test")) { decode = 1; LZ5IO_setOverwrite(1); output_filename=nulmark; continue; }
-        if (!strcmp(argument,  "--force")) { LZ5IO_setOverwrite(1); continue; }
-        if (!strcmp(argument,  "--no-force")) { LZ5IO_setOverwrite(0); continue; }
+        if (!strcmp(argument,  "--test")) { decode = 1; LZ6IO_setOverwrite(1); output_filename=nulmark; continue; }
+        if (!strcmp(argument,  "--force")) { LZ6IO_setOverwrite(1); continue; }
+        if (!strcmp(argument,  "--no-force")) { LZ6IO_setOverwrite(0); continue; }
         if ((!strcmp(argument, "--stdout"))
          || (!strcmp(argument, "--to-stdout"))) { forceStdout=1; output_filename=stdoutmark; displayLevel=1; continue; }
-        if (!strcmp(argument,  "--frame-crc")) { LZ5IO_setStreamChecksumMode(1); continue; }
-        if (!strcmp(argument,  "--no-frame-crc")) { LZ5IO_setStreamChecksumMode(0); continue; }
-        if (!strcmp(argument,  "--content-size")) { LZ5IO_setContentSize(1); continue; }
-        if (!strcmp(argument,  "--no-content-size")) { LZ5IO_setContentSize(0); continue; }
-        if (!strcmp(argument,  "--sparse")) { LZ5IO_setSparseFile(2); continue; }
-        if (!strcmp(argument,  "--no-sparse")) { LZ5IO_setSparseFile(0); continue; }
+        if (!strcmp(argument,  "--frame-crc")) { LZ6IO_setStreamChecksumMode(1); continue; }
+        if (!strcmp(argument,  "--no-frame-crc")) { LZ6IO_setStreamChecksumMode(0); continue; }
+        if (!strcmp(argument,  "--content-size")) { LZ6IO_setContentSize(1); continue; }
+        if (!strcmp(argument,  "--no-content-size")) { LZ6IO_setContentSize(0); continue; }
+        if (!strcmp(argument,  "--sparse")) { LZ6IO_setSparseFile(2); continue; }
+        if (!strcmp(argument,  "--no-sparse")) { LZ6IO_setSparseFile(0); continue; }
         if (!strcmp(argument,  "--verbose")) { displayLevel=4; continue; }
         if (!strcmp(argument,  "--quiet")) { if (displayLevel) displayLevel--; continue; }
         if (!strcmp(argument,  "--version")) { DISPLAY(WELCOME_MESSAGE); return 0; }
@@ -331,10 +331,10 @@ int main(int argc, char** argv)
                 case 'c': forceStdout=1; output_filename=stdoutmark; displayLevel=1; break;
 
                     /* Test integrity */
-                case 't': decode=1; LZ5IO_setOverwrite(1); output_filename=nulmark; break;
+                case 't': decode=1; LZ6IO_setOverwrite(1); output_filename=nulmark; break;
 
                     /* Overwrite */
-                case 'f': LZ5IO_setOverwrite(1); break;
+                case 'f': LZ6IO_setOverwrite(1); break;
 
                     /* Verbose mode */
                 case 'v': displayLevel=4; break;
@@ -352,15 +352,15 @@ int main(int argc, char** argv)
                         int exitBlockProperties=0;
                         switch(argument[1])
                         {
-                  //      case 'D': LZ5IO_setBlockMode(LZ5IO_blockLinked); argument++; break;
-                        case 'X': LZ5IO_setBlockChecksumMode(1); argument ++; break;   /* currently disabled */
+                  //      case 'D': LZ6IO_setBlockMode(LZ6IO_blockLinked); argument++; break;
+                        case 'X': LZ6IO_setBlockChecksumMode(1); argument ++; break;   /* currently disabled */
                         default : 
                             {
                                 int B = atoi(argument+1);
                                 if (B >= 1 && B <= 7)
                                 {
-                                    blockSize = LZ5IO_setBlockSizeID(B);
-                                //    printf("LZ5IO_setBlockSizeID %d %d\n", B, blockSize);
+                                    blockSize = LZ6IO_setBlockSizeID(B);
+                                //    printf("LZ6IO_setBlockSizeID %d %d\n", B, blockSize);
                                     BMK_setBlocksize(blockSize);
                                     argument++;
                                 }
@@ -379,7 +379,7 @@ int main(int argc, char** argv)
                         inFileNames = (const char**) malloc(argc * sizeof(char*));
                     break;
 
-                    /* Treat non-option args as input files.  See https://code.google.com/p/lz5/issues/detail?id=151 */
+                    /* Treat non-option args as input files.  See https://code.google.com/p/lz6/issues/detail?id=151 */
                 case 'm': multiple_inputs=1;
                     if (inFileNames == NULL)
                         inFileNames = (const char**) malloc(argc * sizeof(char*));
@@ -459,7 +459,7 @@ int main(int argc, char** argv)
         if ((!decode) && !(forceCompress))   /* auto-determine compression or decompression, based on file extension */
         {
             size_t l = strlen(input_filename);
-            if (!strcmp(input_filename+(l-4), LZ5_EXTENSION)) decode=1;
+            if (!strcmp(input_filename+(l-4), LZ6_EXTENSION)) decode=1;
         }
         if (!decode)   /* compression to file */
         {
@@ -467,7 +467,7 @@ int main(int argc, char** argv)
             dynNameSpace = (char*)calloc(1,l+5);
 			if (dynNameSpace==NULL) exit(1);
             strcpy(dynNameSpace, input_filename);
-            strcat(dynNameSpace, LZ5_EXTENSION);
+            strcat(dynNameSpace, LZ6_EXTENSION);
             output_filename = dynNameSpace;
             DISPLAYLEVEL(2, "Compressed filename will be : %s \n", output_filename);
             break;
@@ -500,11 +500,11 @@ int main(int argc, char** argv)
 
 
     /* IO Stream/File */
-    LZ5IO_setNotificationLevel(displayLevel);
+    LZ6IO_setNotificationLevel(displayLevel);
     if (decode)
     {
       if (multiple_inputs)
-        operationResult = LZ5IO_decompressMultipleFilenames(inFileNames, ifnIdx, LZ5_EXTENSION);
+        operationResult = LZ6IO_decompressMultipleFilenames(inFileNames, ifnIdx, LZ6_EXTENSION);
       else
         operationResult = DEFAULT_DECOMPRESSOR(input_filename, output_filename);
     }
@@ -513,7 +513,7 @@ int main(int argc, char** argv)
       /* compression is default action */
       {
         if (multiple_inputs)
-          operationResult = LZ5IO_compressMultipleFilenames(inFileNames, ifnIdx, LZ5_EXTENSION, cLevel);
+          operationResult = LZ6IO_compressMultipleFilenames(inFileNames, ifnIdx, LZ6_EXTENSION, cLevel);
         else
           operationResult = DEFAULT_COMPRESSOR(input_filename, output_filename, cLevel);
       }

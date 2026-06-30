@@ -1,6 +1,6 @@
 \."
-\." lz5.1: This is a manual page for 'lz5' program. This file is part of the
-\." lz5 <http://www.lz5.org/> project.
+\." lz6.1: This is a manual page for 'lz6' program. This file is part of the
+\." lz6 <http://www.lz6.org/> project.
 \." Author: Yann Collet
 \."
 .
@@ -8,62 +8,62 @@
 .hy 0
 .nr HY 0
 .
-.TH lz5 "1" "2015-03-21" "lz5" "User Commands"
+.TH lz6 "1" "2015-03-21" "lz6" "User Commands"
 .SH NAME
-\fBlz5, unlz5, lz5cat\fR \- Compress or decompress .lz5 files
+\fBlz6, unlz6, lz6cat\fR \- Compress or decompress .lz6 files
 
 .SH SYNOPSIS
 .TP 5
-\fBlz5\fR [\fBOPTIONS\fR] [-|INPUT-FILE] <OUTPUT-FILE>
+\fBlz6\fR [\fBOPTIONS\fR] [-|INPUT-FILE] <OUTPUT-FILE>
 .PP
-.B unlz5
+.B unlz6
 is equivalent to
-.BR "lz5 \-d" 
+.BR "lz6 \-d" 
 .br
-.B lz5cat
+.B lz6cat
 is equivalent to
-.BR "lz5 \-dc" 
+.BR "lz6 \-dc" 
 .br
 .PP
 When writing scripts that need to decompress files,
 it is recommended to always use the name
-.B lz5
+.B lz6
 with appropriate arguments
-.RB ( "lz5 \-d"
+.RB ( "lz6 \-d"
 or
-.BR "lz5 \-dc" )
+.BR "lz6 \-dc" )
 instead of the names
-.B unlz5
+.B unlz6
 and
-.BR lz5cat .
+.BR lz6cat .
 
 
 .SH DESCRIPTION
 .PP
-\fBlz5\fR is an extremely fast lossless compression algorithm,
+\fBlz6\fR is an extremely fast lossless compression algorithm,
 based on \fBbyte-aligned LZ77\fR family of compression scheme.
-\fBlz5\fR offers compression speeds of 400 MB/s per core, linearly scalable with multi-core CPUs. 
+\fBlz6\fR offers compression speeds of 400 MB/s per core, linearly scalable with multi-core CPUs. 
 It features an extremely fast decoder, with speed in multiple GB/s per core,
 typically reaching RAM speed limit on multi-core systems. 
-.B lz5
+.B lz6
 supports a command line syntax similar to
 .BR gzip (1).
 The native file format is the
-.B .lz5
+.B .lz6
 format.
 
-.SS "Concatenation of .lz5 files"
+.SS "Concatenation of .lz6 files"
 It is possible to concatenate
-.B .lz5
+.B .lz6
 files as is.
-.B lz5
+.B lz6
 will decompress such files as if they were a single
-.B .lz5
+.B .lz6
 file. For example:
-  lz5 file1  > foo.lz5
-  lz5 file2 >> foo.lz5
+  lz6 file1  > foo.lz6
+  lz6 file2 >> foo.lz6
  then
-  lz5cat foo.lz5
+  lz6cat foo.lz6
  is equivalent to :
   cat file1 file2
 
@@ -94,30 +94,30 @@ This is the default operation mode
 when no operation mode option is specified ,
 no other operation mode is implied from the command name 
 (for example,
-.B unlz5
+.B unlz6
 implies
 .B \-\-decompress ),
 nor from the input file name
 (for example, a file extension
-.B .lz5
+.B .lz6
 implies
 .B \-\-decompress
 by default).
 .B -z
 can also be used to force compression of an already compressed
-.B .lz5
+.B .lz6
 file.
 .TP
 .BR \-d ", " \-\-decompress ", " \-\-uncompress
 Decompress.
 .B --decompress
 is also the default operation when the input filename has an
-.B .lz5
+.B .lz6
 extensionq
 .TP
 .BR \-t ", " \-\-test
 Test the integrity of compressed
-.B .lz5
+.B .lz6
 files.
 The decompressed data is discarded.
 No files are created nor removed.
@@ -141,16 +141,16 @@ overwrite it without prompting.
 When used with
 .B \-\-decompress
 and
-.B lz5
+.B lz6
 cannot recognize the type of the source file,
 copy the source file as is to standard output.
 This allows
-.B lz5cat
+.B lz6cat
 .B \-\-force
 to be used like
 .BR cat (1)
 for files that have not been compressed with
-.BR lz5 .
+.BR lz6 .
 .RE
 
 .TP
@@ -165,7 +165,7 @@ for files that have not been compressed with
 .B -m
 , you can specify any number of input filenames. Each of them will be compressed
 independently, and the resulting name of the compressed file will be
-.B filename.lz5
+.B filename.lz6
 .
 
 .TP
@@ -215,7 +215,7 @@ This is default behavior anyway, so this option is just for compatibility with g
  iteration loops [1-9](default : 3), benchmark mode only
 
 .SH BUGS
-Report bugs at: https://github.com/inikep/lz5/issues
+Report bugs at: https://github.com/inikep/lz6/issues
 
 .SH AUTHOR
 Yann Collet

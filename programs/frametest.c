@@ -1,5 +1,5 @@
 /*
-    frameTest - test tool for lz5frame
+    frameTest - test tool for lz6frame
     Copyright (C) Yann Collet 2014-2015
 
     GPL v2 License
@@ -19,8 +19,8 @@
     51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
 
     You can contact the author at :
-    - LZ5 source repository : https://github.com/inikep/lz5
-    - LZ5 public forum : https://groups.google.com/forum/#!forum/lz5c
+    - LZ6 source repository : https://github.com/inikep/lz6
+    - LZ6 public forum : https://groups.google.com/forum/#!forum/lz6c
 */
 
 /**************************************
@@ -43,8 +43,8 @@
 #include <stdlib.h>     /* malloc, free */
 #include <stdio.h>      /* fprintf */
 #include <string.h>     /* strcmp */
-#include "lz5.h"        // LZ5_VERSION
-#include "lz5frame_static.h"
+#include "lz6.h"        // LZ6_VERSION
+#include "lz6frame_static.h"
 #include "xxhash.h"     /* XXH64 */
 
 /* Use ftime() if gettimeofday() is not available on your target */
@@ -89,7 +89,7 @@ static void FUZ_writeLE32 (void* dstVoidPtr, U32 value32)
 *  Constants
 **************************************/
 
-#define LZ5F_MAGIC_SKIPPABLE_START 0x184D2A50U
+#define LZ6F_MAGIC_SKIPPABLE_START 0x184D2A50U
 
 #define KB *(1U<<10)
 #define MB *(1U<<20)
@@ -235,15 +235,15 @@ int basicTests(U32 seed, double compressibility)
     void* decodedBuffer;
     U32 randState = seed;
     size_t cSize, testSize;
-    LZ5F_preferences_t prefs;
-    LZ5F_decompressionContext_t dCtx = NULL;
-    LZ5F_compressionContext_t cctx = NULL;
+    LZ6F_preferences_t prefs;
+    LZ6F_decompressionContext_t dCtx = NULL;
+    LZ6F_compressionContext_t cctx = NULL;
     U64 crcOrig;
 
     /* Create compressible test buffer */
     memset(&prefs, 0, sizeof(prefs));
     CNBuffer = malloc(COMPRESSIBLE_NOISE_LENGTH);
-    compressedBuffer = malloc(LZ5F_compressFrameBound(COMPRESSIBLE_NOISE_LENGTH, NULL));
+    compressedBuffer = malloc(LZ6F_compressFrameBound(COMPRESSIBLE_NOISE_LENGTH, NULL));
     decodedBuffer = malloc(COMPRESSIBLE_NOISE_LENGTH);
     FUZ_fillCompressibleNoiseBuffer(CNBuffer, COMPRESSIBLE_NOISE_LENGTH, compressibility, &randState);
     crcOrig = XXH64(CNBuffer, COMPRESSIBLE_NOISE_LENGTH, 1);
@@ -251,8 +251,8 @@ int basicTests(U32 seed, double compressibility)
     /* Trivial tests : one-step frame */
     testSize = COMPRESSIBLE_NOISE_LENGTH;
     DISPLAYLEVEL(3, "Using NULL preferences : \n");
-    cSize = LZ5F_compressFrame(compressedBuffer, LZ5F_compressFrameBound(testSize, NULL), CNBuffer, testSize, NULL);
-    if (LZ5F_isError(cSize)) goto _output_error;
+    cSize = LZ6F_compressFrame(compressedBuffer, LZ6F_compressFrameBound(testSize, NULL), CNBuffer, testSize, NULL);
+    if (LZ6F_isError(cSize)) goto _output_error;
     DISPLAYLEVEL(3, "Compressed %i bytes into a %i bytes frame \n", (int)testSize, (int)cSize);
 
     DISPLAYLEVEL(3, "Decompression test : \n");
@@ -265,12 +265,12 @@ int basicTests(U32 seed, double compressibility)
         BYTE* const iend = (BYTE*)compressedBuffer + cSize;
         U64 crcDest;
 
-        LZ5F_errorCode_t errorCode = LZ5F_createDecompressionContext(&dCtx, LZ5F_VERSION);
-        if (LZ5F_isError(errorCode)) goto _output_error;
+        LZ6F_errorCode_t errorCode = LZ6F_createDecompressionContext(&dCtx, LZ6F_VERSION);
+        if (LZ6F_isError(errorCode)) goto _output_error;
 
         DISPLAYLEVEL(3, "Single Block : \n");
-        errorCode = LZ5F_decompress(dCtx, decodedBuffer, &decodedBufferSize, compressedBuffer, &compressedBufferSize, NULL);
-        if (LZ5F_isError(errorCode)) goto _output_error;
+        errorCode = LZ6F_decompress(dCtx, decodedBuffer, &decodedBufferSize, compressedBuffer, &compressedBufferSize, NULL);
+        if (LZ6F_isError(errorCode)) goto _output_error;
         crcDest = XXH64(decodedBuffer, COMPRESSIBLE_NOISE_LENGTH, 1);
         if (crcDest != crcOrig) goto _output_error;
         DISPLAYLEVEL(3, "Regenerated %i bytes \n", (int)decodedBufferSize);
@@ -280,13 +280,13 @@ int basicTests(U32 seed, double compressibility)
             size_t iSize = compressedBufferSize - 4;
             const BYTE* cBuff = (const BYTE*) compressedBuffer;
             DISPLAYLEVEL(3, "Missing last 4 bytes : ");
-            errorCode = LZ5F_decompress(dCtx, decodedBuffer, &decodedBufferSize, cBuff, &iSize, NULL);
-            if (LZ5F_isError(errorCode)) goto _output_error;
+            errorCode = LZ6F_decompress(dCtx, decodedBuffer, &decodedBufferSize, cBuff, &iSize, NULL);
+            if (LZ6F_isError(errorCode)) goto _output_error;
             if (!errorCode) goto _output_error;
             DISPLAYLEVEL(3, "indeed, request %u bytes \n", (unsigned)errorCode);
             cBuff += iSize;
             iSize = errorCode;
-            errorCode = LZ5F_decompress(dCtx, decodedBuffer, &decodedBufferSize, cBuff, &iSize, NULL);
+            errorCode = LZ6F_decompress(dCtx, decodedBuffer, &decodedBufferSize, cBuff, &iSize, NULL);
             if (errorCode != 0) goto _output_error;
             crcDest = XXH64(decodedBuffer, COMPRESSIBLE_NOISE_LENGTH, 1);
             if (crcDest != crcOrig) goto _output_error;
@@ -295,29 +295,29 @@ int basicTests(U32 seed, double compressibility)
         {
             size_t oSize = 0;
             size_t iSize = 0;
-            LZ5F_frameInfo_t fi;
+            LZ6F_frameInfo_t fi;
 
             DISPLAYLEVEL(3, "Start by feeding 0 bytes, to get next input size : ");
-            errorCode = LZ5F_decompress(dCtx, NULL, &oSize, ip, &iSize, NULL);
-            if (LZ5F_isError(errorCode)) goto _output_error;
+            errorCode = LZ6F_decompress(dCtx, NULL, &oSize, ip, &iSize, NULL);
+            if (LZ6F_isError(errorCode)) goto _output_error;
             DISPLAYLEVEL(3, " %u  \n", (unsigned)errorCode);
 
             DISPLAYLEVEL(3, "get FrameInfo on null input : ");
-            errorCode = LZ5F_getFrameInfo(dCtx, &fi, ip, &iSize);
-            if (errorCode != (size_t)-LZ5F_ERROR_frameHeader_incomplete) goto _output_error;
-            DISPLAYLEVEL(3, " correctly failed : %s \n", LZ5F_getErrorName(errorCode));
+            errorCode = LZ6F_getFrameInfo(dCtx, &fi, ip, &iSize);
+            if (errorCode != (size_t)-LZ6F_ERROR_frameHeader_incomplete) goto _output_error;
+            DISPLAYLEVEL(3, " correctly failed : %s \n", LZ6F_getErrorName(errorCode));
 
             DISPLAYLEVEL(3, "get FrameInfo on not enough input : ");
             iSize = 6;
-            errorCode = LZ5F_getFrameInfo(dCtx, &fi, ip, &iSize);
-            if (errorCode != (size_t)-LZ5F_ERROR_frameHeader_incomplete) goto _output_error;
-            DISPLAYLEVEL(3, " correctly failed : %s \n", LZ5F_getErrorName(errorCode));
+            errorCode = LZ6F_getFrameInfo(dCtx, &fi, ip, &iSize);
+            if (errorCode != (size_t)-LZ6F_ERROR_frameHeader_incomplete) goto _output_error;
+            DISPLAYLEVEL(3, " correctly failed : %s \n", LZ6F_getErrorName(errorCode));
             ip += iSize;
 
             DISPLAYLEVEL(3, "get FrameInfo on enough input : ");
             iSize = 15 - iSize;
-            errorCode = LZ5F_getFrameInfo(dCtx, &fi, ip, &iSize);
-            if (LZ5F_isError(errorCode)) goto _output_error;
+            errorCode = LZ6F_getFrameInfo(dCtx, &fi, ip, &iSize);
+            if (LZ6F_isError(errorCode)) goto _output_error;
             DISPLAYLEVEL(3, " correctly decoded \n");
             ip += iSize;
         }
@@ -327,8 +327,8 @@ int basicTests(U32 seed, double compressibility)
         {
             size_t oSize = oend-op;
             size_t iSize = 1;
-            errorCode = LZ5F_decompress(dCtx, op, &oSize, ip, &iSize, NULL);
-            if (LZ5F_isError(errorCode)) goto _output_error;
+            errorCode = LZ6F_decompress(dCtx, op, &oSize, ip, &iSize, NULL);
+            if (LZ6F_isError(errorCode)) goto _output_error;
             op += oSize;
             ip += iSize;
         }
@@ -336,28 +336,28 @@ int basicTests(U32 seed, double compressibility)
         if (crcDest != crcOrig) goto _output_error;
         DISPLAYLEVEL(3, "Regenerated %u/%u bytes \n", (unsigned)(op-(BYTE*)decodedBuffer), COMPRESSIBLE_NOISE_LENGTH);
 
-        errorCode = LZ5F_freeDecompressionContext(dCtx);
-        if (LZ5F_isError(errorCode)) goto _output_error;
+        errorCode = LZ6F_freeDecompressionContext(dCtx);
+        if (LZ6F_isError(errorCode)) goto _output_error;
     }
 
     DISPLAYLEVEL(3, "Using 64 KB block : \n");
-    prefs.frameInfo.blockSizeID = LZ5F_max64KB;
-    prefs.frameInfo.contentChecksumFlag = LZ5F_contentChecksumEnabled;
-    cSize = LZ5F_compressFrame(compressedBuffer, LZ5F_compressFrameBound(testSize, &prefs), CNBuffer, testSize, &prefs);
-    if (LZ5F_isError(cSize)) goto _output_error;
+    prefs.frameInfo.blockSizeID = LZ6F_max64KB;
+    prefs.frameInfo.contentChecksumFlag = LZ6F_contentChecksumEnabled;
+    cSize = LZ6F_compressFrame(compressedBuffer, LZ6F_compressFrameBound(testSize, &prefs), CNBuffer, testSize, &prefs);
+    if (LZ6F_isError(cSize)) goto _output_error;
     DISPLAYLEVEL(3, "Compressed %i bytes into a %i bytes frame \n", (int)testSize, (int)cSize);
 
     DISPLAYLEVEL(3, "without checksum : \n");
-    prefs.frameInfo.contentChecksumFlag = LZ5F_noContentChecksum;
-    cSize = LZ5F_compressFrame(compressedBuffer, LZ5F_compressFrameBound(testSize, &prefs), CNBuffer, testSize, &prefs);
-    if (LZ5F_isError(cSize)) goto _output_error;
+    prefs.frameInfo.contentChecksumFlag = LZ6F_noContentChecksum;
+    cSize = LZ6F_compressFrame(compressedBuffer, LZ6F_compressFrameBound(testSize, &prefs), CNBuffer, testSize, &prefs);
+    if (LZ6F_isError(cSize)) goto _output_error;
     DISPLAYLEVEL(3, "Compressed %i bytes into a %i bytes frame \n", (int)testSize, (int)cSize);
 
     DISPLAYLEVEL(3, "Using 256 KB block : \n");
-    prefs.frameInfo.blockSizeID = LZ5F_max256KB;
-    prefs.frameInfo.contentChecksumFlag = LZ5F_contentChecksumEnabled;
-    cSize = LZ5F_compressFrame(compressedBuffer, LZ5F_compressFrameBound(testSize, &prefs), CNBuffer, testSize, &prefs);
-    if (LZ5F_isError(cSize)) goto _output_error;
+    prefs.frameInfo.blockSizeID = LZ6F_max256KB;
+    prefs.frameInfo.contentChecksumFlag = LZ6F_contentChecksumEnabled;
+    cSize = LZ6F_compressFrame(compressedBuffer, LZ6F_compressFrameBound(testSize, &prefs), CNBuffer, testSize, &prefs);
+    if (LZ6F_isError(cSize)) goto _output_error;
     DISPLAYLEVEL(3, "Compressed %i bytes into a %i bytes frame \n", (int)testSize, (int)cSize);
 
     DISPLAYLEVEL(3, "Decompression test : \n");
@@ -370,8 +370,8 @@ int basicTests(U32 seed, double compressibility)
         BYTE* const iend = (BYTE*)compressedBuffer + cSize;
         U64 crcDest;
 
-        LZ5F_errorCode_t errorCode = LZ5F_createDecompressionContext(&dCtx, LZ5F_VERSION);
-        if (LZ5F_isError(errorCode)) goto _output_error;
+        LZ6F_errorCode_t errorCode = LZ6F_createDecompressionContext(&dCtx, LZ6F_VERSION);
+        if (LZ6F_isError(errorCode)) goto _output_error;
 
         DISPLAYLEVEL(3, "random segment sizes : \n");
         while (ip < iend)
@@ -381,8 +381,8 @@ int basicTests(U32 seed, double compressibility)
             size_t oSize = oend-op;
             if (iSize > (size_t)(iend-ip)) iSize = iend-ip;
             //DISPLAY("%7i : + %6i\n", (int)(ip-(BYTE*)compressedBuffer), (int)iSize);
-            errorCode = LZ5F_decompress(dCtx, op, &oSize, ip, &iSize, NULL);
-            if (LZ5F_isError(errorCode)) goto _output_error;
+            errorCode = LZ6F_decompress(dCtx, op, &oSize, ip, &iSize, NULL);
+            if (LZ6F_isError(errorCode)) goto _output_error;
             op += oSize;
             ip += iSize;
         }
@@ -390,90 +390,90 @@ int basicTests(U32 seed, double compressibility)
         if (crcDest != crcOrig) goto _output_error;
         DISPLAYLEVEL(3, "Regenerated %i bytes \n", (int)decodedBufferSize);
 
-        errorCode = LZ5F_freeDecompressionContext(dCtx);
-        if (LZ5F_isError(errorCode)) goto _output_error;
+        errorCode = LZ6F_freeDecompressionContext(dCtx);
+        if (LZ6F_isError(errorCode)) goto _output_error;
     }
 
     DISPLAYLEVEL(3, "without checksum : \n");
-    prefs.frameInfo.contentChecksumFlag = LZ5F_noContentChecksum;
-    cSize = LZ5F_compressFrame(compressedBuffer, LZ5F_compressFrameBound(testSize, &prefs), CNBuffer, testSize, &prefs);
-    if (LZ5F_isError(cSize)) goto _output_error;
+    prefs.frameInfo.contentChecksumFlag = LZ6F_noContentChecksum;
+    cSize = LZ6F_compressFrame(compressedBuffer, LZ6F_compressFrameBound(testSize, &prefs), CNBuffer, testSize, &prefs);
+    if (LZ6F_isError(cSize)) goto _output_error;
     DISPLAYLEVEL(3, "Compressed %i bytes into a %i bytes frame \n", (int)testSize, (int)cSize);
 
     DISPLAYLEVEL(3, "Using 1 MB block : \n");
-    prefs.frameInfo.blockSizeID = LZ5F_max1MB;
-    prefs.frameInfo.contentChecksumFlag = LZ5F_contentChecksumEnabled;
-    cSize = LZ5F_compressFrame(compressedBuffer, LZ5F_compressFrameBound(testSize, &prefs), CNBuffer, testSize, &prefs);
-    if (LZ5F_isError(cSize)) goto _output_error;
+    prefs.frameInfo.blockSizeID = LZ6F_max1MB;
+    prefs.frameInfo.contentChecksumFlag = LZ6F_contentChecksumEnabled;
+    cSize = LZ6F_compressFrame(compressedBuffer, LZ6F_compressFrameBound(testSize, &prefs), CNBuffer, testSize, &prefs);
+    if (LZ6F_isError(cSize)) goto _output_error;
     DISPLAYLEVEL(3, "Compressed %i bytes into a %i bytes frame \n", (int)testSize, (int)cSize);
 
     DISPLAYLEVEL(3, "without checksum : \n");
-    prefs.frameInfo.contentChecksumFlag = LZ5F_noContentChecksum;
-    cSize = LZ5F_compressFrame(compressedBuffer, LZ5F_compressFrameBound(testSize, &prefs), CNBuffer, testSize, &prefs);
-    if (LZ5F_isError(cSize)) goto _output_error;
+    prefs.frameInfo.contentChecksumFlag = LZ6F_noContentChecksum;
+    cSize = LZ6F_compressFrame(compressedBuffer, LZ6F_compressFrameBound(testSize, &prefs), CNBuffer, testSize, &prefs);
+    if (LZ6F_isError(cSize)) goto _output_error;
     DISPLAYLEVEL(3, "Compressed %i bytes into a %i bytes frame \n", (int)testSize, (int)cSize);
 
     DISPLAYLEVEL(3, "Using 4 MB block : \n");
-    prefs.frameInfo.blockSizeID = LZ5F_max4MB;
-    prefs.frameInfo.contentChecksumFlag = LZ5F_contentChecksumEnabled;
-    cSize = LZ5F_compressFrame(compressedBuffer, LZ5F_compressFrameBound(testSize, &prefs), CNBuffer, testSize, &prefs);
-    if (LZ5F_isError(cSize)) goto _output_error;
+    prefs.frameInfo.blockSizeID = LZ6F_max4MB;
+    prefs.frameInfo.contentChecksumFlag = LZ6F_contentChecksumEnabled;
+    cSize = LZ6F_compressFrame(compressedBuffer, LZ6F_compressFrameBound(testSize, &prefs), CNBuffer, testSize, &prefs);
+    if (LZ6F_isError(cSize)) goto _output_error;
     DISPLAYLEVEL(3, "Compressed %i bytes into a %i bytes frame \n", (int)testSize, (int)cSize);
 
     DISPLAYLEVEL(3, "without checksum : \n");
-    prefs.frameInfo.contentChecksumFlag = LZ5F_noContentChecksum;
-    cSize = LZ5F_compressFrame(compressedBuffer, LZ5F_compressFrameBound(testSize, &prefs), CNBuffer, testSize, &prefs);
-    if (LZ5F_isError(cSize)) goto _output_error;
+    prefs.frameInfo.contentChecksumFlag = LZ6F_noContentChecksum;
+    cSize = LZ6F_compressFrame(compressedBuffer, LZ6F_compressFrameBound(testSize, &prefs), CNBuffer, testSize, &prefs);
+    if (LZ6F_isError(cSize)) goto _output_error;
     DISPLAYLEVEL(3, "Compressed %i bytes into a %i bytes frame \n", (int)testSize, (int)cSize);
 
     {
         size_t errorCode;
         BYTE* const ostart = (BYTE*)compressedBuffer;
         BYTE* op = ostart;
-        errorCode = LZ5F_createCompressionContext(&cctx, LZ5F_VERSION);
-        if (LZ5F_isError(errorCode)) goto _output_error;
+        errorCode = LZ6F_createCompressionContext(&cctx, LZ6F_VERSION);
+        if (LZ6F_isError(errorCode)) goto _output_error;
 
         DISPLAYLEVEL(3, "compress without frameSize : \n");
         memset(&(prefs.frameInfo), 0, sizeof(prefs.frameInfo));
-        errorCode = LZ5F_compressBegin(cctx, compressedBuffer, testSize, &prefs);
-        if (LZ5F_isError(errorCode)) goto _output_error;
+        errorCode = LZ6F_compressBegin(cctx, compressedBuffer, testSize, &prefs);
+        if (LZ6F_isError(errorCode)) goto _output_error;
         op += errorCode;
-        errorCode = LZ5F_compressUpdate(cctx, op, LZ5F_compressBound(testSize, &prefs), CNBuffer, testSize, NULL);
-        if (LZ5F_isError(errorCode)) goto _output_error;
+        errorCode = LZ6F_compressUpdate(cctx, op, LZ6F_compressBound(testSize, &prefs), CNBuffer, testSize, NULL);
+        if (LZ6F_isError(errorCode)) goto _output_error;
         op += errorCode;
-        errorCode = LZ5F_compressEnd(cctx, compressedBuffer, testSize, NULL);
-        if (LZ5F_isError(errorCode)) goto _output_error;
+        errorCode = LZ6F_compressEnd(cctx, compressedBuffer, testSize, NULL);
+        if (LZ6F_isError(errorCode)) goto _output_error;
         DISPLAYLEVEL(3, "Compressed %i bytes into a %i bytes frame \n", (int)testSize, (int)(op-ostart));
 
         DISPLAYLEVEL(3, "compress with frameSize : \n");
         prefs.frameInfo.contentSize = testSize;
         op = ostart;
-        errorCode = LZ5F_compressBegin(cctx, compressedBuffer, testSize, &prefs);
-        if (LZ5F_isError(errorCode)) goto _output_error;
+        errorCode = LZ6F_compressBegin(cctx, compressedBuffer, testSize, &prefs);
+        if (LZ6F_isError(errorCode)) goto _output_error;
         op += errorCode;
-        errorCode = LZ5F_compressUpdate(cctx, op, LZ5F_compressBound(testSize, &prefs), CNBuffer, testSize, NULL);
-        if (LZ5F_isError(errorCode)) goto _output_error;
+        errorCode = LZ6F_compressUpdate(cctx, op, LZ6F_compressBound(testSize, &prefs), CNBuffer, testSize, NULL);
+        if (LZ6F_isError(errorCode)) goto _output_error;
         op += errorCode;
-        errorCode = LZ5F_compressEnd(cctx, compressedBuffer, testSize, NULL);
-        if (LZ5F_isError(errorCode)) goto _output_error;
+        errorCode = LZ6F_compressEnd(cctx, compressedBuffer, testSize, NULL);
+        if (LZ6F_isError(errorCode)) goto _output_error;
         DISPLAYLEVEL(3, "Compressed %i bytes into a %i bytes frame \n", (int)testSize, (int)(op-ostart));
 
         DISPLAYLEVEL(3, "compress with wrong frameSize : \n");
         prefs.frameInfo.contentSize = testSize+1;
         op = ostart;
-        errorCode = LZ5F_compressBegin(cctx, compressedBuffer, testSize, &prefs);
-        if (LZ5F_isError(errorCode)) goto _output_error;
+        errorCode = LZ6F_compressBegin(cctx, compressedBuffer, testSize, &prefs);
+        if (LZ6F_isError(errorCode)) goto _output_error;
         op += errorCode;
-        errorCode = LZ5F_compressUpdate(cctx, op, LZ5F_compressBound(testSize, &prefs), CNBuffer, testSize, NULL);
-        if (LZ5F_isError(errorCode)) goto _output_error;
+        errorCode = LZ6F_compressUpdate(cctx, op, LZ6F_compressBound(testSize, &prefs), CNBuffer, testSize, NULL);
+        if (LZ6F_isError(errorCode)) goto _output_error;
         op += errorCode;
-        errorCode = LZ5F_compressEnd(cctx, op, testSize, NULL);
-        if (LZ5F_isError(errorCode)) { DISPLAYLEVEL(3, "Error correctly detected : %s \n", LZ5F_getErrorName(errorCode)); }
+        errorCode = LZ6F_compressEnd(cctx, op, testSize, NULL);
+        if (LZ6F_isError(errorCode)) { DISPLAYLEVEL(3, "Error correctly detected : %s \n", LZ6F_getErrorName(errorCode)); }
         else
             goto _output_error;
 
-        errorCode = LZ5F_freeCompressionContext(cctx);
-        if (LZ5F_isError(errorCode)) goto _output_error;
+        errorCode = LZ6F_freeCompressionContext(cctx);
+        if (LZ6F_isError(errorCode)) goto _output_error;
         cctx = NULL;
     }
 
@@ -486,11 +486,11 @@ int basicTests(U32 seed, double compressibility)
         BYTE* ip = (BYTE*)compressedBuffer;
         BYTE* iend = (BYTE*)compressedBuffer + cSize + 8;
 
-        LZ5F_errorCode_t errorCode = LZ5F_createDecompressionContext(&dCtx, LZ5F_VERSION);
-        if (LZ5F_isError(errorCode)) goto _output_error;
+        LZ6F_errorCode_t errorCode = LZ6F_createDecompressionContext(&dCtx, LZ6F_VERSION);
+        if (LZ6F_isError(errorCode)) goto _output_error;
 
         /* generate skippable frame */
-        FUZ_writeLE32(ip, LZ5F_MAGIC_SKIPPABLE_START);
+        FUZ_writeLE32(ip, LZ6F_MAGIC_SKIPPABLE_START);
         FUZ_writeLE32(ip+4, (U32)cSize);
 
         DISPLAYLEVEL(3, "random segment sizes : \n");
@@ -500,8 +500,8 @@ int basicTests(U32 seed, double compressibility)
             size_t iSize = (FUZ_rand(&randState) & ((1<<nbBits)-1)) + 1;
             size_t oSize = oend-op;
             if (iSize > (size_t)(iend-ip)) iSize = iend-ip;
-            errorCode = LZ5F_decompress(dCtx, op, &oSize, ip, &iSize, NULL);
-            if (LZ5F_isError(errorCode)) goto _output_error;
+            errorCode = LZ6F_decompress(dCtx, op, &oSize, ip, &iSize, NULL);
+            if (LZ6F_isError(errorCode)) goto _output_error;
             op += oSize;
             ip += iSize;
         }
@@ -511,7 +511,7 @@ int basicTests(U32 seed, double compressibility)
         DISPLAYLEVEL(3, "zero-size skippable frame\n");
         ip = (BYTE*)compressedBuffer;
         op = (BYTE*)decodedBuffer;
-        FUZ_writeLE32(ip, LZ5F_MAGIC_SKIPPABLE_START+1);
+        FUZ_writeLE32(ip, LZ6F_MAGIC_SKIPPABLE_START+1);
         FUZ_writeLE32(ip+4, 0);
         iend = ip+8;
 
@@ -521,8 +521,8 @@ int basicTests(U32 seed, double compressibility)
             size_t iSize = (FUZ_rand(&randState) & ((1<<nbBits)-1)) + 1;
             size_t oSize = oend-op;
             if (iSize > (size_t)(iend-ip)) iSize = iend-ip;
-            errorCode = LZ5F_decompress(dCtx, op, &oSize, ip, &iSize, NULL);
-            if (LZ5F_isError(errorCode)) goto _output_error;
+            errorCode = LZ6F_decompress(dCtx, op, &oSize, ip, &iSize, NULL);
+            if (LZ6F_isError(errorCode)) goto _output_error;
             op += oSize;
             ip += iSize;
         }
@@ -531,7 +531,7 @@ int basicTests(U32 seed, double compressibility)
         DISPLAYLEVEL(3, "Skippable frame header complete in first call \n");
         ip = (BYTE*)compressedBuffer;
         op = (BYTE*)decodedBuffer;
-        FUZ_writeLE32(ip, LZ5F_MAGIC_SKIPPABLE_START+2);
+        FUZ_writeLE32(ip, LZ6F_MAGIC_SKIPPABLE_START+2);
         FUZ_writeLE32(ip+4, 10);
         iend = ip+18;
         while (ip < iend)
@@ -539,8 +539,8 @@ int basicTests(U32 seed, double compressibility)
             size_t iSize = 10;
             size_t oSize = 10;
             if (iSize > (size_t)(iend-ip)) iSize = iend-ip;
-            errorCode = LZ5F_decompress(dCtx, op, &oSize, ip, &iSize, NULL);
-            if (LZ5F_isError(errorCode)) goto _output_error;
+            errorCode = LZ6F_decompress(dCtx, op, &oSize, ip, &iSize, NULL);
+            if (LZ6F_isError(errorCode)) goto _output_error;
             op += oSize;
             ip += iSize;
         }
@@ -552,8 +552,8 @@ _end:
     free(CNBuffer);
     free(compressedBuffer);
     free(decodedBuffer);
-    LZ5F_freeDecompressionContext(dCtx); dCtx = NULL;
-    LZ5F_freeCompressionContext(cctx); cctx = NULL;
+    LZ6F_freeDecompressionContext(dCtx); dCtx = NULL;
+    LZ6F_freeCompressionContext(cctx); cctx = NULL;
     return testResult;
 
 _output_error:
@@ -588,8 +588,8 @@ int fuzzerTests(U32 seed, unsigned nbTests, unsigned startTest, double compressi
     void* compressedBuffer = NULL;
     void* decodedBuffer = NULL;
     U32 coreRand = seed;
-    LZ5F_decompressionContext_t dCtx = NULL;
-    LZ5F_compressionContext_t cCtx = NULL;
+    LZ6F_decompressionContext_t dCtx = NULL;
+    LZ6F_compressionContext_t cCtx = NULL;
     size_t result;
     const U32 startTime = FUZ_GetMilliStart();
     XXH64_state_t xxh64;
@@ -601,13 +601,13 @@ int fuzzerTests(U32 seed, unsigned nbTests, unsigned startTest, double compressi
     duration *= 1000;
 
     /* Create buffers */
-    result = LZ5F_createDecompressionContext(&dCtx, LZ5F_VERSION);
-    CHECK(LZ5F_isError(result), "Allocation failed (error %i)", (int)result);
-    result = LZ5F_createCompressionContext(&cCtx, LZ5F_VERSION);
-    CHECK(LZ5F_isError(result), "Allocation failed (error %i)", (int)result);
+    result = LZ6F_createDecompressionContext(&dCtx, LZ6F_VERSION);
+    CHECK(LZ6F_isError(result), "Allocation failed (error %i)", (int)result);
+    result = LZ6F_createCompressionContext(&cCtx, LZ6F_VERSION);
+    CHECK(LZ6F_isError(result), "Allocation failed (error %i)", (int)result);
     srcBuffer = malloc(srcDataLength);
     CHECK(srcBuffer==NULL, "srcBuffer Allocation failed");
-    compressedBuffer = malloc(LZ5F_compressFrameBound(srcDataLength, NULL));
+    compressedBuffer = malloc(LZ6F_compressFrameBound(srcDataLength, NULL));
     CHECK(compressedBuffer==NULL, "compressedBuffer Allocation failed");
     decodedBuffer = calloc(1, srcDataLength);   /* calloc avoids decodedBuffer being considered "garbage" by scan-build */
     CHECK(decodedBuffer==NULL, "decodedBuffer Allocation failed");
@@ -624,24 +624,24 @@ int fuzzerTests(U32 seed, unsigned nbTests, unsigned startTest, double compressi
         unsigned BMId   = FUZ_rand(&randState) & 1;
         unsigned CCflag = FUZ_rand(&randState) & 1;
         unsigned autoflush = (FUZ_rand(&randState) & 7) == 2;
-        LZ5F_preferences_t prefs;
-        LZ5F_compressOptions_t cOptions;
-        LZ5F_decompressOptions_t dOptions;
+        LZ6F_preferences_t prefs;
+        LZ6F_compressOptions_t cOptions;
+        LZ6F_decompressOptions_t dOptions;
         unsigned nbBits = (FUZ_rand(&randState) % (FUZ_highbit(srcDataLength-1) - 1)) + 1;
         size_t srcSize = (FUZ_rand(&randState) & ((1<<nbBits)-1)) + 1;
         size_t srcStart = FUZ_rand(&randState) % (srcDataLength - srcSize);
         U64 frameContentSize = ((FUZ_rand(&randState) & 0xF) == 1) ? srcSize : 0;
         size_t cSize;
         U64 crcOrig, crcDecoded;
-        LZ5F_preferences_t* prefsPtr = &prefs;
+        LZ6F_preferences_t* prefsPtr = &prefs;
 
         (void)FUZ_rand(&coreRand);   /* update seed */
         memset(&prefs, 0, sizeof(prefs));
         memset(&cOptions, 0, sizeof(cOptions));
         memset(&dOptions, 0, sizeof(dOptions));
-        prefs.frameInfo.blockMode = (LZ5F_blockMode_t)BMId;
-        prefs.frameInfo.blockSizeID = (LZ5F_blockSizeID_t)BSId;
-        prefs.frameInfo.contentChecksumFlag = (LZ5F_contentChecksum_t)CCflag;
+        prefs.frameInfo.blockMode = (LZ6F_blockMode_t)BMId;
+        prefs.frameInfo.blockSizeID = (LZ6F_blockSizeID_t)BSId;
+        prefs.frameInfo.contentChecksumFlag = (LZ6F_contentChecksum_t)CCflag;
         prefs.frameInfo.contentSize = frameContentSize;
         prefs.autoFlush = autoflush;
         prefs.compressionLevel = FUZ_rand(&randState) % 5;
@@ -654,48 +654,48 @@ int fuzzerTests(U32 seed, unsigned nbTests, unsigned startTest, double compressi
         {
             /* create a skippable frame (rare case) */
             BYTE* op = (BYTE*)compressedBuffer;
-            FUZ_writeLE32(op, LZ5F_MAGIC_SKIPPABLE_START + (FUZ_rand(&randState) & 15));
+            FUZ_writeLE32(op, LZ6F_MAGIC_SKIPPABLE_START + (FUZ_rand(&randState) & 15));
             FUZ_writeLE32(op+4, (U32)srcSize);
             cSize = srcSize+8;
         }
         else if ((FUZ_rand(&randState) & 0xF) == 2)
         {
-            cSize = LZ5F_compressFrame(compressedBuffer, LZ5F_compressFrameBound(srcSize, prefsPtr), (char*)srcBuffer + srcStart, srcSize, prefsPtr);
-            CHECK(LZ5F_isError(cSize), "LZ5F_compressFrame failed : error %i (%s)", (int)cSize, LZ5F_getErrorName(cSize));
+            cSize = LZ6F_compressFrame(compressedBuffer, LZ6F_compressFrameBound(srcSize, prefsPtr), (char*)srcBuffer + srcStart, srcSize, prefsPtr);
+            CHECK(LZ6F_isError(cSize), "LZ6F_compressFrame failed : error %i (%s)", (int)cSize, LZ6F_getErrorName(cSize));
         }
         else
         {
             const BYTE* ip = (const BYTE*)srcBuffer + srcStart;
             const BYTE* const iend = ip + srcSize;
             BYTE* op = (BYTE*)compressedBuffer;
-            BYTE* const oend = op + LZ5F_compressFrameBound(srcDataLength, NULL);
+            BYTE* const oend = op + LZ6F_compressFrameBound(srcDataLength, NULL);
             unsigned maxBits = FUZ_highbit((U32)srcSize);
-            result = LZ5F_compressBegin(cCtx, op, oend-op, prefsPtr);
-            CHECK(LZ5F_isError(result), "Compression header failed (error %i)", (int)result);
+            result = LZ6F_compressBegin(cCtx, op, oend-op, prefsPtr);
+            CHECK(LZ6F_isError(result), "Compression header failed (error %i)", (int)result);
             op += result;
             while (ip < iend)
             {
                 unsigned nbBitsSeg = FUZ_rand(&randState) % maxBits;
                 size_t iSize = (FUZ_rand(&randState) & ((1<<nbBitsSeg)-1)) + 1;
-                size_t oSize = LZ5F_compressBound(iSize, prefsPtr);
+                size_t oSize = LZ6F_compressBound(iSize, prefsPtr);
                 unsigned forceFlush = ((FUZ_rand(&randState) & 3) == 1);
                 if (iSize > (size_t)(iend-ip)) iSize = iend-ip;
                 cOptions.stableSrc = ((FUZ_rand(&randState) & 3) == 1);
 
-                result = LZ5F_compressUpdate(cCtx, op, oSize, ip, iSize, &cOptions);
-                CHECK(LZ5F_isError(result), "Compression failed (error %i)", (int)result);
+                result = LZ6F_compressUpdate(cCtx, op, oSize, ip, iSize, &cOptions);
+                CHECK(LZ6F_isError(result), "Compression failed (error %i)", (int)result);
                 op += result;
                 ip += iSize;
 
                 if (forceFlush)
                 {
-                    result = LZ5F_flush(cCtx, op, oend-op, &cOptions);
-                    CHECK(LZ5F_isError(result), "Compression failed (error %i)", (int)result);
+                    result = LZ6F_flush(cCtx, op, oend-op, &cOptions);
+                    CHECK(LZ6F_isError(result), "Compression failed (error %i)", (int)result);
                     op += result;
                 }
             }
-            result = LZ5F_compressEnd(cCtx, op, oend-op, &cOptions);
-            CHECK(LZ5F_isError(result), "Compression completion failed (error %i)", (int)result);
+            result = LZ6F_compressEnd(cCtx, op, oend-op, &cOptions);
+            CHECK(LZ6F_isError(result), "Compression completion failed (error %i)", (int)result);
             op += result;
             cSize = op-(BYTE*)compressedBuffer;
         }
@@ -721,10 +721,10 @@ int fuzzerTests(U32 seed, unsigned nbTests, unsigned startTest, double compressi
                 if (oSize > (size_t)(oend-op)) oSize = oend-op;
                 dOptions.stableDst = FUZ_rand(&randState) & 1;
                 if (nonContiguousDst==2) dOptions.stableDst = 0;
-                result = LZ5F_decompress(dCtx, op, &oSize, ip, &iSize, &dOptions);
-                if (result == (size_t)-LZ5F_ERROR_contentChecksum_invalid)
+                result = LZ6F_decompress(dCtx, op, &oSize, ip, &iSize, &dOptions);
+                if (result == (size_t)-LZ6F_ERROR_contentChecksum_invalid)
                     locateBuffDiff((BYTE*)srcBuffer+srcStart, decodedBuffer, srcSize, nonContiguousDst);
-                CHECK(LZ5F_isError(result), "Decompression failed (error %i:%s)", (int)result, LZ5F_getErrorName((LZ5F_errorCode_t)result));
+                CHECK(LZ6F_isError(result), "Decompression failed (error %i:%s)", (int)result, LZ6F_getErrorName((LZ6F_errorCode_t)result));
                 XXH64_update(&xxh64, op, (U32)oSize);
                 totalOut += oSize;
                 op += oSize;
@@ -745,8 +745,8 @@ int fuzzerTests(U32 seed, unsigned nbTests, unsigned startTest, double compressi
     DISPLAYLEVEL(2, "\rAll tests completed   \n");
 
 _end:
-    LZ5F_freeDecompressionContext(dCtx);
-    LZ5F_freeCompressionContext(cCtx);
+    LZ6F_freeDecompressionContext(dCtx);
+    LZ6F_freeCompressionContext(cCtx);
     free(srcBuffer);
     free(compressedBuffer);
     free(decodedBuffer);
@@ -909,7 +909,7 @@ int main(int argc, char** argv)
     }
 
     /* Get Seed */
-    printf("Starting lz5frame tester (%i-bits, %s)\n", (int)(sizeof(size_t)*8), LZ5_VERSION);
+    printf("Starting lz6frame tester (%i-bits, %s)\n", (int)(sizeof(size_t)*8), LZ6_VERSION);
 
     if (!seedset) seed = FUZ_GetMilliStart() % 10000;
     printf("Seed = %u\n", seed);

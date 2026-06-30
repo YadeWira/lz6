@@ -1,5 +1,5 @@
 /*
-   LZ5 - Fast LZ compression algorithm
+   LZ6 - Fast LZ compression algorithm
    Header File
    Copyright (C) 2011-2015, Yann Collet.
 
@@ -29,8 +29,8 @@
    OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
    You can contact the author at :
-   - LZ5 source repository : https://github.com/inikep/lz5
-   - LZ5 public forum : https://groups.google.com/forum/#!forum/lz5c
+   - LZ6 source repository : https://github.com/inikep/lz6
+   - LZ6 public forum : https://groups.google.com/forum/#!forum/lz6c
 */
 #pragma once
 
@@ -39,59 +39,59 @@ extern "C" {
 #endif
 
 /*
- * lz5.h provides block compression functions, and gives full buffer control to programmer.
- * If you need to generate inter-operable compressed data (respecting LZ5 frame specification),
- * and can let the library handle its own memory, please use lz5frame.h instead.
+ * lz6.h provides block compression functions, and gives full buffer control to programmer.
+ * If you need to generate inter-operable compressed data (respecting LZ6 frame specification),
+ * and can let the library handle its own memory, please use lz6frame.h instead.
 */
 
 /**************************************
 *  Version
 **************************************/
-#define LZ5_VERSION          "v1.5.0"
-#define LZ5_VERSION_MAJOR    1    /* for breaking interface changes  */
-#define LZ5_VERSION_MINOR    5    /* for new (non-breaking) interface capabilities */
-#define LZ5_VERSION_RELEASE  0    /* for tweaks, bug-fixes, or development */
-#define LZ5_VERSION_NUMBER (LZ5_VERSION_MAJOR *100*100 + LZ5_VERSION_MINOR *100 + LZ5_VERSION_RELEASE)
-int LZ5_versionNumber (void);
+#define LZ6_VERSION          "v1.6.0"
+#define LZ6_VERSION_MAJOR    1    /* for breaking interface changes  */
+#define LZ6_VERSION_MINOR    6    /* for new (non-breaking) interface capabilities */
+#define LZ6_VERSION_RELEASE  0    /* for tweaks, bug-fixes, or development */
+#define LZ6_VERSION_NUMBER (LZ6_VERSION_MAJOR *100*100 + LZ6_VERSION_MINOR *100 + LZ6_VERSION_RELEASE)
+int LZ6_versionNumber (void);
 
-#define LZ5HC_MAX_CLEVEL     15
+#define LZ6HC_MAX_CLEVEL     15
 
 
 /**************************************
 *  Tuning parameter
 **************************************/
 /*
- * LZ5_MEMORY_USAGE :
+ * LZ6_MEMORY_USAGE :
  * Memory usage formula : N->2^N Bytes (examples : 10 -> 1KB; 12 -> 4KB ; 16 -> 64KB; 20 -> 1MB; etc.)
  * Increasing memory usage improves compression ratio
  * Reduced memory usage can improve speed, due to cache effect
  */
-#define LZ5_MEMORY_USAGE 20
+#define LZ6_MEMORY_USAGE 20
 
 
 /**************************************
 *  Simple Functions
 **************************************/
 
-int LZ5_compress_default(const char* source, char* dest, int sourceSize, int maxDestSize);
-int LZ5_decompress_safe (const char* source, char* dest, int compressedSize, int maxDecompressedSize);
+int LZ6_compress_default(const char* source, char* dest, int sourceSize, int maxDestSize);
+int LZ6_decompress_safe (const char* source, char* dest, int compressedSize, int maxDecompressedSize);
 
 /*
-LZ5_compress_default() :
+LZ6_compress_default() :
     Compresses 'sourceSize' bytes from buffer 'source'
     into already allocated 'dest' buffer of size 'maxDestSize'.
-    Compression is guaranteed to succeed if 'maxDestSize' >= LZ5_compressBound(sourceSize).
+    Compression is guaranteed to succeed if 'maxDestSize' >= LZ6_compressBound(sourceSize).
     It also runs faster, so it's a recommended setting.
     If the function cannot compress 'source' into a more limited 'dest' budget,
     compression stops *immediately*, and the function result is zero.
     As a consequence, 'dest' content is not valid.
     This function never writes outside 'dest' buffer, nor read outside 'source' buffer.
-        sourceSize  : Max supported value is LZ5_MAX_INPUT_VALUE
+        sourceSize  : Max supported value is LZ6_MAX_INPUT_VALUE
         maxDestSize : full or partial size of buffer 'dest' (which must be already allocated)
         return : the number of bytes written into buffer 'dest' (necessarily <= maxOutputSize)
               or 0 if compression fails
 
-LZ5_decompress_safe() :
+LZ6_decompress_safe() :
     compressedSize : is the precise full size of the compressed block.
     maxDecompressedSize : is the size of destination buffer, which must be already allocated.
     return : the number of bytes decompressed into destination buffer (necessarily <= maxDecompressedSize)
@@ -105,45 +105,45 @@ LZ5_decompress_safe() :
 /**************************************
 *  Advanced Functions
 **************************************/
-#define LZ5_MAX_INPUT_SIZE        0x7E000000   /* 2 113 929 216 bytes */
-#define LZ5_COMPRESSBOUND(isize)  ((unsigned)(isize) > (unsigned)LZ5_MAX_INPUT_SIZE ? 0 : (isize) + ((isize)/128) + 16)
+#define LZ6_MAX_INPUT_SIZE        0x7E000000   /* 2 113 929 216 bytes */
+#define LZ6_COMPRESSBOUND(isize)  ((unsigned)(isize) > (unsigned)LZ6_MAX_INPUT_SIZE ? 0 : (isize) + ((isize)/128) + 16)
 
 /*
-LZ5_compressBound() :
-    Provides the maximum size that LZ5 compression may output in a "worst case" scenario (input data not compressible)
+LZ6_compressBound() :
+    Provides the maximum size that LZ6 compression may output in a "worst case" scenario (input data not compressible)
     This function is primarily useful for memory allocation purposes (destination buffer size).
-    Macro LZ5_COMPRESSBOUND() is also provided for compilation-time evaluation (stack memory allocation for example).
-    Note that LZ5_compress_default() compress faster when dest buffer size is >= LZ5_compressBound(srcSize)
-        inputSize  : max supported value is LZ5_MAX_INPUT_SIZE
+    Macro LZ6_COMPRESSBOUND() is also provided for compilation-time evaluation (stack memory allocation for example).
+    Note that LZ6_compress_default() compress faster when dest buffer size is >= LZ6_compressBound(srcSize)
+        inputSize  : max supported value is LZ6_MAX_INPUT_SIZE
         return : maximum output size in a "worst case" scenario
-              or 0, if input size is too large ( > LZ5_MAX_INPUT_SIZE)
+              or 0, if input size is too large ( > LZ6_MAX_INPUT_SIZE)
 */
-int LZ5_compressBound(int inputSize);
+int LZ6_compressBound(int inputSize);
 
 /*
-LZ5_compress_fast() :
-    Same as LZ5_compress_default(), but allows to select an "acceleration" factor.
+LZ6_compress_fast() :
+    Same as LZ6_compress_default(), but allows to select an "acceleration" factor.
     The larger the acceleration value, the faster the algorithm, but also the lesser the compression.
     It's a trade-off. It can be fine tuned, with each successive value providing roughly +~3% to speed.
-    An acceleration value of "1" is the same as regular LZ5_compress_default()
-    Values <= 0 will be replaced by ACCELERATION_DEFAULT (see lz5.c), which is 1.
+    An acceleration value of "1" is the same as regular LZ6_compress_default()
+    Values <= 0 will be replaced by ACCELERATION_DEFAULT (see lz6.c), which is 1.
 */
-int LZ5_compress_fast (const char* source, char* dest, int sourceSize, int maxDestSize, int acceleration);
+int LZ6_compress_fast (const char* source, char* dest, int sourceSize, int maxDestSize, int acceleration);
 
 
 /*
-LZ5_compress_fast_extState() :
+LZ6_compress_fast_extState() :
     Same compression function, just using an externally allocated memory space to store compression state.
-    Use LZ5_sizeofState() to know how much memory must be allocated,
+    Use LZ6_sizeofState() to know how much memory must be allocated,
     and allocate it on 8-bytes boundaries (using malloc() typically).
     Then, provide it as 'void* state' to compression function.
 */
-int LZ5_sizeofState(void);
-int LZ5_compress_fast_extState (void* state, const char* source, char* dest, int inputSize, int maxDestSize, int acceleration);
+int LZ6_sizeofState(void);
+int LZ6_compress_fast_extState (void* state, const char* source, char* dest, int inputSize, int maxDestSize, int acceleration);
 
 
 /*
-LZ5_compress_destSize() :
+LZ6_compress_destSize() :
     Reverse the logic, by compressing as much data as possible from 'source' buffer
     into already allocated buffer 'dest' of size 'targetDestSize'.
     This function either compresses the entire 'source' content into 'dest' if it's large enough,
@@ -153,24 +153,24 @@ LZ5_compress_destSize() :
         return : Nb bytes written into 'dest' (necessarily <= targetDestSize)
               or 0 if compression fails
 */
-int LZ5_compress_destSize (const char* source, char* dest, int* sourceSizePtr, int targetDestSize);
+int LZ6_compress_destSize (const char* source, char* dest, int* sourceSizePtr, int targetDestSize);
 
 
 /*
-LZ5_decompress_fast() :
+LZ6_decompress_fast() :
     originalSize : is the original and therefore uncompressed size
     return : the number of bytes read from the source buffer (in other words, the compressed size)
              If the source stream is detected malformed, the function will stop decoding and return a negative result.
              Destination buffer must be already allocated. Its size must be a minimum of 'originalSize' bytes.
     note : This function fully respect memory boundaries for properly formed compressed data.
-           It is a bit faster than LZ5_decompress_safe().
+           It is a bit faster than LZ6_decompress_safe().
            However, it does not provide any protection against intentionally modified data stream (malicious input).
            Use this function in trusted environment only (data to decode comes from a trusted source).
 */
-int LZ5_decompress_fast (const char* source, char* dest, int originalSize);
+int LZ6_decompress_fast (const char* source, char* dest, int originalSize);
 
 /*
-LZ5_decompress_safe_partial() :
+LZ6_decompress_safe_partial() :
     This function decompress a compressed block of size 'compressedSize' at position 'source'
     into destination buffer 'dest' of size 'maxDecompressedSize'.
     The function tries to stop decompressing operation as soon as 'targetOutputSize' has been reached,
@@ -181,95 +181,95 @@ LZ5_decompress_safe_partial() :
              If the source stream is detected malformed, the function will stop decoding and return a negative result.
              This function never writes outside of output buffer, and never reads outside of input buffer. It is therefore protected against malicious data packets
 */
-int LZ5_decompress_safe_partial (const char* source, char* dest, int compressedSize, int targetOutputSize, int maxDecompressedSize);
+int LZ6_decompress_safe_partial (const char* source, char* dest, int compressedSize, int targetOutputSize, int maxDecompressedSize);
 
 
 /***********************************************
 *  Streaming Compression Functions
 ***********************************************/
-#define LZ5_STREAMSIZE_U64 ((1 << (LZ5_MEMORY_USAGE-3)) + 4)
-#define LZ5_STREAMSIZE     (LZ5_STREAMSIZE_U64 * sizeof(long long))
+#define LZ6_STREAMSIZE_U64 ((1 << (LZ6_MEMORY_USAGE-3)) + 4)
+#define LZ6_STREAMSIZE     (LZ6_STREAMSIZE_U64 * sizeof(long long))
 /*
- * LZ5_stream_t
- * information structure to track an LZ5 stream.
+ * LZ6_stream_t
+ * information structure to track an LZ6 stream.
  * important : init this structure content before first use !
- * note : only allocated directly the structure if you are statically linking LZ5
- *        If you are using liblz5 as a DLL, please use below construction methods instead.
+ * note : only allocated directly the structure if you are statically linking LZ6
+ *        If you are using liblz6 as a DLL, please use below construction methods instead.
  */
-typedef struct { long long table[LZ5_STREAMSIZE_U64]; } LZ5_stream_t;
+typedef struct { long long table[LZ6_STREAMSIZE_U64]; } LZ6_stream_t;
 
 /*
- * LZ5_resetStream
- * Use this function to init an allocated LZ5_stream_t structure
+ * LZ6_resetStream
+ * Use this function to init an allocated LZ6_stream_t structure
  */
-void LZ5_resetStream (LZ5_stream_t* streamPtr);
+void LZ6_resetStream (LZ6_stream_t* streamPtr);
 
 /*
- * LZ5_createStream will allocate and initialize an LZ5_stream_t structure
- * LZ5_freeStream releases its memory.
- * In the context of a DLL (liblz5), please use these methods rather than the static struct.
- * They are more future proof, in case of a change of LZ5_stream_t size.
+ * LZ6_createStream will allocate and initialize an LZ6_stream_t structure
+ * LZ6_freeStream releases its memory.
+ * In the context of a DLL (liblz6), please use these methods rather than the static struct.
+ * They are more future proof, in case of a change of LZ6_stream_t size.
  */
-LZ5_stream_t* LZ5_createStream(void);
-int           LZ5_freeStream (LZ5_stream_t* streamPtr);
+LZ6_stream_t* LZ6_createStream(void);
+int           LZ6_freeStream (LZ6_stream_t* streamPtr);
 
 /*
- * LZ5_loadDict
- * Use this function to load a static dictionary into LZ5_stream.
+ * LZ6_loadDict
+ * Use this function to load a static dictionary into LZ6_stream.
  * Any previous data will be forgotten, only 'dictionary' will remain in memory.
  * Loading a size of 0 is allowed.
  * Return : dictionary size, in bytes (necessarily <= 64 KB)
  */
-int LZ5_loadDict (LZ5_stream_t* streamPtr, const char* dictionary, int dictSize);
+int LZ6_loadDict (LZ6_stream_t* streamPtr, const char* dictionary, int dictSize);
 
 /*
- * LZ5_compress_fast_continue
+ * LZ6_compress_fast_continue
  * Compress buffer content 'src', using data from previously compressed blocks as dictionary to improve compression ratio.
  * Important : Previous data blocks are assumed to still be present and unmodified !
  * 'dst' buffer must be already allocated.
- * If maxDstSize >= LZ5_compressBound(srcSize), compression is guaranteed to succeed, and runs faster.
+ * If maxDstSize >= LZ6_compressBound(srcSize), compression is guaranteed to succeed, and runs faster.
  * If not, and if compressed data cannot fit into 'dst' buffer size, compression stops, and function returns a zero.
  */
-int LZ5_compress_fast_continue (LZ5_stream_t* streamPtr, const char* src, char* dst, int srcSize, int maxDstSize, int acceleration);
+int LZ6_compress_fast_continue (LZ6_stream_t* streamPtr, const char* src, char* dst, int srcSize, int maxDstSize, int acceleration);
 
 /*
- * LZ5_saveDict
+ * LZ6_saveDict
  * If previously compressed data block is not guaranteed to remain available at its memory location
  * save it into a safer place (char* safeBuffer)
- * Note : you don't need to call LZ5_loadDict() afterwards,
- *        dictionary is immediately usable, you can therefore call LZ5_compress_fast_continue()
+ * Note : you don't need to call LZ6_loadDict() afterwards,
+ *        dictionary is immediately usable, you can therefore call LZ6_compress_fast_continue()
  * Return : saved dictionary size in bytes (necessarily <= dictSize), or 0 if error
  */
-int LZ5_saveDict (LZ5_stream_t* streamPtr, char* safeBuffer, int dictSize);
+int LZ6_saveDict (LZ6_stream_t* streamPtr, char* safeBuffer, int dictSize);
 
 
 /************************************************
 *  Streaming Decompression Functions
 ************************************************/
 
-#define LZ5_STREAMDECODESIZE_U64  4
-#define LZ5_STREAMDECODESIZE     (LZ5_STREAMDECODESIZE_U64 * sizeof(unsigned long long))
-typedef struct { unsigned long long table[LZ5_STREAMDECODESIZE_U64]; } LZ5_streamDecode_t;
+#define LZ6_STREAMDECODESIZE_U64  4
+#define LZ6_STREAMDECODESIZE     (LZ6_STREAMDECODESIZE_U64 * sizeof(unsigned long long))
+typedef struct { unsigned long long table[LZ6_STREAMDECODESIZE_U64]; } LZ6_streamDecode_t;
 /*
- * LZ5_streamDecode_t
- * information structure to track an LZ5 stream.
- * init this structure content using LZ5_setStreamDecode or memset() before first use !
+ * LZ6_streamDecode_t
+ * information structure to track an LZ6 stream.
+ * init this structure content using LZ6_setStreamDecode or memset() before first use !
  *
- * In the context of a DLL (liblz5) please prefer usage of construction methods below.
- * They are more future proof, in case of a change of LZ5_streamDecode_t size in the future.
- * LZ5_createStreamDecode will allocate and initialize an LZ5_streamDecode_t structure
- * LZ5_freeStreamDecode releases its memory.
+ * In the context of a DLL (liblz6) please prefer usage of construction methods below.
+ * They are more future proof, in case of a change of LZ6_streamDecode_t size in the future.
+ * LZ6_createStreamDecode will allocate and initialize an LZ6_streamDecode_t structure
+ * LZ6_freeStreamDecode releases its memory.
  */
-LZ5_streamDecode_t* LZ5_createStreamDecode(void);
-int                 LZ5_freeStreamDecode (LZ5_streamDecode_t* LZ5_stream);
+LZ6_streamDecode_t* LZ6_createStreamDecode(void);
+int                 LZ6_freeStreamDecode (LZ6_streamDecode_t* LZ6_stream);
 
 /*
- * LZ5_setStreamDecode
+ * LZ6_setStreamDecode
  * Use this function to instruct where to find the dictionary.
  * Setting a size of 0 is allowed (same effect as reset).
  * Return : 1 if OK, 0 if error
  */
-int LZ5_setStreamDecode (LZ5_streamDecode_t* LZ5_streamDecode, const char* dictionary, int dictSize);
+int LZ6_setStreamDecode (LZ6_streamDecode_t* LZ6_streamDecode, const char* dictionary, int dictSize);
 
 /*
 *_continue() :
@@ -286,21 +286,21 @@ int LZ5_setStreamDecode (LZ5_streamDecode_t* LZ5_streamDecode, const char* dicti
       In which case, encoding and decoding buffers do not need to be synchronized,
       and encoding ring buffer can have any size, including larger than decoding buffer.
     Whenever these conditions are not possible, save the last 64KB of decoded data into a safe buffer,
-    and indicate where it is saved using LZ5_setStreamDecode()
+    and indicate where it is saved using LZ6_setStreamDecode()
 */
-int LZ5_decompress_safe_continue (LZ5_streamDecode_t* LZ5_streamDecode, const char* source, char* dest, int compressedSize, int maxDecompressedSize);
-int LZ5_decompress_fast_continue (LZ5_streamDecode_t* LZ5_streamDecode, const char* source, char* dest, int originalSize);
+int LZ6_decompress_safe_continue (LZ6_streamDecode_t* LZ6_streamDecode, const char* source, char* dest, int compressedSize, int maxDecompressedSize);
+int LZ6_decompress_fast_continue (LZ6_streamDecode_t* LZ6_streamDecode, const char* source, char* dest, int originalSize);
 
 
 /*
 Advanced decoding functions :
 *_usingDict() :
     These decoding functions work the same as
-    a combination of LZ5_setStreamDecode() followed by LZ5_decompress_x_continue()
-    They are stand-alone. They don't need nor update an LZ5_streamDecode_t structure.
+    a combination of LZ6_setStreamDecode() followed by LZ6_decompress_x_continue()
+    They are stand-alone. They don't need nor update an LZ6_streamDecode_t structure.
 */
-int LZ5_decompress_safe_usingDict (const char* source, char* dest, int compressedSize, int maxDecompressedSize, const char* dictStart, int dictSize);
-int LZ5_decompress_fast_usingDict (const char* source, char* dest, int originalSize, const char* dictStart, int dictSize);
+int LZ6_decompress_safe_usingDict (const char* source, char* dest, int compressedSize, int maxDecompressedSize, const char* dictStart, int dictSize);
+int LZ6_decompress_fast_usingDict (const char* source, char* dest, int originalSize, const char* dictStart, int dictSize);
 
 
 /**************************************
@@ -311,51 +311,51 @@ int LZ5_decompress_fast_usingDict (const char* source, char* dest, int originalS
    it is generally possible to disable them,
    with -Wno-deprecated-declarations for gcc
    or _CRT_SECURE_NO_WARNINGS in Visual for example.
-   Otherwise, you can also define LZ5_DISABLE_DEPRECATE_WARNINGS */
-#define LZ5_GCC_VERSION (__GNUC__ * 100 + __GNUC_MINOR__)
-#ifdef LZ5_DISABLE_DEPRECATE_WARNINGS
-#  define LZ5_DEPRECATED()   /* disable deprecation warnings */
+   Otherwise, you can also define LZ6_DISABLE_DEPRECATE_WARNINGS */
+#define LZ6_GCC_VERSION (__GNUC__ * 100 + __GNUC_MINOR__)
+#ifdef LZ6_DISABLE_DEPRECATE_WARNINGS
+#  define LZ6_DEPRECATED()   /* disable deprecation warnings */
 #else
-#  if (LZ5_GCC_VERSION >= 405) || defined(__clang__)
-#    define LZ5_DEPRECATED(message) __attribute__((deprecated(message)))
-#  elif (LZ5_GCC_VERSION >= 301)
-#    define LZ5_DEPRECATED(message) __attribute__((deprecated))
+#  if (LZ6_GCC_VERSION >= 405) || defined(__clang__)
+#    define LZ6_DEPRECATED(message) __attribute__((deprecated(message)))
+#  elif (LZ6_GCC_VERSION >= 301)
+#    define LZ6_DEPRECATED(message) __attribute__((deprecated))
 #  elif defined(_MSC_VER)
-#    define LZ5_DEPRECATED(message) __declspec(deprecated(message))
+#    define LZ6_DEPRECATED(message) __declspec(deprecated(message))
 #  else
-#    pragma message("WARNING: You need to implement LZ5_DEPRECATED for this compiler")
-#    define LZ5_DEPRECATED(message)
+#    pragma message("WARNING: You need to implement LZ6_DEPRECATED for this compiler")
+#    define LZ6_DEPRECATED(message)
 #  endif
-#endif /* LZ5_DISABLE_DEPRECATE_WARNINGS */
+#endif /* LZ6_DISABLE_DEPRECATE_WARNINGS */
 
 /* Obsolete compression functions */
 /* These functions will generate warnings in a future release */
-int LZ5_compress               (const char* source, char* dest, int sourceSize);
-int LZ5_compress_limitedOutput (const char* source, char* dest, int sourceSize, int maxOutputSize);
-int LZ5_compress_withState               (void* state, const char* source, char* dest, int inputSize);
-int LZ5_compress_limitedOutput_withState (void* state, const char* source, char* dest, int inputSize, int maxOutputSize);
-int LZ5_compress_continue                (LZ5_stream_t* LZ5_streamPtr, const char* source, char* dest, int inputSize);
-int LZ5_compress_limitedOutput_continue  (LZ5_stream_t* LZ5_streamPtr, const char* source, char* dest, int inputSize, int maxOutputSize);
+int LZ6_compress               (const char* source, char* dest, int sourceSize);
+int LZ6_compress_limitedOutput (const char* source, char* dest, int sourceSize, int maxOutputSize);
+int LZ6_compress_withState               (void* state, const char* source, char* dest, int inputSize);
+int LZ6_compress_limitedOutput_withState (void* state, const char* source, char* dest, int inputSize, int maxOutputSize);
+int LZ6_compress_continue                (LZ6_stream_t* LZ6_streamPtr, const char* source, char* dest, int inputSize);
+int LZ6_compress_limitedOutput_continue  (LZ6_stream_t* LZ6_streamPtr, const char* source, char* dest, int inputSize, int maxOutputSize);
 
 /* Obsolete decompression functions */
 /* These function names are completely deprecated and must no longer be used.
-   They are only provided in lz5.c for compatibility with older programs.
-    - LZ5_uncompress is the same as LZ5_decompress_fast
-    - LZ5_uncompress_unknownOutputSize is the same as LZ5_decompress_safe
+   They are only provided in lz6.c for compatibility with older programs.
+    - LZ6_uncompress is the same as LZ6_decompress_fast
+    - LZ6_uncompress_unknownOutputSize is the same as LZ6_decompress_safe
    These function prototypes are now disabled; uncomment them only if you really need them.
    It is highly recommended to stop using these prototypes and migrate to maintained ones */
-/* int LZ5_uncompress (const char* source, char* dest, int outputSize); */
-/* int LZ5_uncompress_unknownOutputSize (const char* source, char* dest, int isize, int maxOutputSize); */
+/* int LZ6_uncompress (const char* source, char* dest, int outputSize); */
+/* int LZ6_uncompress_unknownOutputSize (const char* source, char* dest, int isize, int maxOutputSize); */
 
 /* Obsolete streaming functions; use new streaming interface whenever possible */
-LZ5_DEPRECATED("use LZ5_createStream() instead") void* LZ5_create (char* inputBuffer);
-LZ5_DEPRECATED("use LZ5_createStream() instead") int   LZ5_sizeofStreamState(void);
-LZ5_DEPRECATED("use LZ5_resetStream() instead")  int   LZ5_resetStreamState(void* state, char* inputBuffer);
-LZ5_DEPRECATED("use LZ5_saveDict() instead")     char* LZ5_slideInputBuffer (void* state);
+LZ6_DEPRECATED("use LZ6_createStream() instead") void* LZ6_create (char* inputBuffer);
+LZ6_DEPRECATED("use LZ6_createStream() instead") int   LZ6_sizeofStreamState(void);
+LZ6_DEPRECATED("use LZ6_resetStream() instead")  int   LZ6_resetStreamState(void* state, char* inputBuffer);
+LZ6_DEPRECATED("use LZ6_saveDict() instead")     char* LZ6_slideInputBuffer (void* state);
 
 /* Obsolete streaming decoding functions */
-LZ5_DEPRECATED("use LZ5_decompress_safe_usingDict() instead") int LZ5_decompress_safe_withPrefix64k (const char* src, char* dst, int compressedSize, int maxDstSize);
-LZ5_DEPRECATED("use LZ5_decompress_fast_usingDict() instead") int LZ5_decompress_fast_withPrefix64k (const char* src, char* dst, int originalSize);
+LZ6_DEPRECATED("use LZ6_decompress_safe_usingDict() instead") int LZ6_decompress_safe_withPrefix64k (const char* src, char* dst, int compressedSize, int maxDstSize);
+LZ6_DEPRECATED("use LZ6_decompress_fast_usingDict() instead") int LZ6_decompress_fast_withPrefix64k (const char* src, char* dst, int originalSize);
 
 
 #if defined (__cplusplus)

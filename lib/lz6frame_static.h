@@ -1,5 +1,5 @@
 /*
-   LZ5 auto-framing library
+   LZ6 auto-framing library
    Header File for static linking only
    Copyright (C) 2011-2015, Yann Collet.
 
@@ -29,8 +29,8 @@
    OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
    You can contact the author at :
-   - LZ5 source repository : https://github.com/inikep/lz5
-   - LZ5 public forum : https://groups.google.com/forum/#!forum/lz5c
+   - LZ6 source repository : https://github.com/inikep/lz6
+   - LZ6 public forum : https://groups.google.com/forum/#!forum/lz6c
 */
 
 #pragma once
@@ -39,7 +39,7 @@
 extern "C" {
 #endif
 
-/* lz5frame_static.h should be used solely in the context of static linking.
+/* lz6frame_static.h should be used solely in the context of static linking.
  * It contains definitions which may still change overtime.
  * Never use it in the context of DLL linking.
  * */
@@ -48,13 +48,13 @@ extern "C" {
 /**************************************
 *  Includes
 **************************************/
-#include "lz5frame.h"
+#include "lz6frame.h"
 
 
 /**************************************
  * Error management
  * ************************************/
-#define LZ5F_LIST_ERRORS(ITEM) \
+#define LZ6F_LIST_ERRORS(ITEM) \
         ITEM(OK_NoError) ITEM(ERROR_GENERIC) \
         ITEM(ERROR_maxBlockSize_invalid) ITEM(ERROR_blockMode_invalid) ITEM(ERROR_contentChecksumFlag_invalid) \
         ITEM(ERROR_compressionLevel_invalid) \
@@ -67,13 +67,13 @@ extern "C" {
         ITEM(ERROR_headerChecksum_invalid) ITEM(ERROR_contentChecksum_invalid) \
         ITEM(ERROR_maxCode)
 
-//#define LZ5F_DISABLE_OLD_ENUMS
-#ifndef LZ5F_DISABLE_OLD_ENUMS
-#define LZ5F_GENERATE_ENUM(ENUM) LZ5F_##ENUM, ENUM = LZ5F_##ENUM,
+//#define LZ6F_DISABLE_OLD_ENUMS
+#ifndef LZ6F_DISABLE_OLD_ENUMS
+#define LZ6F_GENERATE_ENUM(ENUM) LZ6F_##ENUM, ENUM = LZ6F_##ENUM,
 #else
-#define LZ5F_GENERATE_ENUM(ENUM) LZ5F_##ENUM,
+#define LZ6F_GENERATE_ENUM(ENUM) LZ6F_##ENUM,
 #endif
-typedef enum { LZ5F_LIST_ERRORS(LZ5F_GENERATE_ENUM) } LZ5F_errorCodes;  /* enum is exposed, to handle specific errors; compare function result to -enum value */
+typedef enum { LZ6F_LIST_ERRORS(LZ6F_GENERATE_ENUM) } LZ6F_errorCodes;  /* enum is exposed, to handle specific errors; compare function result to -enum value */
 
 
 #if defined (__cplusplus)
