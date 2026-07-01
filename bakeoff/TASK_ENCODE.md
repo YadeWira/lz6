@@ -19,9 +19,17 @@ and **without changing round-trip correctness**. Almost all the time is in one f
   - ~10% — the candidate head-check `ip[best_mlen]==match[best_mlen] && MEM_read24(...)`
   - ~17% — the `matchIndex >= dictLimit` branch + `match = base + matchIndex`
   - ~4%  — `MEM_count` match-length extension + backward extension
-- **It is instruction-bound, NOT memory-bound.** D1 read-miss rate ~8.6% but
-  last-level miss rate ~0.02% — the working set lives in L2/L3. So the lever is
-  *fewer instructions per chain hop* and/or *fewer wasted hops*, not cache locality.
+- **The real wall-clock bottleneck is the serial load-dependency chain**, not raw
+  instruction count. `matchIndex -= chainTable[matchIndex & contentMask]` feeds the
+  *next* iteration's address from *this* iteration's load, so the hops cannot overlap —
+  each waits on the previous load's latency. D1 read-miss rate is ~8.6% but last-level
+  miss rate is ~0.02% (working set lives in L2/L3), so each stalled hop costs ~L2 latency
+  and there are up to 128–256 of them per position, in series.
+- **Measured dead-end (don't repeat it):** the `matchIndex >= dictLimit` branch is ~17%
+  of *instructions* but it is almost-always-true → perfectly predicted → specializing it
+  out of the loop gave **+0.0%** wall-clock in an A/B test at byte-identical output.
+  Callgrind's instruction% badly overstates the cost of predictable branches here. Chase
+  the load-latency chain and the number of hops, not the instruction count.
 
 ## Hard rules (violating any = DISQUALIFIED)
 1. **Round-trip must stay correct.** Every file that compresses must decompress to a
@@ -49,16 +57,19 @@ and **without changing round-trip correctness**. Almost all the time is in one f
 6. Keep the diff focused and readable.
 
 ## Where the speed is (ideas, not a checklist — every one must stay ratio-neutral)
-- **Specialize away the extDict branch.** In single-segment compression there is no
-  external dictionary, so the `else` branch at `:770` (`matchIndex < dictLimit`) is never
-  taken, yet `if (matchIndex >= dictLimit)` is evaluated on every hop. A version of the
-  loop for the no-extDict case (guarded so dict mode still uses the full path) removes a
-  branch from the innermost loop. Must produce identical matches.
-- **Tighten the per-hop work.** The loop does: bounds/counter checks → dictLimit branch →
-  pointer form → head-check → chain hop. Reducing instruction count per hop (while
-  keeping the exact same set of candidate matches examined and the exact same match
-  chosen) is the core win. Reordering the short-circuit conditions is fine *only if* it
-  preserves the wraparound guard (rule 3) and examines the same candidates.
+- **Attack the load-latency chain (the real bottleneck).** The chain hop is a serial
+  pointer-chase. Ideas that can hide/reduce that latency while examining the *same*
+  candidates and picking the *same* match: software-prefetching the match bytes
+  (`base + matchIndex`) and/or the next chain slot as early as the index is known;
+  restructuring so an independent computation overlaps the load; reducing the *number* of
+  hops that are actually productive without dropping any match the baseline would keep
+  (e.g. a cheaper early-reject that provably cannot discard a winning candidate).
+  NOTE: naively specializing the `matchIndex >= dictLimit` branch out was measured at
+  **+0.0%** — predictable branches are already free; don't spend the diff there.
+- **Tighten the per-hop work only where it isn't a predicted branch.** Reordering the
+  short-circuit conditions is fine *only if* it preserves the wraparound guard (rule 3)
+  and examines the same candidates. Don't expect much from instruction-count trimming
+  alone — the loads dominate.
 - **`MEM_count` (match-length compare)** and the backward-extension `while` loop (`:751`)
   are byte/word loops — SIMD or wider word compares behind `#ifdef` can help, but the
   computed match length must be identical to the scalar result (off-by-one here changes
