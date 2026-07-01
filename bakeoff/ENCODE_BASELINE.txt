@@ -1,0 +1,15 @@
+# lz6 encode baseline — commit a8e275e
+# fmt: SIZE <corpus> <lvl> <bytes> | MBPS <corpus> <lvl> <encMBps>
+SIZE realistic.dat 11 1466024
+SIZE realistic.dat 15 1452807
+SIZE corpus8.dat 11 757052
+SIZE corpus8.dat 15 751025
+SIZE sil40.dat 11 15421438
+SIZE sil40.dat 15 15174736
+MBPS realistic.dat 11 8.1
+MBPS realistic.dat 14 1.8
+MBPS realistic.dat 15 1.0
+MBPS corpus8.dat 11 9.1
+MBPS corpus8.dat 14 2.9
+MBPS corpus8.dat 15 1.9
+MBPS sil40.dat 11 4.8
