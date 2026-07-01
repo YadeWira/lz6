@@ -50,15 +50,13 @@ int main(int argc, char** argv)
           LZ6_decompress_safe(comp, dst, csize, srcSize);
           free(dst); }
 
-        /* 2) corrupted variants.
-           Input is padded by WILDCOPYLENGTH (8): the decoder's literal
-           wildcopy may over-READ up to 7 bytes past the compressed input
-           (LZ4 heritage — happens only on malformed streams, valid streams
-           route near-end runs to the exact-copy path). Real callers/the frame
-           layer provide this slack, so we model it and let the gate focus on
-           the dangerous class: OUT-OF-BOUNDS WRITES (output stays exactly
-           sized) and any over-read WORSE than 8 bytes (a new bug). */
-        char* cc = (char*)malloc(csize + 8);
+        /* 2) corrupted variants. Input is allocated EXACTLY (no trailing slack)
+           so the gate catches any out-of-bounds read OR write of the compressed
+           input — the decoder must never touch a byte past compressedSize.
+           (The literal-copy near-end over-read was fixed in lz6.c: the fast
+           wildcopy now falls back to an exact memcpy within WILDCOPYLENGTH of
+           iend.) Output buffer is exact too, so OOB writes are caught. */
+        char* cc = (char*)malloc(csize);
         for (int it=0; it<iters; it++)
         {
             memcpy(cc, comp, csize);

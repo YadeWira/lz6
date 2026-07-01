@@ -994,7 +994,15 @@ FORCE_INLINE int LZ6_decompress_generic(
             op += length;
             break;     /* Necessarily EOF, due to parsing restrictions */
         }
-        MEM_wildCopy(op, ip, cpy);
+        /* MEM_wildCopy over-reads the source up to WILDCOPYLENGTH-1 bytes, so it
+           is only safe with that much input margin. When the literals end within
+           WILDCOPYLENGTH of iend (a non-EOF run — the slow path above already
+           handled true end-of-block), copy exactly so we never read past iend.
+           The common case keeps the branchless wildcopy; the guard is rarely taken. */
+        if ((endOnInput) && unlikely(ip+length > iend-WILDCOPYLENGTH))
+            memcpy(op, ip, length);
+        else
+            MEM_wildCopy(op, ip, cpy);
         ip += length; op = cpy;
 
         /* get offset */
