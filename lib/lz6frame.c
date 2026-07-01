@@ -411,25 +411,32 @@ size_t LZ6F_compressBegin(LZ6F_compressionContext_t compressionContext, void* ds
     cctxPtr->prefs = *preferencesPtr;
     cctxPtr->prefs.frameInfo.blockMode = LZ6F_blockIndependent;
 
-    /* ctx Management */
-    {
-        U32 tableID = (cctxPtr->prefs.compressionLevel < minHClevel) ? 1 : 2;  /* 0:nothing ; 1:LZ6_createStream ; 2:LZ6_createStreamHC */
-      //  printf("BEFORE lz6CtxLevel=%d tableID=%d compressionLevel=%d minHClevel=%d\n", (int)cctxPtr->lz6CtxLevel, (int)tableID, (int)cctxPtr->prefs.compressionLevel, minHClevel);
-        if (cctxPtr->lz6CtxLevel != tableID)
-        {
-            LZ6F_freeStream(cctxPtr);
-
-            cctxPtr->lz6CtxLevel = tableID;
-            if (cctxPtr->lz6CtxLevel == 1)
-                cctxPtr->lz6CtxPtr = (void*)LZ6_createStream();
-            else
-                cctxPtr->lz6CtxPtr = (void*)LZ6_createStreamHC(cctxPtr->prefs.compressionLevel);
-        }
-    }
-
-    /* Buffer Management */
+    /* Resolve the block size first: the HC context sizes its window/chain table
+       to the max block, and that window is fixed for the context's lifetime. */
     if (cctxPtr->prefs.frameInfo.blockSizeID == 0) cctxPtr->prefs.frameInfo.blockSizeID = LZ6F_BLOCKSIZEID_DEFAULT;
-    cctxPtr->maxBlockSize = LZ6F_getBlockSize(cctxPtr->prefs.frameInfo.blockSizeID);
+    {
+        size_t const newMaxBlockSize = LZ6F_getBlockSize(cctxPtr->prefs.frameInfo.blockSizeID);
+
+        /* ctx Management */
+        {
+            U32 tableID = (cctxPtr->prefs.compressionLevel < minHClevel) ? 1 : 2;  /* 0:nothing ; 1:LZ6_createStream ; 2:LZ6_createStreamHC */
+            /* recreate on level change, or (for HC) when the block size changed, since the window is sized to it */
+            if ((cctxPtr->lz6CtxLevel != tableID) ||
+                ((tableID == 2) && (newMaxBlockSize != cctxPtr->maxBlockSize)))
+            {
+                LZ6F_freeStream(cctxPtr);
+
+                cctxPtr->lz6CtxLevel = tableID;
+                if (cctxPtr->lz6CtxLevel == 1)
+                    cctxPtr->lz6CtxPtr = (void*)LZ6_createStream();
+                else
+                    cctxPtr->lz6CtxPtr = (void*)LZ6_createStreamHC_sized(cctxPtr->prefs.compressionLevel, newMaxBlockSize);
+            }
+        }
+
+        /* Buffer Management */
+        cctxPtr->maxBlockSize = newMaxBlockSize;
+    }
 
     requiredBuffSize = cctxPtr->maxBlockSize + ((cctxPtr->prefs.frameInfo.blockMode == LZ6F_blockLinked) * 2 * LZ6F_DICT_SIZE);
     if (preferencesPtr->autoFlush)

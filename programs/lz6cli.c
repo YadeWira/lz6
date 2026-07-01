@@ -77,7 +77,7 @@
 #define LZ6CAT "lz6cat"
 #define UNLZ6 "unlz6"
 
-#define LZ6_BLOCKSIZEID_DEFAULT 4
+#define LZ6_BLOCKSIZEID_DEFAULT 5
 
 
 /**************************************
@@ -151,7 +151,7 @@ static int usage_advanced(void)
     DISPLAY( " -c     : force write to standard output, even if it is the console\n");
     DISPLAY( " -t     : test compressed file integrity\n");
     DISPLAY( " -m     : multiple input files (implies automatic output filenames)\n");
-    DISPLAY( " -B#    : Block size [1-7] = 64KB, 256KB, 1MB, 4MB, 16MB, 64MB, 256MB (default : 4 = 4MB)\n");
+    DISPLAY( " -B#    : Block size [1-7] = 64KB, 256KB, 1MB, 4MB, 16MB, 64MB, 256MB (default : 5 = 16MB)\n");
   //  DISPLAY( " -BD    : Block dependency (improve compression ratio)\n");
     /* DISPLAY( " -BX    : enable block checksum (default:disabled)\n");   *//* Option currently inactive */
     DISPLAY( "--no-frame-crc : disable stream checksum (default:enabled)\n");

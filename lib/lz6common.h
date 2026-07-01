@@ -87,7 +87,7 @@ static const int LZ6_minLength = (MFLIMIT+1);
 #define MB *(1 <<20)
 #define GB *(1U<<30)
 
-#define MAXD_LOG 22
+#define MAXD_LOG 24
 #define MAX_DISTANCE ((1 << MAXD_LOG) - 1)
 #define LZ6_DICT_SIZE (1 << MAXD_LOG)
 

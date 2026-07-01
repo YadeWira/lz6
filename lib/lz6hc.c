@@ -52,13 +52,41 @@
 **************************************/
 
 
-int LZ6_alloc_mem_HC(LZ6HC_Data_Structure* ctx, int compressionLevel)
+/* smallest L such that (1<<L) >= n, floored at a small minimum window */
+static U32 LZ6HC_ceilLog2(size_t n)
 {
-    ctx->compressionLevel = compressionLevel;  
+    U32 L = 10;                       /* 1 KB floor: never allocate a degenerate window */
+    while (((size_t)1 << L) < n) L++;
+    return L;
+}
+
+/* Adapt the window (windowLog) and its chain table (contentLog) to the largest
+   block this context will ever compress. windowLog defaults to the MAXD_LOG
+   ceiling; shrinking it for smaller inputs keeps the chain-table allocation and
+   the effective window from exceeding what the data can use. The hash table
+   (hashLog) is independent of the window and is left untouched.
+   NOTE: windowLog is fixed for the lifetime of a context (cross-block match
+   offsets depend on it), so this must be applied once, at allocation, sized to
+   the maximum block — never per-block. */
+static void LZ6HC_capParamsToSize(LZ6HC_parameters* p, size_t maxSrcSize)
+{
+    U32 sizeLog = LZ6HC_ceilLog2(maxSrcSize);
+    if (sizeLog < p->windowLog)
+    {
+        U32 delta = p->contentLog - p->windowLog;   /* 0 or 1 in the default table */
+        p->windowLog  = sizeLog;
+        p->contentLog = sizeLog + delta;
+    }
+}
+
+int LZ6_alloc_mem_HC_sized(LZ6HC_Data_Structure* ctx, int compressionLevel, size_t maxSrcSize)
+{
+    ctx->compressionLevel = compressionLevel;
     if (compressionLevel > g_maxCompressionLevel) ctx->compressionLevel = g_maxCompressionLevel;
     if (compressionLevel < 1) ctx->compressionLevel = LZ6HC_compressionLevel_default;
 
     ctx->params = LZ6HC_defaultParameters[ctx->compressionLevel];
+    LZ6HC_capParamsToSize(&ctx->params, maxSrcSize);
 
     ctx->hashTable = (U32*) malloc(sizeof(U32)*(((size_t)1 << ctx->params.hashLog3)+((size_t)1 << ctx->params.hashLog)));
     if (!ctx->hashTable)
@@ -75,6 +103,12 @@ int LZ6_alloc_mem_HC(LZ6HC_Data_Structure* ctx, int compressionLevel)
     }
 
     return 1;
+}
+
+/* Back-compat entry: allocate with the full MAXD_LOG window (no size cap). */
+int LZ6_alloc_mem_HC(LZ6HC_Data_Structure* ctx, int compressionLevel)
+{
+    return LZ6_alloc_mem_HC_sized(ctx, compressionLevel, (size_t)1 << MAXD_LOG);
 }
 
 void LZ6_free_mem_HC(LZ6HC_Data_Structure* ctx)
@@ -1776,7 +1810,7 @@ int LZ6_compress_HC(const char* src, char* dst, int srcSize, int maxDstSize, int
     LZ6HC_Data_Structure* const statePtr = &state;
     int cSize = 0;
 
-    if (!LZ6_alloc_mem_HC(statePtr, compressionLevel))
+    if (!LZ6_alloc_mem_HC_sized(statePtr, compressionLevel, (size_t)(srcSize > 0 ? srcSize : 1)))
         return 0;
     cSize = LZ6_compress_HC_extStateHC(statePtr, src, dst, srcSize, maxDstSize);
 
@@ -1791,18 +1825,24 @@ int LZ6_compress_HC(const char* src, char* dst, int srcSize, int maxDstSize, int
 *  Streaming Functions
 **************************************/
 /* allocation */
-LZ6_streamHC_t* LZ6_createStreamHC(int compressionLevel) 
-{ 
+/* Size the context's window/chain table to maxBlockSize (fixed for its life). */
+LZ6_streamHC_t* LZ6_createStreamHC_sized(int compressionLevel, size_t maxBlockSize)
+{
     LZ6_streamHC_t* statePtr = (LZ6_streamHC_t*)malloc(sizeof(LZ6_streamHC_t));
     if (!statePtr)
         return NULL;
 
-    if (!LZ6_alloc_mem_HC((LZ6HC_Data_Structure*)statePtr, compressionLevel))
+    if (!LZ6_alloc_mem_HC_sized((LZ6HC_Data_Structure*)statePtr, compressionLevel, maxBlockSize))
     {
         FREEMEM(statePtr);
         return NULL;
     }
-    return statePtr; 
+    return statePtr;
+}
+
+LZ6_streamHC_t* LZ6_createStreamHC(int compressionLevel)
+{
+    return LZ6_createStreamHC_sized(compressionLevel, (size_t)1 << MAXD_LOG);
 }
 
 int LZ6_freeStreamHC (LZ6_streamHC_t* LZ6_streamHCPtr)

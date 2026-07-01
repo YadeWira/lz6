@@ -69,6 +69,7 @@ LZ6_compress_HC :
 typedef struct LZ6HC_Data_s LZ6HC_Data_Structure;
 
 int LZ6_alloc_mem_HC(LZ6HC_Data_Structure* statePtr, int compressionLevel);
+int LZ6_alloc_mem_HC_sized(LZ6HC_Data_Structure* statePtr, int compressionLevel, size_t maxSrcSize);
 void LZ6_free_mem_HC(LZ6HC_Data_Structure* statePtr);
 
 int LZ6_sizeofStateHC(void);
@@ -104,6 +105,7 @@ typedef struct { size_t table[LZ6_STREAMHCSIZE_SIZET]; } LZ6_streamHC_t;
 
 
 LZ6_streamHC_t* LZ6_createStreamHC(int compressionLevel);
+LZ6_streamHC_t* LZ6_createStreamHC_sized(int compressionLevel, size_t maxBlockSize);
 int             LZ6_freeStreamHC (LZ6_streamHC_t* streamHCPtr);
 /*
   These functions create and release memory for LZ6 HC streaming state.

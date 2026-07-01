@@ -105,7 +105,7 @@
 
 #define CACHELINE 64
 #define MIN_STREAM_BUFSIZE (192 KB)
-#define LZ6IO_BLOCKSIZEID_DEFAULT 4
+#define LZ6IO_BLOCKSIZEID_DEFAULT 5
 
 #define sizeT sizeof(size_t)
 #define maskT (sizeT - 1)

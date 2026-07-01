@@ -106,7 +106,7 @@ static int LZ6_compress_local(const char* src, char* dst, int srcSize, int dstSi
 #define GB *(1U<<30)
 
 #define MAX_MEM             (2 GB - 64 MB)
-#define DEFAULT_CHUNKSIZE   (4 MB)
+#define DEFAULT_CHUNKSIZE   (16 MB)
 
 
 /**************************************
