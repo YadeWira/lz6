@@ -1085,7 +1085,7 @@ FORCE_INLINE int LZ6_decompress_generic(
 
         /* copy match within block */
         cpy = op + length;
-        if (unlikely(offset<8))
+        if (unlikely(offset < 8))
         {
             const int dec64 = dec64table[offset];
             op[0] = match[0];
@@ -1095,24 +1095,29 @@ FORCE_INLINE int LZ6_decompress_generic(
             match += dec32table[offset];
             memcpy(op+4, match, 4);
             match -= dec64;
-        } else { MEM_copy8(op, match); match+=8; }
-        op += 8;
-
-        if (unlikely(cpy>oend-(16-MINMATCH)))
+            op += 8;
+        }
+        else
         {
-            BYTE* const oCopyLimit = oend-(WILDCOPYLENGTH-1);
-            if (cpy > oend-LASTLITERALS) goto _output_error;    /* Error : last LASTLITERALS bytes must be literals (uncompressed) */
+            MEM_copy8(op, match); match += 8;
+            op += 8;
+        }
+
+        if (unlikely(cpy > oend - 16))
+        {
+            BYTE* const oCopyLimit = oend - 15;
+            if (cpy > oend - LASTLITERALS) goto _output_error;
             if (op < oCopyLimit)
             {
-                MEM_wildCopy(op, match, oCopyLimit);
+                MEM_wildCopy16(op, match, oCopyLimit);
                 match += oCopyLimit - op;
                 op = oCopyLimit;
             }
-            while (op<cpy) *op++ = *match++;
+            while (op < cpy) *op++ = *match++;
         }
         else
-            MEM_wildCopy(op, match, cpy);
-        op=cpy;   /* correction */
+            MEM_wildCopy16(op, match, cpy);
+        op = cpy;
     }
 
     /* end of decoding */

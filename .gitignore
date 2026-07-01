@@ -36,3 +36,4 @@ projects/VS2010
 programs/lz6
 lib/*.o
 programs/*.o
+.commandcode/

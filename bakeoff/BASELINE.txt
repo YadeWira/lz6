@@ -1,0 +1,8 @@
+== bench_decode.sh  label=baseline-d6e57fb ==
+round-trip: OK (all corpora, L1/6/11/15)
+safety (ASAN fuzz): OK (no OOB on malformed input)
+decode MB/s (level 6 output, best of 5):
+  realistic.dat    809.6 MB/s
+  corpus8.dat      1232.9 MB/s
+  sil40.dat        789.7 MB/s
+RESULT[baseline-d6e57fb]: round-trip OK — compare decode MB/s vs baseline above.

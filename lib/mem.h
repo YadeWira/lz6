@@ -422,18 +422,15 @@ static void MEM_copy8(void* dst, const void* src) { memcpy(dst, src, 8); }
 
 #define COPY8(d,s) { MEM_copy8(d,s); d+=8; s+=8; }
 
-
-/*! MEM_wildcopy : custom version of memcpy(), can copy up to 7-8 bytes too many */
-/*static void MEM_wildcopy(void* dst, const void* src, size_t length)
+/* 16-byte copy: two 8-byte copies (scalar fallback) */
+MEM_STATIC void MEM_copy16(void* dst, const void* src)
 {
-    const BYTE* ip = (const BYTE*)src;
-    BYTE* op = (BYTE*)dst;
-    BYTE* const oend = op + length;
-    do
-        COPY8(op, ip)
-    while (op < oend);
-} */ 
+    MEM_copy8(dst, src);
+    MEM_copy8((BYTE*)dst+8, (const BYTE*)src+8);
+}
 
+
+/*! MEM_wildcopy : custom version of memcpy(), can overwrite up to 7 bytes beyond dstEnd */
 /* customized variant of memcpy, which can overwrite up to 7 bytes beyond dstEnd */
 static void MEM_wildCopy(void* dstPtr, const void* srcPtr, void* dstEnd)
 {
@@ -442,6 +439,19 @@ static void MEM_wildCopy(void* dstPtr, const void* srcPtr, void* dstEnd)
     BYTE* const e = (BYTE*)dstEnd;
 
     do { MEM_copy8(d,s); d+=8; s+=8; } while (d<e);
+}
+
+/* 16-byte wildcopy, overwrites up to 15 bytes beyond dstEnd.
+   Only use where the caller's guard accounts for the wider overrun.
+   Uses 'while' not 'do-while' so it writes nothing when (d >= e) —
+   the pre-copy may already have covered the full match. */
+static void MEM_wildCopy16(void* dstPtr, const void* srcPtr, void* dstEnd)
+{
+    BYTE* d = (BYTE*)dstPtr;
+    const BYTE* s = (const BYTE*)srcPtr;
+    BYTE* const e = (BYTE*)dstEnd;
+
+    while (d < e) { MEM_copy16(d,s); d+=16; s+=16; }
 }  
 
 #if defined (__cplusplus)
