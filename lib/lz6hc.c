@@ -46,6 +46,14 @@
 #include <stdio.h>
 #include <stdint.h>
 
+/* Software prefetch hint. A no-op where unsupported; prefetching a wild address
+   is harmless (never faults), so it needs no bounds check. */
+#if defined(__GNUC__) || defined(__clang__)
+#  define LZ6_PREFETCH(p)  __builtin_prefetch((const void*)(p))
+#else
+#  define LZ6_PREFETCH(p)  ((void)(p))
+#endif
+
 
 /**************************************
 *  HC Compression
@@ -738,6 +746,12 @@ FORCE_INLINE int LZ6HC_GetAllMatches (
 
     while ((matchIndex < current) && (matchIndex>=lowLimit) && (nbAttempts))
     {
+        /* Issue the chain-hop load now so its latency overlaps the candidate
+           check below, and prefetch the next candidate's bytes. matchIndex only
+           decreases along the chain, so this visits exactly the same indices as
+           the tail-hop form => byte-identical output. */
+        U32 nextIndex = matchIndex - chainTable[matchIndex & contentMask];
+        LZ6_PREFETCH(base + nextIndex);
         nbAttempts--;
         if (matchIndex >= dictLimit)
         {
@@ -794,7 +808,7 @@ FORCE_INLINE int LZ6HC_GetAllMatches (
                 if (best_mlen > LZ6_OPT_NUM) break;
             }
         }
-        matchIndex -= chainTable[matchIndex & contentMask];
+        matchIndex = nextIndex;
     }
 
 
