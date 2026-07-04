@@ -233,7 +233,7 @@ static unsigned LZ6IO_GetMilliSpan(clock_t nPrevious)
     return nSpan;
 }
 
-static unsigned long long LZ6IO_GetFileSize(const char* infilename)
+unsigned long long LZ6IO_GetFileSize(const char* infilename)
 {
     int r;
 #if defined(_MSC_VER)

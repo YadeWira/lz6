@@ -55,6 +55,11 @@ int LZ6IO_decompressFilename(const char* input_filename, const char* output_file
 int LZ6IO_compressMultipleFilenames(const char** inFileNamesTable, int ifntSize, const char* suffix, int compressionlevel);
 int LZ6IO_decompressMultipleFilenames(const char** inFileNamesTable, int ifntSize, const char* suffix);
 
+/* Returns the size in bytes of a regular file, or 0 if infilename is not a
+   regular file (e.g. stdin) or stat() fails. Exposed so the CLI can size
+   its block-size choice to the input without duplicating the stat() call. */
+unsigned long long LZ6IO_GetFileSize(const char* infilename);
+
 /* ************************************************** */
 /* ****************** Parameters ******************** */
 /* ************************************************** */

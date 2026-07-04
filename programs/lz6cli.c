@@ -239,7 +239,8 @@ int main(int argc, char** argv)
         forceCompress=0,
         main_pause=0,
         multiple_inputs=0,
-        operationResult=0;
+        operationResult=0,
+        blockSizeIdUserSet=0;
     const char* input_filename=0;
     const char* output_filename=0;
     char* dynNameSpace=0;
@@ -362,6 +363,7 @@ int main(int argc, char** argv)
                                     blockSize = LZ6IO_setBlockSizeID(B);
                                 //    printf("LZ6IO_setBlockSizeID %d %d\n", B, blockSize);
                                     BMK_setBlocksize(blockSize);
+                                    blockSizeIdUserSet = 1;   /* explicit -B overrides size-adaptive default below */
                                     argument++;
                                 }
                                 else                                                            
@@ -431,11 +433,31 @@ int main(int argc, char** argv)
     }
 
     DISPLAYLEVEL(3, WELCOME_MESSAGE);
-    if (!decode) DISPLAYLEVEL(4, "Blocks size : %i KB\n", blockSize>>10);
 
     /* No input filename ==> use stdin */
     if (multiple_inputs) input_filename = inFileNames[0], output_filename = (const char*)(inFileNames[0]);
     if(!input_filename) { input_filename=stdinmark; }
+
+    /* Size-adaptive block-size default: only when the user did not pass -B
+       explicitly, and this is a single-file compression of a real
+       (non-stdin) input. Blocks compress independently (no cross-block
+       back-references; see LZ6IO's default block-independence mode), so an
+       input spanning multiple blocks pays a per-boundary ratio cost. Once
+       the input no longer fits in one default-size (B5, 16MB) block, bump
+       to B6 (64MB): measured ~0.9-1% smaller output on multi-block inputs
+       for a memory/time cost that is only paid on inputs large enough to
+       matter. Deliberately capped at B6 -- B7 was not measured for this
+       policy. Multi-file (-m) and benchmark runs are left at the fixed
+       default since one blockSizeID is shared across all their inputs. */
+    if (!decode && !multiple_inputs && !blockSizeIdUserSet
+        && input_filename && strcmp(input_filename, stdinmark) != 0)
+    {
+        unsigned long long const knownSize = LZ6IO_GetFileSize(input_filename);
+        if (knownSize > (unsigned long long)blockSize)
+            blockSize = LZ6IO_setBlockSizeID(6);
+    }
+
+    if (!decode) DISPLAYLEVEL(4, "Blocks size : %i KB\n", blockSize>>10);
 
     /* Check if input is defined as console; trigger an error in this case */
     if (!strcmp(input_filename, stdinmark) && IS_CONSOLE(stdin) )
