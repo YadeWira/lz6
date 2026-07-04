@@ -36,8 +36,15 @@ build() {
 }
 
 # ASAN build — catches OOB reads/writes in the encoder (e.g. a chain-delta U32
-# wrap sending a match pointer out of bounds). Optimal parser is slow, so this
-# runs on small inputs only. Rebuilds -O3 afterward for timing.
+# wrap sending a match pointer out of bounds). Optimal parser is slow, so most
+# corpora here are small slices — EXCEPT full sil40.dat below, which is load-
+# bearing: the CLI streams input through LZ6F_compressUpdate in fixed 16MB
+# blocks, and a real heap-buffer-overflow (stale/unbounded best_mlen feeding
+# LZ6HC_GetAllMatches's speculative ip[best_mlen] head-check, fixed 2026-07-04)
+# only manifested exactly at that 16MB block boundary on an input bigger than
+# one block — a 1.2MB slice can never reach it. Do not shrink sil40.dat back
+# to a slice here without another way to cross a 16MB block boundary.
+# Rebuilds -O3 afterward for timing.
 asan_gate() {
   rm -f lib/*.o programs/*.o
   make -j4 CFLAGS="-O1 -g -fsanitize=address -std=gnu99" LDFLAGS="-fsanitize=address" \
@@ -51,6 +58,13 @@ asan_gate() {
         && cmp -s "$f" /tmp/asan.out \
         || { echo "  ASAN/round-trip FAIL $(basename "$f") L$lvl"; tail -15 /tmp/asan_run.log; ok=0; }
     done
+  done
+  # full-size, multi-16MB-block corpus — see note above; slow (~10-60s/level) but load-bearing
+  for lvl in 11 15; do
+    ASAN_OPTIONS=detect_leaks=0 $BIN -"$lvl" -f /tmp/sil40.dat /tmp/asan.lz6 >/tmp/asan_run.log 2>&1 \
+      && ASAN_OPTIONS=detect_leaks=0 $BIN -d -f /tmp/asan.lz6 /tmp/asan.out >>/tmp/asan_run.log 2>&1 \
+      && cmp -s /tmp/sil40.dat /tmp/asan.out \
+      || { echo "  ASAN/round-trip FAIL sil40.dat (full, multi-block) L$lvl"; tail -15 /tmp/asan_run.log; ok=0; }
   done
   rm -f lib/*.o programs/*.o   # force -O3 rebuild after
   return $((1-ok))

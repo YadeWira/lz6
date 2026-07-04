@@ -757,7 +757,15 @@ FORCE_INLINE int LZ6HC_GetAllMatches (
         {
             match = base + matchIndex;
 
-            if ((/*fullSearch ||*/ ip[best_mlen] == match[best_mlen]) && (MEM_read24(match) == MEM_read24(ip)))
+            /* best_mlen can exceed (iHighLimit-ip): a previous candidate in this
+               same chain-walk may have been extended backward (see 'back' below),
+               so its accepted length measures from before ip, not from ip -- it
+               can legitimately be longer than the remaining forward distance to
+               iHighLimit. ip[best_mlen] would then read past iHighLimit (and, at
+               an exact allocation-size boundary, past the buffer itself). Skip
+               the speculative peek rather than risk that read; falling through
+               to the real check below never mis-skips a valid candidate. */
+            if ((ip + best_mlen >= iHighLimit || ip[best_mlen] == match[best_mlen]) && (MEM_read24(match) == MEM_read24(ip)))
             {
                 size_t mlt = MINMATCH + MEM_count(ip+MINMATCH, match+MINMATCH, iHighLimit);
                 int back = 0;
@@ -1238,7 +1246,14 @@ static int LZ6HC_compress_optimal_price (
             LZ6_LOG_PARSER("%d: CURRENT price[%d/%d]=%d off=%d mlen=%d litlen=%d rep=%d\n", (int)(inr-source), cur, last_pos, opt[cur].price, opt[cur].off, opt[cur].mlen, opt[cur].litlen, opt[cur].rep); 
 
            // check rep
-           // best_mlen = 0;
+           best_mlen = 0;  /* MUST reset per-cur: a stale value from an earlier
+                               cur (this var is function-scoped) is later fed
+                               unchanged into LZ6HC_GetAllMatches as its
+                               best_mlen bound; if it's too high the ip[best_mlen]
+                               head-check reads past iHighLimit (heap-buffer-
+                               overflow at an exact block-size boundary, e.g. the
+                               16MB streaming block edge) AND silently discards
+                               genuinely-longest-so-far matches at this position. */
            mlen = MEM_count(inr, inr - opt[cur].rep, matchlimit);
            if (mlen >= MINMATCH && mlen > best_mlen)
            {
