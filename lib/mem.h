@@ -187,18 +187,14 @@ MEM_STATIC void MEM_writeLE16(void* memPtr, U16 val)
 
 MEM_STATIC U32 MEM_readLE24(const void* memPtr)
 {
-    if (MEM_isLittleEndian())
-    {
-        U32 val32 = 0;
-        memcpy(&val32, memPtr, 3);
-        return val32;
-    }
-    else
-    {
-        const BYTE* p = (const BYTE*)memPtr;
-        return (U32)(p[0] + (p[1]<<8) + (p[2]<<16));
-    }
-} 
+    /* Combine in registers instead of memcpy(&val32, memPtr, 3): gcc compiles
+       the 3-byte memcpy as two narrow stack stores + one wide 32-bit reload,
+       a guaranteed store-to-load-forwarding failure (~12-14 cycles) on every
+       24-bit-offset token — on the decoder's critical path feeding
+       match = op - offset. Reads only bytes [0,2], no over-read. */
+    const BYTE* p = (const BYTE*)memPtr;
+    return (U32)MEM_readLE16(p) | ((U32)p[2] << 16);
+}
 
 MEM_STATIC void MEM_writeLE24(void* memPtr, U32 value)
 {
