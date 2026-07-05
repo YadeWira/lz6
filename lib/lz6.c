@@ -999,7 +999,18 @@ FORCE_INLINE int LZ6_decompress_generic(
            WILDCOPYLENGTH of iend (a non-EOF run — the slow path above already
            handled true end-of-block), copy exactly so we never read past iend.
            The common case keeps the branchless wildcopy; the guard is rarely taken. */
-        if ((endOnInput) && unlikely(ip+length > iend-WILDCOPYLENGTH))
+        if ((endOnInput) && (length <= 32) && likely((cpy <= oend-32) & (ip+32 <= iend)))
+        {
+            /* Bounded branchless copy: two unconditional 16B copies instead of the
+               wildCopy loop, whose data-dependent exit branch is the decoder's #1
+               mispredict site. Only for the safe (endOnInput) path: the copy reads
+               ip[0..31] and writes op[0..31] regardless of length, which the 32B
+               margin checks make safe; the fast path has no input bound to check
+               against and keeps wildCopy (its over-read allowance is only 7B). */
+            MEM_copy16(op, ip);
+            MEM_copy16(op+16, ip+16);
+        }
+        else if ((endOnInput) && unlikely(ip+length > iend-WILDCOPYLENGTH))
             memcpy(op, ip, length);
         else
             MEM_wildCopy(op, ip, cpy);
