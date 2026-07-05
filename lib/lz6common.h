@@ -316,11 +316,17 @@ static const LZ6HC_parameters LZ6HC_defaultParameters[LZ6HC_MAX_CLEVEL+1] =
     { MAXD_LOG, MAXD_LOG+1, 23, 16,    64,  4,    48,  0, LZ6HC_optimal_price    }, // level 12
     { MAXD_LOG, MAXD_LOG+1, 23, 16,    64,  4,    64,  1, LZ6HC_optimal_price    }, // level 13
     { MAXD_LOG, MAXD_LOG+1, 23, 16,   128,  4,    64,  1, LZ6HC_optimal_price    }, // level 14
-    { MAXD_LOG, MAXD_LOG+1, 23, 16,   256,  4,    64,  1, LZ6HC_optimal_price    }, // level 15
+    { MAXD_LOG, MAXD_LOG+1, 23, 16,  1024,  4,    64,  2, LZ6HC_optimal_price_bt }, // level 15
     // Recalibrated 2026-06: sufficientLength sweet-spot is ~32 (higher HURTS ratio, against
-    // the old comment); optimal_price beats optimal_price_bt on ratio at every searchNum on
-    // both test corpora, so the BT strategy is no longer used by default. searchNum now scales
-    // the ladder monotonically. Old top end was non-monotonic (L12 beat L13/14/15).
+    // the old comment); searchNum scales the L11-14 chains ladder monotonically.
+    // L15 re-flipped to the binary-tree finder 2026-07 (post rep-fix + adaptive-window):
+    // measured vs chains-sn256 at L15, BT-sn1024-fs2 is smaller on dictionary/text corpora
+    // (corpus8 -1.9%, sil40 -0.8%) AND 4.6-6.7x faster to encode; on high-entropy binary
+    // content it is ~0.4-0.5% LARGER than L13/L14 chains — the two finders trade wins by
+    // content type and no strategy dominates, so strict per-file level monotonicity is not
+    // guaranteed at the L14->L15 step (use L14 for max ratio on binary-heavy data).
+    // BT saturates in searchNum (256..1024 near-identical output); fs=2 (InsertFull) buys
+    // a little more ratio everywhere at ~1.5x BT encode time — still far cheaper than chains.
 //  {       10,         10, 10,  0,     0,  4,     0,  0, LZ6HC_fast          }, // min values
 //  {       24,         24, 28, 24, 1<<24,  7, 1<<24,  2, LZ6HC_optimal_price }, // max values
 };
