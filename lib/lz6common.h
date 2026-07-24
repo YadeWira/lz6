@@ -320,8 +320,8 @@ static const LZ6HC_parameters LZ6HC_defaultParameters[LZ6HC_MAX_CLEVEL+1] =
     { MAXD_LOG,   MAXD_LOG, 19, 16,     1,  4,     0,  0, LZ6HC_lowest_price     }, // level 8
     { MAXD_LOG,   MAXD_LOG, 23, 16,     3,  4,     0,  0, LZ6HC_lowest_price     }, // level 9
     { MAXD_LOG,   MAXD_LOG, 23, 16,     8,  4,     0,  0, LZ6HC_lowest_price     }, // level 10
-    { MAXD_LOG, MAXD_LOG+1, 23, 16,    32,  4,    48,  0, LZ6HC_optimal_price    }, // level 11
-    { MAXD_LOG, MAXD_LOG+1, 23, 16,    64,  4,    48,  0, LZ6HC_optimal_price    }, // level 12
+    { MAXD_LOG, MAXD_LOG+1, 23, 16,    32,  4,    48,  1, LZ6HC_optimal_price_bt }, // level 11 — BT fs=1
+    { MAXD_LOG, MAXD_LOG+1, 23, 16,    64,  4,    48,  1, LZ6HC_optimal_price_bt }, // level 12 — BT fs=1
     { MAXD_LOG, MAXD_LOG+1, 23, 16,    64,  4,    64,  2, LZ6HC_optimal_price_bt }, // level 13
     { MAXD_LOG, MAXD_LOG+1, 23, 16,   128,  4,    64,  2, LZ6HC_optimal_price_bt }, // level 14
     { MAXD_LOG, MAXD_LOG+1, 23, 16,  1024,  4,    64,  2, LZ6HC_optimal_price_bt }, // level 15
