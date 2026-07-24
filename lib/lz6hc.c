@@ -40,9 +40,12 @@
 *  Includes
 ***************************************/
 #define LZ6HC_INCLUDES
+/* lz6hc.h first — defines LZ6HC_match_t (the public type used
+   internally by LZ6HC_match_t[…] buffers). lz6common.h includes
+   the same typedef under a guard so the redeclaration is silent. */
+#include "lz6hc.h"
 #include "lz6common.h"
 #include "lz6.h"
-#include "lz6hc.h"
 #include <stdio.h>
 #include <stdint.h>
 
@@ -1917,6 +1920,64 @@ int LZ6HC_compress_sequences (void* state, const char* src, size_t srcSize,
       ctx->emitSeq = NULL;
       ctx->emitOpaque = NULL;
       return rc; }
+}
+
+
+/* Pico 2 of the lz6→ozip pipeline: walk the input, run the match finder
+   at every position, and report the candidates found via cb. The cb
+   receives matches in chain-walk order (NOT sorted by length) — the
+   consumer scores them itself.
+
+   Each position's match finder does its own insertion (LZ6HC_Insert for
+   chain strategy, LZ6HC_BinTree_Insert / _InsertFull for BT) so the
+   internal hash + chain state stays consistent across positions. The
+   same compressor-level param table drives which strategy/findNum is
+   used, so the user gets the same match coverage as a full pass. The
+   optimal parser's DP over the candidates is NOT run here — that's the
+   consumer's job (or use LZ6HC_compress_sequences for the cheap default).
+
+   Returns 0 on success, non-zero on error (NULL state, cb, or bad
+   alignment). */
+int LZ6HC_find_matches(void* state, const char* src, size_t srcSize,
+                        LZ6HC_match_cb cb, void* opaque)
+{
+    LZ6HC_Data_Structure* ctx;
+    const BYTE* ip;
+    const BYTE* const iend = (const BYTE*)src + srcSize;
+    const BYTE* const mflimit = iend - MFLIMIT;
+    const BYTE* const matchlimit = iend - LASTLITERALS;
+    LZ6HC_match_t matches[LZ6_OPT_NUM + 1];
+    size_t pos;
+    int rc;
+
+    if (((size_t)(state)&(sizeof(void*)-1)) != 0) return 0;
+    if (!cb) return 0;
+    if (srcSize < (size_t)(MFLIMIT + LASTLITERALS)) return 0;  /* too small */
+    ctx = (LZ6HC_Data_Structure*)state;
+    LZ6HC_init(ctx, (const BYTE*)src);
+
+    pos = 0;
+    for (ip = (const BYTE*)src; ip < mflimit; ip++, pos++)
+    {
+        int n_matches;
+        size_t best_mlen = 0;
+
+        /* Insert the current position so the chain/BT links are fresh. */
+        if (ctx->params.strategy == LZ6HC_optimal_price)
+            LZ6HC_Insert(ctx, ip);
+        else if (ctx->params.fullSearch < 2)
+            LZ6HC_BinTree_Insert(ctx, ip);
+        else
+            LZ6HC_BinTree_InsertFull(ctx, ip, matchlimit);
+
+        /* Find candidates at the NEXT position (ip + 1). */
+        n_matches = LZ6HC_GetAllMatches(ctx, ip + 1, ip, matchlimit,
+                                        best_mlen, matches);
+        rc = cb(opaque, pos, ctx->last_off, matches, (size_t)n_matches);
+        if (rc) return rc;
+    }
+
+    return 0;
 }
 
 

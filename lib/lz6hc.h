@@ -43,6 +43,17 @@ extern "C" {
 *****************************/
 #include <stddef.h>   /* size_t */
 
+/* LZ6HC_match_t is the match candidate struct used by LZ6HC_match_cb.
+   Defined here (in the public header) so external callers can access the
+   fields directly. The internal header lz6common.h has the same typedef
+   under a guard so lz6hc.c (which includes both) doesn't double-define. */
+#define LZ6HC_MATCH_T_DEFINED
+typedef struct LZ6HC_match_s {
+    int off;      /* match offset (1..MAXDIST); offset==1 means immediate repeat */
+    int len;      /* match length (>= MINMATCH = 3) */
+    int back;     /* backward extension (negative; 0 if no ext) */
+} LZ6HC_match_t;
+
 
 /**************************************
 *  Block Compression
@@ -95,6 +106,22 @@ int LZ6_compress_HC_extStateHC(void* state, const char* src, char* dst, int srcS
 typedef int (*LZ6HC_seq_cb)(void* opaque, size_t lit_len, size_t match_len, size_t offset);
 int LZ6HC_compress_sequences(void* state, const char* src, size_t srcSize,
                               LZ6HC_seq_cb cb, void* opaque);
+
+/* Match-candidate callback for Pico 2 of the lz6→ozip pipeline.
+   Per position, the encoder walks the chain/BT finder and reports each
+   candidate match found. ozip can use these as input to its own optimal
+   parser (replacing the price model with one that's FSE-aware). The
+   matches are written in chain-walk order, NOT sorted by length — the
+   consumer is expected to score them itself.
+   `rep_off` is the last_offset in effect at this position (for rep-match
+   detection in the consumer's price model). */
+typedef int (*LZ6HC_match_cb)(void* opaque, size_t pos, size_t rep_off,
+                              const LZ6HC_match_t* matches, size_t n_matches);
+int LZ6HC_find_matches(void* state, const char* src, size_t srcSize,
+                        LZ6HC_match_cb cb, void* opaque);
+
+/* LZ6HC_match_t is defined in lz6common.h (since it lives in the internal
+   header alongside the encoder state). {int off, int len, int back}. */
 /*
 LZ6_compress_HC_extStateHC() :
    Use this function if you prefer to manually allocate memory for compression tables.
