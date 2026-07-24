@@ -44,6 +44,9 @@ extern "C" {
 ******************************************/
 #include <stddef.h>    /* size_t, ptrdiff_t */
 #include <string.h>    /* memcpy */
+#if defined(__SSE2__)
+#  include <emmintrin.h>  /* SSE2 intrinsics for 16-byte wide compare */
+#endif
 
 
 
@@ -398,6 +401,37 @@ MEM_STATIC unsigned MEM_NbCommonBytes (register size_t val)
 MEM_STATIC size_t MEM_count(const BYTE* pIn, const BYTE* pMatch, const BYTE* pInLimit)
 {
     const BYTE* const pStart = pIn;
+
+#if defined(__SSE2__)
+    /* SSE2 16-byte compare: pcmpeqb gives 0xFF per matching byte, movemask
+       packs to a 16-bit mask. mask == 0xFFFF means all 16 bytes matched;
+       ~mask & 0xFFFF has the first mismatch bit set, ctz gives the index.
+       Falls back to the scalar tail for the last 0-15 bytes. */
+    while (pIn + 16 <= pInLimit)
+    {
+        __m128i a = _mm_loadu_si128((const __m128i*)pIn);
+        __m128i b = _mm_loadu_si128((const __m128i*)pMatch);
+        __m128i eq = _mm_cmpeq_epi8(a, b);
+        unsigned mask = (unsigned)_mm_movemask_epi8(eq);
+        if (mask != 0xFFFFu)
+        {
+            /* mismatch: find the first non-matching byte */
+            unsigned diff = (~mask) & 0xFFFFu;
+            /* CTZ on the 16-bit mismatch mask gives the byte index (0..15) */
+            int idx;
+#if defined(__BMI__) || defined(__LZCNT__) || (defined(__GNUC__) && (__GNUC__*100+__GNUC_MINOR__) >= 304)
+            idx = __builtin_ctz(diff);
+#else
+            /* portable: mask has at most 16 bits, find lowest set */
+            idx = 0;
+            while (((diff >> idx) & 1u) == 0u) idx++;
+#endif
+            return (size_t)(pIn - pStart) + (size_t)idx;
+        }
+        pIn += 16;
+        pMatch += 16;
+    }
+#endif
 
     while ((pIn<pInLimit-(sizeof(size_t)-1)))
     {
