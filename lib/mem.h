@@ -47,6 +47,9 @@ extern "C" {
 #if defined(__SSE2__)
 #  include <emmintrin.h>  /* SSE2 intrinsics for 16-byte wide compare */
 #endif
+#if defined(__AVX2__)
+#  include <immintrin.h>  /* AVX2 intrinsics for 32-byte wide compare */
+#endif
 
 
 
@@ -402,7 +405,33 @@ MEM_STATIC size_t MEM_count(const BYTE* pIn, const BYTE* pMatch, const BYTE* pIn
 {
     const BYTE* const pStart = pIn;
 
-#if defined(__SSE2__)
+#if defined(__AVX2__)
+    /* AVX2 32-byte compare: vpcmpeqb gives 0xFF per matching byte, vpmovmskb
+       packs to a 32-bit mask. mask == 0xFFFFFFFF means all 32 bytes matched;
+       ~mask & 0xFFFFFFFF has the first mismatch bit set, ctz gives the index.
+       Falls back to the scalar tail for the last 0-31 bytes. */
+    while (pIn + 32 <= pInLimit)
+    {
+        __m256i a = _mm256_loadu_si256((const __m256i*)pIn);
+        __m256i b = _mm256_loadu_si256((const __m256i*)pMatch);
+        __m256i eq = _mm256_cmpeq_epi8(a, b);
+        unsigned mask = (unsigned)_mm256_movemask_epi8(eq);
+        if (mask != 0xFFFFFFFFu)
+        {
+            unsigned diff = (~mask) & 0xFFFFFFFFu;
+            int idx;
+#if defined(__BMI__) || defined(__LZCNT__) || (defined(__GNUC__) && (__GNUC__*100+__GNUC_MINOR__) >= 304)
+            idx = __builtin_ctz(diff);
+#else
+            idx = 0;
+            while (((diff >> idx) & 1u) == 0u) idx++;
+#endif
+            return (size_t)(pIn - pStart) + (size_t)idx;
+        }
+        pIn += 32;
+        pMatch += 32;
+    }
+#elif defined(__SSE2__)
     /* SSE2 16-byte compare: pcmpeqb gives 0xFF per matching byte, movemask
        packs to a 16-bit mask. mask == 0xFFFF means all 16 bytes matched;
        ~mask & 0xFFFF has the first mismatch bit set, ctz gives the index.
@@ -415,14 +444,11 @@ MEM_STATIC size_t MEM_count(const BYTE* pIn, const BYTE* pMatch, const BYTE* pIn
         unsigned mask = (unsigned)_mm_movemask_epi8(eq);
         if (mask != 0xFFFFu)
         {
-            /* mismatch: find the first non-matching byte */
             unsigned diff = (~mask) & 0xFFFFu;
-            /* CTZ on the 16-bit mismatch mask gives the byte index (0..15) */
             int idx;
 #if defined(__BMI__) || defined(__LZCNT__) || (defined(__GNUC__) && (__GNUC__*100+__GNUC_MINOR__) >= 304)
             idx = __builtin_ctz(diff);
 #else
-            /* portable: mask has at most 16 bits, find lowest set */
             idx = 0;
             while (((diff >> idx) & 1u) == 0u) idx++;
 #endif
