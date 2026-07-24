@@ -322,8 +322,8 @@ static const LZ6HC_parameters LZ6HC_defaultParameters[LZ6HC_MAX_CLEVEL+1] =
     { MAXD_LOG,   MAXD_LOG, 23, 16,     8,  4,     0,  0, LZ6HC_lowest_price     }, // level 10
     { MAXD_LOG, MAXD_LOG+1, 23, 16,    32,  4,    48,  0, LZ6HC_optimal_price    }, // level 11
     { MAXD_LOG, MAXD_LOG+1, 23, 16,    64,  4,    48,  0, LZ6HC_optimal_price    }, // level 12
-    { MAXD_LOG, MAXD_LOG+1, 23, 16,    64,  4,    64,  1, LZ6HC_optimal_price    }, // level 13
-    { MAXD_LOG, MAXD_LOG+1, 23, 16,   128,  4,    64,  1, LZ6HC_optimal_price    }, // level 14
+    { MAXD_LOG, MAXD_LOG+1, 23, 16,    64,  4,    64,  2, LZ6HC_optimal_price_bt }, // level 13
+    { MAXD_LOG, MAXD_LOG+1, 23, 16,   128,  4,    64,  2, LZ6HC_optimal_price_bt }, // level 14
     { MAXD_LOG, MAXD_LOG+1, 23, 16,  1024,  4,    64,  2, LZ6HC_optimal_price_bt }, // level 15
     // Recalibrated 2026-06: sufficientLength sweet-spot is ~32 (higher HURTS ratio, against
     // the old comment); searchNum scales the L11-14 chains ladder monotonically.
@@ -335,6 +335,9 @@ static const LZ6HC_parameters LZ6HC_defaultParameters[LZ6HC_MAX_CLEVEL+1] =
     // guaranteed at the L14->L15 step (use L14 for max ratio on binary-heavy data).
     // BT saturates in searchNum (256..1024 near-identical output); fs=2 (InsertFull) buys
     // a little more ratio everywhere at ~1.5x BT encode time — still far cheaper than chains.
+    // 2026-07-24 L13-14 also flipped to BT (fs=2): L13 +62% encode speed (2.1->3.4 MB/s),
+    // L14 +192% (1.3->3.8 MB/s) on sil40.dat, ratio within 0.05pp. L11-12 stay on chains:
+    // BT insertion overhead exceeds chain walk at searchNum<=64 (L11 -34% on sil40).
 //  {       10,         10, 10,  0,     0,  4,     0,  0, LZ6HC_fast          }, // min values
 //  {       24,         24, 28, 24, 1<<24,  7, 1<<24,  2, LZ6HC_optimal_price }, // max values
 };
