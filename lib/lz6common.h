@@ -281,17 +281,12 @@ struct LZ6HC_Data_s
     void* emitOpaque;
 };
 
-/* LZ6HC_match_t is now defined in lz6hc.h (the public header). This
-   internal redeclaration is kept under a guard so external callers that
-   only include lz6common.h don't break. */
-#if !defined(LZ6HC_MATCH_T_DEFINED)
-#define LZ6HC_MATCH_T_DEFINED
-typedef struct LZ6HC_match_s {
+typedef struct
+{
 	int off;
 	int len;
 	int back;
 } LZ6HC_match_t;
-#endif
 
 typedef struct
 {
