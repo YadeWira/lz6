@@ -271,6 +271,14 @@ struct LZ6HC_Data_s
     U32   compressionLevel;
     U32   last_off;
     LZ6HC_parameters params;
+    /* Sequence-emit hook (Paso 1 of the lz6→ozip pipeline). When emitSeq is
+       non-NULL, the encoder skips writing the literal+match codeword and
+       instead calls emitSeq(emitOpaque, lit_len, match_len, offset) for each
+       emitted sequence — including a final (lastRun, 0, 0) for the trailing
+       literals. offset is the raw match offset (1 == immediate repeat); the
+       entropy coder picks whether to render it as a 1B rep codeword. */
+    int (*emitSeq)(void* opaque, size_t lit_len, size_t match_len, size_t offset);
+    void* emitOpaque;
 };
 
 typedef struct

@@ -150,6 +150,8 @@ static void LZ6HC_init (LZ6HC_Data_Structure* ctx, const BYTE* start)
     ctx->dictLimit = (U32)((size_t)1 << ctx->params.windowLog);
     ctx->lowLimit = (U32)((size_t)1 << ctx->params.windowLog);
     ctx->last_off = 1;
+    ctx->emitSeq    = NULL;   /* default: write codeword; LZ6HC_compress_sequences wires this */
+    ctx->emitOpaque = NULL;
 }
 
 
@@ -995,6 +997,25 @@ FORCE_INLINE int LZ6HC_encodeSequence (
        Two callers signal a rep differently: the optimal parser passes off==0 (match==ip),
        the lowest_price parser passes the actual offset which equals last_off. Both => rep. */
     const int isRep = ((U32)(*ip - match) == 0) || ((U32)(*ip - match) == ctx->last_off);
+    const size_t offset = (size_t)(*ip - match);
+
+    /* Sequence-extraction path: skip the codeword, hand the caller the raw
+       (lit_len, match_len, offset) tuple. The encoder still advances ip/anchor
+       and updates last_off so the next call sees the right state.
+       Rep matches: the optimal parser passes off==0 (match==ip) to signal
+       "reuse last_off"; recover the actual offset here so the entropy coder
+       sees a real value. */
+    if (ctx->emitSeq)
+    {
+        size_t lit_len = (size_t)(*ip - *anchor);
+        size_t emit_offset = isRep ? (size_t)ctx->last_off : offset;
+        int rc = ctx->emitSeq(ctx->emitOpaque, lit_len, (size_t)matchLength, emit_offset);
+        if (rc) return 1;
+        if (!isRep) ctx->last_off = (U32)offset;
+        *ip += matchLength;
+        *anchor = *ip;
+        return 0;
+    }
 
     /* Encode Literal length */
     length = (int)(*ip - *anchor);
@@ -1011,7 +1032,7 @@ FORCE_INLINE int LZ6HC_encodeSequence (
     {
         if (length>=(int)RUN_MASK2) { int len; *token=(RUN_MASK2<<ML_BITS); len = length-RUN_MASK2; for(; len > 254 ; len-=255) *(*op)++ = 255;  *(*op)++ = (BYTE)len; }
         else *token = (BYTE)(length<<ML_BITS);
-        
+
     }
 
     /* Copy Literals */
@@ -1438,12 +1459,20 @@ encode: // cur, last_pos, best_mlen, best_off have to be set
     {
         int lastRun = (int)(iend - anchor);
     //    if (inputSize > LASTLITERALS && lastRun < LASTLITERALS) { printf("ERROR: lastRun=%d\n", lastRun); }
-        if ((limit) && (((char*)op - dest) + lastRun + 1 + ((lastRun+255-RUN_MASK)/255) > (U32)maxOutputSize)) return 0;  /* Check output limit */
-        if (lastRun>=(int)RUN_MASK) { *op++=(RUN_MASK<<ML_BITS); lastRun-=RUN_MASK; for(; lastRun > 254 ; lastRun-=255) *op++ = 255; *op++ = (BYTE) lastRun; }
-        else *op++ = (BYTE)(lastRun<<ML_BITS);
-        LZ6_LOG_ENCODE("%d: ENCODE_LAST literals=%d out=%d\n", (int)(ip-source), (int)(iend-anchor), (int)((char*)op -dest));
-        memcpy(op, anchor, iend - anchor);
-        op += iend-anchor;
+        if (ctx->emitSeq)
+        {
+            /* sequence-extraction path: emit a final (lastRun, 0, 0) tuple */
+            if (ctx->emitSeq(ctx->emitOpaque, (size_t)lastRun, 0, 0)) return 0;
+        }
+        else
+        {
+            if ((limit) && (((char*)op - dest) + lastRun + 1 + ((lastRun+255-RUN_MASK)/255) > (U32)maxOutputSize)) return 0;  /* Check output limit */
+            if (lastRun>=(int)RUN_MASK) { *op++=(RUN_MASK<<ML_BITS); lastRun-=RUN_MASK; for(; lastRun > 254 ; lastRun-=255) *op++ = 255; *op++ = (BYTE) lastRun; }
+            else *op++ = (BYTE)(lastRun<<ML_BITS);
+            LZ6_LOG_ENCODE("%d: ENCODE_LAST literals=%d out=%d\n", (int)(ip-source), (int)(iend-anchor), (int)((char*)op -dest));
+            memcpy(op, anchor, iend - anchor);
+            op += iend-anchor;
+        }
     }
 
     /* End */
@@ -1584,11 +1613,19 @@ _Encode:
     /* Encode Last Literals */
     {
         int lastRun = (int)(iend - anchor);
-        if ((limit) && (((char*)op - dest) + lastRun + 1 + ((lastRun+255-RUN_MASK)/255) > (U32)maxOutputSize)) return 0;  /* Check output limit */
-        if (lastRun>=(int)RUN_MASK) { *op++=(RUN_MASK<<ML_BITS); lastRun-=RUN_MASK; for(; lastRun > 254 ; lastRun-=255) *op++ = 255; *op++ = (BYTE) lastRun; }
-        else *op++ = (BYTE)(lastRun<<ML_BITS);
-        memcpy(op, anchor, iend - anchor);
-        op += iend-anchor;
+        if (ctx->emitSeq)
+        {
+            /* sequence-extraction path: emit a final (lastRun, 0, 0) tuple */
+            if (ctx->emitSeq(ctx->emitOpaque, (size_t)lastRun, 0, 0)) return 0;
+        }
+        else
+        {
+            if ((limit) && (((char*)op - dest) + lastRun + 1 + ((lastRun+255-RUN_MASK)/255) > (U32)maxOutputSize)) return 0;  /* Check output limit */
+            if (lastRun>=(int)RUN_MASK) { *op++=(RUN_MASK<<ML_BITS); lastRun-=RUN_MASK; for(; lastRun > 254 ; lastRun-=255) *op++ = 255; *op++ = (BYTE) lastRun; }
+            else *op++ = (BYTE)(lastRun<<ML_BITS);
+            memcpy(op, anchor, iend - anchor);
+            op += iend-anchor;
+        }
     }
 
     /* End */
@@ -1718,11 +1755,19 @@ _Encode:
     /* Encode Last Literals */
     {
         int lastRun = (int)(iend - anchor);
-        if ((limit) && (((char*)op - dest) + lastRun + 1 + ((lastRun+255-RUN_MASK)/255) > (U32)maxOutputSize)) return 0;  /* Check output limit */
-        if (lastRun>=(int)RUN_MASK) { *op++=(RUN_MASK<<ML_BITS); lastRun-=RUN_MASK; for(; lastRun > 254 ; lastRun-=255) *op++ = 255; *op++ = (BYTE) lastRun; }
-        else *op++ = (BYTE)(lastRun<<ML_BITS);
-        memcpy(op, anchor, iend - anchor);
-        op += iend-anchor;
+        if (ctx->emitSeq)
+        {
+            /* sequence-extraction path: emit a final (lastRun, 0, 0) tuple */
+            if (ctx->emitSeq(ctx->emitOpaque, (size_t)lastRun, 0, 0)) return 0;
+        }
+        else
+        {
+            if ((limit) && (((char*)op - dest) + lastRun + 1 + ((lastRun+255-RUN_MASK)/255) > (U32)maxOutputSize)) return 0;  /* Check output limit */
+            if (lastRun>=(int)RUN_MASK) { *op++=(RUN_MASK<<ML_BITS); lastRun-=RUN_MASK; for(; lastRun > 254 ; lastRun-=255) *op++ = 255; *op++ = (BYTE) lastRun; }
+            else *op++ = (BYTE)(lastRun<<ML_BITS);
+            memcpy(op, anchor, iend - anchor);
+            op += iend-anchor;
+        }
     }
 
     /* End */
@@ -1787,11 +1832,19 @@ static int LZ6HC_compress_fast (
     /* Encode Last Literals */
     {
         int lastRun = (int)(iend - anchor);
-        if ((limit) && (((char*)op - dest) + lastRun + 1 + ((lastRun+255-RUN_MASK)/255) > (U32)maxOutputSize)) return 0;  /* Check output limit */
-        if (lastRun>=(int)RUN_MASK) { *op++=(RUN_MASK<<ML_BITS); lastRun-=RUN_MASK; for(; lastRun > 254 ; lastRun-=255) *op++ = 255; *op++ = (BYTE) lastRun; }
-        else *op++ = (BYTE)(lastRun<<ML_BITS);
-        memcpy(op, anchor, iend - anchor);
-        op += iend-anchor;
+        if (ctx->emitSeq)
+        {
+            /* sequence-extraction path: emit a final (lastRun, 0, 0) tuple */
+            if (ctx->emitSeq(ctx->emitOpaque, (size_t)lastRun, 0, 0)) return 0;
+        }
+        else
+        {
+            if ((limit) && (((char*)op - dest) + lastRun + 1 + ((lastRun+255-RUN_MASK)/255) > (U32)maxOutputSize)) return 0;  /* Check output limit */
+            if (lastRun>=(int)RUN_MASK) { *op++=(RUN_MASK<<ML_BITS); lastRun-=RUN_MASK; for(; lastRun > 254 ; lastRun-=255) *op++ = 255; *op++ = (BYTE) lastRun; }
+            else *op++ = (BYTE)(lastRun<<ML_BITS);
+            memcpy(op, anchor, iend - anchor);
+            op += iend-anchor;
+        }
     }
 
     /* End */
@@ -1830,6 +1883,32 @@ int LZ6_compress_HC_extStateHC (void* state, const char* src, char* dst, int src
         return LZ6HC_compress_generic (state, src, dst, srcSize, maxDstSize, limitedOutput);
     else
         return LZ6HC_compress_generic (state, src, dst, srcSize, maxDstSize, noLimit);
+}
+
+
+/* Sequence-extraction variant of LZ6_compress_HC_extStateHC. Same match-finding
+   and parse restrictions, but no codeword is written into dst — instead the
+   encoder invokes cb(opaque, lit_len, match_len, offset) for each emitted
+   sequence (including a final (lastRun, 0, 0) for the trailing literals).
+   The dst buffer is unused; pass NULL/0. The state is reusable across calls
+   but the cb/opaque wiring is process-global per state instance. */
+int LZ6HC_compress_sequences (void* state, const char* src, size_t srcSize,
+                              LZ6HC_seq_cb cb, void* opaque)
+{
+    LZ6HC_Data_Structure* ctx;
+    if (((size_t)(state)&(sizeof(void*)-1)) != 0) return 0;
+    if (!cb) return 0;
+    ctx = (LZ6HC_Data_Structure*)state;
+    LZ6HC_init(ctx, (const BYTE*)src);
+    ctx->emitSeq  = cb;
+    ctx->emitOpaque = opaque;
+    /* Pass dst=NULL/0 — encodeSequence skips the codeword write when emitSeq
+       is set, so the buffer is never touched. limitedOutput is a no-op here
+       (no output budget to track). */
+    { int rc = LZ6HC_compress_generic(state, src, NULL, (int)srcSize, 0, noLimit);
+      ctx->emitSeq = NULL;
+      ctx->emitOpaque = NULL;
+      return rc; }
 }
 
 

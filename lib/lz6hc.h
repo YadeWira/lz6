@@ -74,6 +74,27 @@ void LZ6_free_mem_HC(LZ6HC_Data_Structure* statePtr);
 
 int LZ6_sizeofStateHC(void);
 int LZ6_compress_HC_extStateHC(void* state, const char* src, char* dst, int srcSize, int maxDstSize);
+
+/* Sequence-extraction API (Paso 1 of the lz6→ozip pipeline).
+   Same match-finding as LZ6_compress_HC_extStateHC, but instead of writing the
+   literal+match codeword into dst, the encoder invokes `cb` for every emitted
+   sequence:
+       cb(opaque, lit_len, match_len, offset)
+       - lit_len:    bytes of literal data preceding the match (0 on the first
+                     sequence of a block, growing as the run extends)
+       - match_len:  length of the match; 0 for the FINAL trailing-literals
+                     sequence (the encoder guarantees a final (lastRun, 0, 0)
+                     call so the entropy coder can flush)
+       - offset:     raw match offset (1 == immediate repeat); the entropy
+                     coder decides how to encode it (e.g. FSE rep codeword)
+   All the parser-level guarantees hold: minmatch=3, parse restrictions
+   (last 5 bytes literals, last match ≥12 bytes before end), greedy/LZ-optimal
+   pricing per the chosen compression level.
+   Returns 0 on success, 1 if the source is too small to compress, or any
+   non-zero value returned by `cb`. */
+typedef int (*LZ6HC_seq_cb)(void* opaque, size_t lit_len, size_t match_len, size_t offset);
+int LZ6HC_compress_sequences(void* state, const char* src, size_t srcSize,
+                              LZ6HC_seq_cb cb, void* opaque);
 /*
 LZ6_compress_HC_extStateHC() :
    Use this function if you prefer to manually allocate memory for compression tables.
