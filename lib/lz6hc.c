@@ -356,6 +356,14 @@ FORCE_INLINE int LZ6HC_FindBestMatch (LZ6HC_Data_Structure* ctx,   /* Index tabl
 #endif
     while ((matchIndex < current) && (matchIndex>=lowLimit) && (nbAttempts))
     {
+        /* Issue the chain-hop load now so its latency overlaps the candidate
+           check below, and prefetch the next candidate's bytes. matchIndex only
+           decreases along the chain, so this visits exactly the same indices as
+           the tail-hop form => byte-identical output. (Port from
+           LZ6HC_GetAllMatches, commit e29d2a7 — same trick, didn't apply here
+           at that time because LZ6HC_FindBestMatch wasn't the bottleneck.) */
+        U32 nextIndex = matchIndex - chainTable[matchIndex & contentMask];
+        LZ6_PREFETCH(base + nextIndex);
         nbAttempts--;
         if (matchIndex >= dictLimit)
         {
@@ -383,7 +391,7 @@ FORCE_INLINE int LZ6HC_FindBestMatch (LZ6HC_Data_Structure* ctx,   /* Index tabl
                 { ml = mlt; *matchpos = base + matchIndex; }   /* virtual matchpos */
             }
         }
-        matchIndex -= chainTable[matchIndex & contentMask];
+        matchIndex = nextIndex;
     }
 
     return (int)ml;
