@@ -66,7 +66,7 @@ default: liblz6
 
 all: liblz6
 
-liblz6: lz6.c lz6hc.c lz6frame.c xxhash.c   # need to compile once with -fPIC, and once without -fPIC
+liblz6: lz6.c lz6hc.c lz6frame.c xxhash.c lz6fse.c lz6rc.c lz6seq.c   # need to compile once with -fPIC, and once without -fPIC
 	@echo compiling static library
 	@$(AR) rcs $@.a $^
 	@echo compiling dynamic library $(LIBVER)

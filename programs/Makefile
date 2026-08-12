@@ -67,7 +67,13 @@ bins: lz6 fullbench frametest datagen
 
 all: bins m32
 
-lz6: $(LZ6DIR)/lz6.o $(LZ6DIR)/lz6hc.o $(LZ6DIR)/lz6frame.o $(LZ6DIR)/xxhash.o bench.o lz6io.o lz6cli.o
+lz6: $(LZ6DIR)/lz6.o $(LZ6DIR)/lz6hc.o $(LZ6DIR)/lz6frame.o $(LZ6DIR)/xxhash.o $(LZ6DIR)/lz6fse.o $(LZ6DIR)/lz6rc.o $(LZ6DIR)/lz6seq.o bench.o lz6io.o lz6cli.o
+	$(CC) $(FLAGS) $^ -o $@$(EXT)
+
+lz6seqcli: $(LZ6DIR)/lz6.o $(LZ6DIR)/lz6hc.o $(LZ6DIR)/lz6fse.o $(LZ6DIR)/lz6rc.o $(LZ6DIR)/lz6seq.o lz6seqcli.o
+	$(CC) $(FLAGS) $^ -o $@$(EXT)
+
+lz6seq_test: $(LZ6DIR)/lz6.o $(LZ6DIR)/lz6hc.o $(LZ6DIR)/lz6fse.o $(LZ6DIR)/lz6rc.o $(LZ6DIR)/lz6seq.o lz6seq_test.o
 	$(CC) $(FLAGS) $^ -o $@$(EXT)
 
 lz6_32: $(LZ6DIR)/lz6.c $(LZ6DIR)/lz6hc.c $(LZ6DIR)/lz6frame.c $(LZ6DIR)/xxhash.c bench.c lz6io.c lz6cli.c
