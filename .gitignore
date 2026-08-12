@@ -37,3 +37,5 @@ programs/lz6
 lib/*.o
 programs/*.o
 .commandcode/
+programs/lz6seqcli
+programs/lz6seq_test
