@@ -139,6 +139,12 @@ size_t LZ6_compress_seq(const char* src, size_t srcSize,
     if (!LZ6_alloc_mem_HC_sized((LZ6HC_Data_Structure*)hc, level, srcSize)) {
         free(hc); return 0;   /* alloc returns 1 on success */
     }
+    /* The alloc leaves the hash/chain tables uninitialized (LZ6HC_init only
+     * zeroes them under LZ6_RESET_MEM, which production builds don't define),
+     * and the fast parser reads before its first insert — garbage table
+     * entries make the match finder non-deterministic and can crash. Zero
+     * them for a clean one-shot run. */
+    LZ6HC_reset_mem((LZ6HC_Data_Structure*)hc);
     seq_collector_t sc;
     memset(&sc, 0, sizeof(sc));
     sc.src = (const uint8_t*)src;

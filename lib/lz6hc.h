@@ -82,6 +82,7 @@ typedef struct LZ6HC_Data_s LZ6HC_Data_Structure;
 int LZ6_alloc_mem_HC(LZ6HC_Data_Structure* statePtr, int compressionLevel);
 int LZ6_alloc_mem_HC_sized(LZ6HC_Data_Structure* statePtr, int compressionLevel, size_t maxSrcSize);
 void LZ6_free_mem_HC(LZ6HC_Data_Structure* statePtr);
+void LZ6HC_reset_mem(LZ6HC_Data_Structure* statePtr);
 
 int LZ6_sizeofStateHC(void);
 int LZ6_compress_HC_extStateHC(void* state, const char* src, char* dst, int srcSize, int maxDstSize);

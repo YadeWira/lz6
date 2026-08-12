@@ -130,6 +130,18 @@ void LZ6_free_mem_HC(LZ6HC_Data_Structure* ctx)
     ctx->base = NULL;
 }
 
+/* Zero the hash/chain tables after alloc. LZ6HC_init only does this under
+ * LZ6_RESET_MEM (a debug define), and the fast parser reads a table entry
+ * before its first insert, so uninitialized tables make compression
+ * non-deterministic. One-shot compressors should call this once after
+ * LZ6_alloc_mem_HC_sized. */
+void LZ6HC_reset_mem(LZ6HC_Data_Structure* ctx)
+{
+    if (!ctx) return;
+    MEM_INIT(ctx->hashTable, 0, sizeof(U32) * (((size_t)1 << ctx->params.hashLog3) + ((size_t)1 << ctx->params.hashLog)));
+    MEM_INIT(ctx->chainTable, 0, sizeof(U32) * ((size_t)1 << ctx->params.contentLog));
+}
+
 static void LZ6HC_init (LZ6HC_Data_Structure* ctx, const BYTE* start)
 {
 #ifdef LZ6_RESET_MEM
