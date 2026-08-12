@@ -154,7 +154,10 @@ size_t LZ6_compress_seq(const char* src, size_t srcSize,
     w8(&p, 0);             /* flags: not raw */
     w32le(&p, (uint32_t)srcSize);
 
-    /* literals: try FSE order-0, fall back to raw */
+    /* literals: FSE order-0 (lit_mode=1), fall back to raw (lit_mode=0).
+     * (FSE order-1 via fse_encode_ctx/lit_mode=3 exists and improves
+     * ratio slightly on skewed data but the per-block table build costs
+     * more encode time than the Weissman gain — kept for experiments.) */
     int lit_count = (int)sc.lit_built;
     if (lit_count > 0) {
         unsigned* lit_syms = (unsigned*)malloc((size_t)lit_count * sizeof(unsigned));
@@ -400,6 +403,79 @@ size_t LZ6_decompress_seq(const char* src, size_t srcSize,
         }
         for (int i = 0; i < lit_count; i++) literals[i] = (uint8_t)lit_dec[i];
         free(lit_dec);
+        p += lit_csize;
+    } else if (lit_mode == 3) {
+        /* FSE order-1: 32B bitmap + 1B L_bits + order-0 table + per-active tables + stream */
+        int lit_csize = rvlq(&p, end);
+        if ((size_t)(end - p) < lit_csize) return 0;
+        const uint8_t* lp = p;
+        const uint8_t* lpe = lp + lit_csize;
+        if (lpe - lp < 33) return 0;
+        uint8_t active[256];
+        memset(active, 0, sizeof(active));
+        for (int c = 0; c < 256; c++) if (lp[c >> 3] & (1 << (c & 7))) active[c] = 1;
+        lp += 32;
+        int L_bits = *lp++;
+        fse_ctx_table tables[256];
+        memset(tables, 0, sizeof(tables));
+        /* order-0 fallback table (ctx 256) */
+        fse_ctx_table gtab;
+        memset(&gtab, 0, sizeof(gtab));
+        size_t rr = fse_ctx_table_read(&gtab, lp, (size_t)(lpe - lp));
+        if (rr == 0) { free(literals); return 0; }
+        lp += rr;
+        for (int c = 0; c < 256; c++) {
+            if (!active[c]) continue;
+            rr = fse_ctx_table_read(&tables[c], lp, (size_t)(lpe - lp));
+            if (rr == 0) { fse_ctx_table_free(&gtab); for (int k = 0; k < 256; k++) fse_ctx_table_free(&tables[k]); free(literals); return 0; }
+            lp += rr;
+        }
+        literals = (uint8_t*)malloc((size_t)lit_count + 16);
+        if (!literals) { fse_ctx_table_free(&gtab); for (int k = 0; k < 256; k++) fse_ctx_table_free(&tables[k]); return 0; }
+        /* ctx array: prev literal byte, or 256 for inactive (order-0) */
+        unsigned* ctxs = (unsigned*)malloc((size_t)lit_count * sizeof(unsigned));
+        unsigned* lit_dec = (unsigned*)malloc((size_t)lit_count * sizeof(unsigned));
+        if (!ctxs || !lit_dec) { free(ctxs); free(lit_dec); fse_ctx_table_free(&gtab); for (int k = 0; k < 256; k++) fse_ctx_table_free(&tables[k]); free(literals); return 0; }
+        /* rebuild ctx array on the fly while decoding (prev = decoded byte) */
+        int prev = 0;
+        /* we need ctx[i] before decoding i; build it incrementally in the loop */
+        /* decode with a temp ctx that we fill as we go */
+        {
+            /* first pass: we decode sequentially, ctx[i] = prev (already decoded) */
+            const uint8_t* sp = lp;
+            if ((size_t)(lpe - lp) < 8) { /* stream needs >= 4 */ }
+            /* use fse_decode_ctx with a ctx array we fill progressively:
+             * decode symbol i using ctx[i] = prev; then prev = symbol. */
+            /* fse_decode_ctx takes the whole ctx array; we build it as we
+             * decode by decoding one at a time is not supported — instead
+             * we decode into lit_dec and track prev ourselves via a custom loop.
+             * Simplest: decode the stream manually here. */
+            uint32_t stream_len = (uint32_t)sp[0] | ((uint32_t)sp[1] << 8) | ((uint32_t)sp[2] << 16) | ((uint32_t)sp[3] << 24);
+            sp += 4;
+            if ((size_t)(lpe - sp) < stream_len) { free(ctxs); free(lit_dec); fse_ctx_table_free(&gtab); for (int k = 0; k < 256; k++) fse_ctx_table_free(&tables[k]); free(literals); return 0; }
+            const uint8_t* sp_end = sp + stream_len;
+            uint32_t x = ((uint32_t)sp[0] << 24) | ((uint32_t)sp[1] << 16) | ((uint32_t)sp[2] << 8) | (uint32_t)sp[3];
+            sp += 4;
+            for (int i = 0; i < lit_count; i++) {
+                const fse_ctx_table* t = active[prev] ? &tables[prev] : &gtab;
+                unsigned slot_idx = x & (t->M - 1);
+                unsigned s = t->dtab[slot_idx];
+                unsigned f = t->freq[s];
+                if (f == 0) { free(ctxs); free(lit_dec); fse_ctx_table_free(&gtab); for (int k = 0; k < 256; k++) fse_ctx_table_free(&tables[k]); free(literals); return 0; }
+                lit_dec[i] = s;
+                x = f * (x >> t->L_bits) + (x & (t->M - 1)) - t->cumul[s];
+                while (x < 0x10000u) {
+                    if (sp >= sp_end) { free(ctxs); free(lit_dec); fse_ctx_table_free(&gtab); for (int k = 0; k < 256; k++) fse_ctx_table_free(&tables[k]); free(literals); return 0; }
+                    x = (x << 8) | *sp++;
+                }
+                literals[i] = (uint8_t)s;
+                prev = (int)s;
+            }
+        }
+        free(ctxs);
+        free(lit_dec);
+        fse_ctx_table_free(&gtab);
+        for (int k = 0; k < 256; k++) fse_ctx_table_free(&tables[k]);
         p += lit_csize;
     } else {
         return 0;

@@ -468,3 +468,190 @@ int fse_decode(const uint8_t* in, size_t in_len, size_t n, int maxSym,
     free(dtab);
     return 0;
 }
+
+/* ================================================================== */
+/* Context-coded streams (order-1 style)                              */
+/* ================================================================== */
+
+int fse_ctx_table_build(fse_ctx_table* t, const unsigned counts[256],
+                        int maxSym, int L_bits) {
+    memset(t, 0, sizeof(*t));
+    t->L_bits = L_bits;
+    t->M = 1u << L_bits;
+    /* trim maxSym to highest nonzero */
+    int actual = 0;
+    for (int i = maxSym; i >= 0; i--) if (counts[i]) { actual = i; break; }
+    if (actual == 0 && counts[0] == 0) {
+        /* empty context: uniform */
+        for (int i = 0; i < 256; i++) t->freq[i] = 1;
+        t->freq[0] = t->M - 255;
+    } else {
+        unsigned total = 0;
+        for (int i = 0; i <= actual; i++) total += counts[i];
+        if (total == 0) return 0;
+        unsigned M = t->M;
+        int distribute = (int)M;
+        int largest = 0;
+        for (int i = 0; i <= actual; i++) {
+            if (counts[i] == 0) { t->freq[i] = 0; continue; }
+            unsigned f = (unsigned)(((uint64_t)counts[i] * M) / total);
+            if (f == 0) f = 1;
+            t->freq[i] = f;
+            distribute -= (int)f;
+            if (counts[i] > counts[largest]) largest = i;
+        }
+        while (distribute > 0) { t->freq[largest]++; distribute--; }
+        while (distribute < 0) {
+            int done = 0;
+            for (int i = actual; i >= 0; i--) {
+                if (t->freq[i] > 1 && distribute < 0) {
+                    t->freq[i]--; distribute++;
+                    if (distribute == 0) { done = 1; break; }
+                }
+            }
+            if (done) break;
+            if (t->freq[largest] > 1) { t->freq[largest]--; distribute++; }
+            else break;
+        }
+    }
+    /* cumul */
+    unsigned acc = 0;
+    for (int i = 0; i < 256; i++) {
+        t->cumul[i] = acc;
+        acc += t->freq[i];
+    }
+    /* decode table */
+    t->dtab = (uint8_t*)malloc(t->M);
+    if (!t->dtab) return 0;
+    unsigned slot = 0;
+    for (int i = 0; i < 256; i++) {
+        unsigned f = t->freq[i];
+        while (f--) t->dtab[slot++] = (uint8_t)i;
+    }
+    return 1;
+}
+
+void fse_ctx_table_free(fse_ctx_table* t) {
+    free(t->dtab);
+    t->dtab = NULL;
+}
+
+size_t fse_ctx_table_write(const fse_ctx_table* t, uint8_t* out, size_t out_cap) {
+    if (out_cap < 1 + 512) return 0;
+    out[0] = (uint8_t)t->L_bits;
+    for (int i = 0; i < 256; i++) {
+        out[1 + i * 2] = (uint8_t)(t->freq[i] & 0xFF);
+        out[1 + i * 2 + 1] = (uint8_t)(t->freq[i] >> 8);
+    }
+    return 1 + 512;
+}
+
+size_t fse_ctx_table_read(fse_ctx_table* t, const uint8_t* in, size_t in_len) {
+    if (in_len < 1 + 512) return 0;
+    int L_bits = in[0];
+    unsigned freqs[256];
+    unsigned total = 0;
+    for (int i = 0; i < 256; i++) {
+        freqs[i] = (unsigned)in[1 + i * 2] | ((unsigned)in[1 + i * 2 + 1] << 8);
+        total += freqs[i];
+    }
+    memset(t, 0, sizeof(*t));
+    t->L_bits = L_bits;
+    t->M = 1u << L_bits;
+    /* freqs already sum to M — copy as-is */
+    for (int i = 0; i < 256; i++) t->freq[i] = freqs[i];
+    unsigned acc = 0;
+    for (int i = 0; i < 256; i++) {
+        t->cumul[i] = acc;
+        acc += t->freq[i];
+    }
+    t->dtab = (uint8_t*)malloc(t->M);
+    if (!t->dtab) return 0;
+    unsigned slot = 0;
+    for (int i = 0; i < 256; i++) {
+        unsigned f = t->freq[i];
+        while (f--) t->dtab[slot++] = (uint8_t)i;
+    }
+    (void)total;
+    return 1 + 512;
+}
+
+size_t fse_encode_ctx(const unsigned* syms, const unsigned* ctx, size_t n,
+                      const fse_ctx_table* tables, int n_tables,
+                      uint8_t* out, size_t out_cap) {
+    if (out_cap < 8) return 0;
+    /* worst case stream cap: rANS can expand for low-freq symbols */
+    size_t stream_cap = n * 2 + 1024;
+    uint8_t* sbuf = (uint8_t*)malloc(stream_cap + 4);
+    if (!sbuf) return 0;
+    uint8_t* p = sbuf + stream_cap;
+    uint32_t x = 0x10000u;  /* RANS_L */
+    int L_bits = tables[0].L_bits;
+
+    for (size_t j = n; j > 0; j--) {
+        size_t i = j - 1;
+        unsigned c = ctx[i];
+        if (c >= (unsigned)n_tables) { free(sbuf); return 0; }
+        const fse_ctx_table* t = &tables[c];
+        unsigned s = syms[i];
+        unsigned f = t->freq[s];
+        if (f == 0) { free(sbuf); return 0; }
+        uint32_t x_max = ((0x10000u >> L_bits) << 8) * f;
+        while (x >= x_max) {
+            if (p <= sbuf) { free(sbuf); return 0; }  /* overflow guard */
+            *--p = (uint8_t)(x & 0xFF);
+            x >>= 8;
+        }
+        x = (x / f) * t->M + t->cumul[s] + (x % f);
+    }
+
+    /* emit final state as 4 BE bytes */
+    p -= 4;
+    p[0] = (uint8_t)(x >> 24);
+    p[1] = (uint8_t)(x >> 16);
+    p[2] = (uint8_t)(x >> 8);
+    p[3] = (uint8_t)(x);
+
+    size_t stream_len = (size_t)((sbuf + stream_cap) - p);
+    if (4 + stream_len > out_cap) { free(sbuf); return 0; }
+    out[0] = (uint8_t)(stream_len);
+    out[1] = (uint8_t)(stream_len >> 8);
+    out[2] = (uint8_t)(stream_len >> 16);
+    out[3] = (uint8_t)(stream_len >> 24);
+    memcpy(out + 4, p, stream_len);
+    free(sbuf);
+    return 4 + stream_len;
+}
+
+int fse_decode_ctx(const uint8_t* in, size_t in_len,
+                   const unsigned* ctx, size_t n,
+                   const fse_ctx_table* tables, int n_tables,
+                   unsigned* out) {
+    if (in_len < 8) return 1;
+    uint32_t stream_len = (uint32_t)in[0] | ((uint32_t)in[1] << 8)
+                        | ((uint32_t)in[2] << 16) | ((uint32_t)in[3] << 24);
+    if (4 + stream_len > in_len) return 1;
+    const uint8_t* sp = in + 4;
+    const uint8_t* sp_end = sp + stream_len;
+    if (stream_len < 4) return 1;
+    uint32_t x = ((uint32_t)sp[0] << 24) | ((uint32_t)sp[1] << 16)
+               | ((uint32_t)sp[2] << 8) | (uint32_t)sp[3];
+    sp += 4;
+
+    for (size_t k = 0; k < n; k++) {
+        unsigned c = ctx[k];
+        if (c >= (unsigned)n_tables) return 1;
+        const fse_ctx_table* t = &tables[c];
+        unsigned slot_idx = x & (t->M - 1);
+        unsigned s = t->dtab[slot_idx];
+        unsigned f = t->freq[s];
+        if (f == 0) return 1;
+        out[k] = s;
+        x = f * (x >> t->L_bits) + (x & (t->M - 1)) - t->cumul[s];
+        while (x < 0x10000u) {
+            if (sp >= sp_end) return 1;
+            x = (x << 8) | *sp++;
+        }
+    }
+    return 0;
+}
