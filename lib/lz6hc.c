@@ -1836,6 +1836,36 @@ static int LZ6HC_compress_fast (
 			ref += back;
 		}
 
+        /* Lazy match (seq codec benefit): if the next position has a
+         * match at least 2 bytes longer, emit this position as a
+         * literal (it accumulates in anchor) and let the loop take the
+         * better match. Cheap: one extra hash lookup per emitted match.
+         * Skipped for very long matches where a better one at ip+1 is
+         * implausible. */
+        if (ml < 128 && (ip + 1) < mflimit)
+        {
+            const BYTE* ref2 = NULL;
+            U32* hp2 = &HashTable[LZ6HC_hashPtr(ip + 1, ctx->params.hashLog, ctx->params.searchLength)];
+            int ml2 = LZ6HC_FindMatchFastest(ctx, *hp2, ip + 1, matchlimit, (&ref2));
+            if (ml2 >= ml + 2)
+            {
+                ip++;   /* literal at old ip goes to anchor */
+                continue;
+            }
+            /* two-position lazy: maybe ip+2 has the good match */
+            if (ml < 64 && (ip + 2) < mflimit)
+            {
+                const BYTE* ref3 = NULL;
+                U32* hp3 = &HashTable[LZ6HC_hashPtr(ip + 2, ctx->params.hashLog, ctx->params.searchLength)];
+                int ml3 = LZ6HC_FindMatchFastest(ctx, *hp3, ip + 2, matchlimit, (&ref3));
+                if (ml3 >= ml + 3)
+                {
+                    ip += 2;   /* two literals go to anchor */
+                    continue;
+                }
+            }
+        }
+
         if (LZ6HC_encodeSequence(ctx, &ip, &op, &anchor, ml, ref, limit, oend)) return 0;
 
     }
