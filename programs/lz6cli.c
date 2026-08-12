@@ -286,7 +286,16 @@ have_input:
         if (!outsz) { DISPLAYLEVEL(1, "lz6seq: compression failed\n"); free(in); free(out); goto cleanup; }
         DISPLAYLEVEL(2, "lz6seq: %ld -> %zu bytes (%.2f%%)\n", sz, outsz, 100.0 * outsz / sz);
     } else {
-        size_t cap = (size_t)sz * 4 + (1 << 20);
+        /* decode: the original size is stored as isize in the seq stream
+         * (bytes 1..4, LE). Allocate that + slack so large outputs fit. */
+        size_t orig = 0;
+        if (sz >= 5) {
+            orig = (size_t)(unsigned char)in[1]
+                 | ((size_t)(unsigned char)in[2] << 8)
+                 | ((size_t)(unsigned char)in[3] << 16)
+                 | ((size_t)(unsigned char)in[4] << 24);
+        }
+        size_t cap = orig ? orig + 65536 : (size_t)sz * 4 + (1 << 20);
         out = (unsigned char*)malloc(cap);
         if (!out) { free(in); goto cleanup; }
         outsz = LZ6_decompress_seq((const char*)in, (size_t)sz, (char*)out, cap);

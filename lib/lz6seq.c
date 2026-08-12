@@ -117,9 +117,18 @@ static void fill_literals(seq_collector_t* s) {
 
 size_t LZ6_compress_seq(const char* src, size_t srcSize,
                         char* dst, size_t dstCap, int level) {
-    if (!src || !dst || srcSize == 0 || dstCap < 64) return 0;
+    if (!src || !dst || dstCap < 64) return 0;
     if (level < 1) level = 9;
     if (level > 15) level = 15;
+
+    if (srcSize == 0) {
+        /* empty input: raw block (flags=1 + isize=0) */
+        if (dstCap < 5) return 0;
+        uint8_t* rp = (uint8_t*)dst;
+        w8(&rp, 1);
+        w32le(&rp, 0);
+        return 5;
+    }
 
     /* Phase 1: lz6 match finding */
     size_t state_sz = (size_t)LZ6_sizeofStateHC();
