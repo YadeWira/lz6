@@ -69,7 +69,7 @@ default: liblz6
 
 all: liblz6
 
-liblz6: lz6.c lz6hc.c lz6frame.c xxhash.c entropy/lz6fse.c entropy/lz6rc.c entropy/lz6seq.c   # need to compile once with -fPIC, and once without -fPIC
+liblz6: lz6.c lz6hc.c lz6frame.c xxhash.c entropy/lz6fse.c entropy/lz6rc.c entropy/lz6seq.c entropy/lz6huf.c   # need to compile once with -fPIC, and once without -fPIC
 	@echo compiling static library
 	@$(AR) rcs $@.a $^
 	@echo compiling dynamic library $(LIBVER)
@@ -105,7 +105,7 @@ install: liblz6 liblz6.pc
 	@install -m 644 lz6.h $(DESTDIR)$(INCLUDEDIR)/lz6.h
 	@install -m 644 lz6hc.h $(DESTDIR)$(INCLUDEDIR)/lz6hc.h
 	@install -m 644 lz6frame.h $(DESTDIR)$(INCLUDEDIR)/lz6frame.h
-	@install -m 644 entropy/lz6fse.h entropy/lz6rc.h entropy/lz6seq.h $(DESTDIR)$(INCLUDEDIR)/
+	@install -m 644 entropy/lz6fse.h entropy/lz6rc.h entropy/lz6seq.h entropy/lz6huf.h $(DESTDIR)$(INCLUDEDIR)/
 	@echo lz6 static and shared libraries installed
 
 uninstall:
@@ -117,7 +117,7 @@ uninstall:
 	@[ -f $(DESTDIR)$(INCLUDEDIR)/lz6.h ] && rm -f $(DESTDIR)$(INCLUDEDIR)/lz6.h
 	@[ -f $(DESTDIR)$(INCLUDEDIR)/lz6hc.h ] && rm -f $(DESTDIR)$(INCLUDEDIR)/lz6hc.h
 	@[ -f $(DESTDIR)$(INCLUDEDIR)/lz6frame.h ] && rm -f $(DESTDIR)$(INCLUDEDIR)/lz6frame.h
-	@rm -f $(DESTDIR)$(INCLUDEDIR)/lz6fse.h $(DESTDIR)$(INCLUDEDIR)/lz6rc.h $(DESTDIR)$(INCLUDEDIR)/lz6seq.h
+	@rm -f $(DESTDIR)$(INCLUDEDIR)/lz6fse.h $(DESTDIR)$(INCLUDEDIR)/lz6rc.h $(DESTDIR)$(INCLUDEDIR)/lz6seq.h $(DESTDIR)$(INCLUDEDIR)/lz6huf.h
 	@echo lz6 libraries successfully uninstalled
 
 endif

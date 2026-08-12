@@ -315,7 +315,9 @@ size_t fse_encode(const unsigned* syms, size_t n, int maxSym,
     /* stream allocation: worst case ~ n * 1.5 bytes + 4 (state) + slack */
     /* write a 4-byte size-field at offset hdr, then stream from hdr+4 */
     /* encode onto the caller's buffer backwards from hdr+4+stream_cap —
-     * avoids a temp malloc + memcpy for the stream. */
+     * avoids a temp malloc + memcpy for the stream. The caller must
+     * provide a buffer at least hdr+4+stream_cap bytes and is expected
+     * to pass a fresh buffer (no prior data past the stream). */
     size_t stream_cap = n + (n >> 1) + 64;
     if (stream_cap < 16) stream_cap = 16;
     if (hdr + 4 + stream_cap > out_cap) return 0;

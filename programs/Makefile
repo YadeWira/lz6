@@ -68,7 +68,7 @@ bins: lz6 fullbench frametest datagen
 
 all: bins m32
 
-lz6: $(LZ6DIR)/lz6.o $(LZ6DIR)/lz6hc.o $(LZ6DIR)/lz6frame.o $(LZ6DIR)/xxhash.o $(LZ6DIR)/entropy/lz6fse.o $(LZ6DIR)/entropy/lz6rc.o $(LZ6DIR)/entropy/lz6seq.o bench.o lz6io.o lz6cli.o
+lz6: $(LZ6DIR)/lz6.o $(LZ6DIR)/lz6hc.o $(LZ6DIR)/lz6frame.o $(LZ6DIR)/xxhash.o $(LZ6DIR)/entropy/lz6fse.o $(LZ6DIR)/entropy/lz6rc.o $(LZ6DIR)/entropy/lz6seq.o $(LZ6DIR)/entropy/lz6huf.o bench.o lz6io.o lz6cli.o
 	$(CC) $(FLAGS) $^ -o $@$(EXT)
 
 lz6seq_test: $(LZ6DIR)/lz6.o $(LZ6DIR)/lz6hc.o $(LZ6DIR)/entropy/lz6fse.o $(LZ6DIR)/entropy/lz6rc.o $(LZ6DIR)/entropy/lz6seq.o lz6seq_test.o
@@ -99,6 +99,8 @@ datagen : datagen.o datagencli.c
 $(LZ6DIR)/entropy/lz6fse.o: $(LZ6DIR)/entropy/lz6fse.c
 	$(CC) -O2 $(CPPFLAGS) -std=c99 -Wall $< -c -o $@
 $(LZ6DIR)/entropy/lz6seq.o: $(LZ6DIR)/entropy/lz6seq.c
+	$(CC) -O2 $(CPPFLAGS) -std=c99 -Wall $< -c -o $@
+$(LZ6DIR)/entropy/lz6huf.o: $(LZ6DIR)/entropy/lz6huf.c
 	$(CC) -O2 $(CPPFLAGS) -std=c99 -Wall $< -c -o $@
 
 clean:

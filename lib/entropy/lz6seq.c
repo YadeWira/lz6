@@ -9,6 +9,7 @@
 #include "../lz6.h"
 #include "../lz6hc.h"
 #include "lz6fse.h"
+#include "lz6huf.h"
 
 #include <stdlib.h>
 #include <string.h>
@@ -163,10 +164,10 @@ size_t LZ6_compress_seq(const char* src, size_t srcSize,
     w8(&p, 0);             /* flags: not raw */
     w32le(&p, (uint32_t)srcSize);
 
-    /* literals: FSE order-0 (lit_mode=1), fall back to raw (lit_mode=0).
-     * (FSE order-1 via fse_encode_ctx/lit_mode=3 exists and improves
-     * ratio slightly on skewed data but the per-block table build costs
-     * more encode time than the Weissman gain — kept for experiments.) */
+    /* literals: Huffman (lit_mode=5, fast table decode) vs FSE order-0
+     * (lit_mode=1), fall back to raw (lit_mode=0). Huffman's 257-byte
+     * header wins on large blocks; FSE's compact header on small ones —
+     * pick whichever is smaller. */
     int lit_count = (int)sc.lit_built;
     if (lit_count > 0) {
         unsigned* lit_syms = (unsigned*)malloc((size_t)lit_count * sizeof(unsigned));
@@ -174,24 +175,51 @@ size_t LZ6_compress_seq(const char* src, size_t srcSize,
         for (int i = 0; i < lit_count; i++) lit_syms[i] = sc.lits[i];
         size_t lit_cap = (size_t)lit_count * 2 + 4096;  /* fse_encode writes backwards; needs ~1.5n */
         uint8_t* lit_buf = (uint8_t*)malloc(lit_cap);
-        if (!lit_buf) { free(lit_syms); free(sc.lits); free(sc.lit_lens); free(sc.match_lens); free(sc.offsets); return 0; }
-        size_t lit_ts;
-        size_t lit_sz = fse_encode(lit_syms, (size_t)lit_count, 255, lit_buf, lit_cap, NULL, 0, &lit_ts);
-        if (lit_sz > 0 && lit_sz < (size_t)lit_count) {
+        uint8_t* huf_buf = (uint8_t*)malloc(lit_cap);
+        if (!lit_buf || !huf_buf) { free(lit_buf); free(huf_buf); free(lit_syms); free(sc.lits); free(sc.lit_lens); free(sc.match_lens); free(sc.offsets); return 0; }
+        /* huffman first: cheap encode, fast table decode. FSE is only
+         * tried when huffman fails (pathological tree) — its encode is
+         * ~2x more expensive, so skipping it when huffman works is a
+         * Weissman win. */
+        unsigned hcounts[256] = {0};
+        for (int i = 0; i < lit_count; i++) hcounts[lit_syms[i]]++;
+        int hk = 0;
+        size_t hhdr = huf_build_header(hcounts, 255, huf_buf, lit_cap, &hk);
+        size_t hsz = 0;
+        /* k>10 -> long codes force the slow walk decode; FSE wins there,
+         * so skip the huffman stream entirely. */
+        if (hhdr > 0 && hk <= 10) {
+            size_t hstr = huf_encode_stream(huf_buf, lit_syms, (size_t)lit_count, huf_buf + hhdr, lit_cap - hhdr);
+            if (hstr > 0) hsz = hhdr + hstr;
+        }
+        size_t lit_sz = 0;
+        if (hsz == 0) {
+            size_t lit_ts;
+            lit_sz = fse_encode(lit_syms, (size_t)lit_count, 255, lit_buf, lit_cap, NULL, 0, &lit_ts);
+        }
+        if (hsz > 0) {
+            w8(&p, 5);  /* lit_mode=huffman */
+            p += wvlq(p, lit_count);
+            p += wvlq(p, (int)hsz);
+            if ((size_t)(p - blk) + hsz > blk_cap) { free(lit_buf); free(huf_buf); free(lit_syms); free(sc.lits); free(sc.lit_lens); free(sc.match_lens); free(sc.offsets); return 0; }
+            memcpy(p, huf_buf, hsz);
+            p += hsz;
+        } else if (lit_sz > 0 && lit_sz < (size_t)lit_count) {
             w8(&p, 1);  /* lit_mode=fse */
             p += wvlq(p, lit_count);
             p += wvlq(p, (int)lit_sz);
-            if ((size_t)(p - blk) + lit_sz > blk_cap) { free(lit_buf); free(lit_syms); free(sc.lits); free(sc.lit_lens); free(sc.match_lens); free(sc.offsets); return 0; }
+            if ((size_t)(p - blk) + lit_sz > blk_cap) { free(lit_buf); free(huf_buf); free(lit_syms); free(sc.lits); free(sc.lit_lens); free(sc.match_lens); free(sc.offsets); return 0; }
             memcpy(p, lit_buf, lit_sz);
             p += lit_sz;
         } else {
             w8(&p, 0);  /* lit_mode=raw */
             p += wvlq(p, lit_count);
-            if ((size_t)(p - blk) + (size_t)lit_count > blk_cap) { free(lit_buf); free(lit_syms); free(sc.lits); free(sc.lit_lens); free(sc.match_lens); free(sc.offsets); return 0; }
+            if ((size_t)(p - blk) + (size_t)lit_count > blk_cap) { free(lit_buf); free(huf_buf); free(lit_syms); free(sc.lits); free(sc.lit_lens); free(sc.match_lens); free(sc.offsets); return 0; }
             memcpy(p, sc.lits, (size_t)lit_count);
             p += lit_count;
         }
         free(lit_buf);
+        free(huf_buf);
         free(lit_syms);
     } else {
         w8(&p, 0);
@@ -412,6 +440,16 @@ size_t LZ6_decompress_seq(const char* src, size_t srcSize,
         }
         for (int i = 0; i < lit_count; i++) literals[i] = (uint8_t)lit_dec[i];
         free(lit_dec);
+        p += lit_csize;
+    } else if (lit_mode == 5) {
+        /* Huffman: 257-byte header + bitstream (fast table decode) */
+        int lit_csize = rvlq(&p, end);
+        if ((size_t)(end - p) < (size_t)lit_csize) return 0;
+        literals = (uint8_t*)malloc((size_t)lit_count + 16);
+        if (!literals) return 0;
+        if (huf_decode(p, (size_t)lit_csize, (size_t)lit_count, literals) == 0) {
+            free(literals); return 0;
+        }
         p += lit_csize;
     } else if (lit_mode == 3) {
         /* FSE order-1: 32B bitmap + 1B L_bits + order-0 table + per-active tables + stream */
