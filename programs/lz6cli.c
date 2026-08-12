@@ -50,6 +50,7 @@
 #include "bench.h"    /* BMK_benchFile, BMK_SetNbIterations, BMK_SetBlocksize, BMK_SetPause */
 #include "lz6io.h"    /* LZ6IO_compressFilename, LZ6IO_decompressFilename, LZ6IO_compressMultipleFilenames */
 #include "lz6.h"      // LZ6_VERSION
+#include "lz6seq.h"   /* LZ6_compress_seq, LZ6_decompress_seq (--seq mode) */
 
 
 /*-************************************
@@ -157,6 +158,7 @@ static int usage_advanced(void)
     DISPLAY( "--no-frame-crc : disable stream checksum (default:enabled)\n");
     DISPLAY( "--content-size : compressed frame includes original size (default:not present)\n");
     DISPLAY( "--[no-]sparse  : sparse mode (default:enabled on file, disabled on stdout)\n");
+    DISPLAY( "--seq          : use the lz6seq entropy codec (LZ + FSE/rANS, non-standard format)\n");
     DISPLAY( "Benchmark arguments :\n");
     DISPLAY( " -b     : benchmark file(s)\n");
     DISPLAY( " -i#    : iteration loops [1-9](default : 3), benchmark mode only\n");
@@ -229,6 +231,80 @@ static void waitEnter(void)
 }
 
 
+/* --seq mode: lz6seq entropy codec, simple file-in/file-out (or stdin/stdout).
+   Returns 0 on success, non-zero on error. */
+static int seq_mode_main(const char* input_filename, const char* output_filename,
+                         int decode, int cLevel, int displayLevel)
+{
+    FILE* fin = stdin;
+    FILE* fout = stdout;
+    int close_in = 0, close_out = 0;
+    long sz;
+    unsigned char* in;
+    unsigned char* out;
+    size_t outsz;
+    int rc = 1;
+
+    if (input_filename && strcmp(input_filename, stdinmark) != 0) {
+        fin = fopen(input_filename, "rb");
+        if (!fin) { DISPLAYLEVEL(1, "lz6seq: cannot open %s\n", input_filename); return 1; }
+        close_in = 1;
+    }
+    if (output_filename && strcmp(output_filename, stdoutmark) != 0) {
+        fout = fopen(output_filename, "wb");
+        if (!fout) { DISPLAYLEVEL(1, "lz6seq: cannot open %s\n", output_filename); if (close_in) fclose(fin); return 1; }
+        close_out = 1;
+    }
+
+    /* read all input */
+    if (fseek(fin, 0, SEEK_END) == 0) {
+        sz = ftell(fin);
+        fseek(fin, 0, SEEK_SET);
+    } else {
+        /* stream (stdin): read until EOF */
+        size_t cap = 1 << 20, len = 0;
+        in = (unsigned char*)malloc(cap);
+        if (!in) goto cleanup;
+        while (!feof(fin)) {
+            if (len == cap) { cap *= 2; unsigned char* ni = (unsigned char*)realloc(in, cap); if (!ni) { free(in); goto cleanup; } in = ni; }
+            len += fread(in + len, 1, cap - len, fin);
+        }
+        sz = (long)len;
+        goto have_input;
+    }
+    in = (unsigned char*)malloc(sz ? (size_t)sz : 1);
+    if (!in) goto cleanup;
+    if (sz && fread(in, 1, (size_t)sz, fin) != (size_t)sz) { DISPLAYLEVEL(1, "lz6seq: read error\n"); free(in); goto cleanup; }
+have_input:
+
+    if (!decode) {
+        size_t cap = (size_t)sz + (size_t)sz / 2 + 65536;
+        out = (unsigned char*)malloc(cap);
+        if (!out) { free(in); goto cleanup; }
+        outsz = LZ6_compress_seq((const char*)in, (size_t)sz, (char*)out, cap,
+                                 cLevel > 0 ? cLevel : 1);
+        if (!outsz) { DISPLAYLEVEL(1, "lz6seq: compression failed\n"); free(in); free(out); goto cleanup; }
+        DISPLAYLEVEL(2, "lz6seq: %ld -> %zu bytes (%.2f%%)\n", sz, outsz, 100.0 * outsz / sz);
+    } else {
+        size_t cap = (size_t)sz * 4 + (1 << 20);
+        out = (unsigned char*)malloc(cap);
+        if (!out) { free(in); goto cleanup; }
+        outsz = LZ6_decompress_seq((const char*)in, (size_t)sz, (char*)out, cap);
+        if (!outsz) { DISPLAYLEVEL(1, "lz6seq: decompression failed\n"); free(in); free(out); goto cleanup; }
+    }
+
+    if (fwrite(out, 1, outsz, fout) != outsz) { DISPLAYLEVEL(1, "lz6seq: write error\n"); free(in); free(out); goto cleanup; }
+    free(in);
+    free(out);
+    rc = 0;
+
+cleanup:
+    if (close_in) fclose(fin);
+    if (close_out) fclose(fout);
+    return rc;
+}
+
+
 int main(int argc, char** argv)
 {
     int i,
@@ -239,6 +315,7 @@ int main(int argc, char** argv)
         forceCompress=0,
         main_pause=0,
         multiple_inputs=0,
+        seqMode=0,
         operationResult=0,
         blockSizeIdUserSet=0;
     const char* input_filename=0;
@@ -286,6 +363,7 @@ int main(int argc, char** argv)
         if (!strcmp(argument,  "--quiet")) { if (displayLevel) displayLevel--; continue; }
         if (!strcmp(argument,  "--version")) { DISPLAY(WELCOME_MESSAGE); return 0; }
         if (!strcmp(argument,  "--keep")) { continue; }   /* keep source file (default anyway; just for xz/lzma compatibility) */
+        if (!strcmp(argument,  "--seq")) { seqMode = 1; continue; }   /* use the lz6seq entropy codec */
 
 
         /* Short commands (note : aggregated short commands are allowed) */
@@ -523,7 +601,12 @@ int main(int argc, char** argv)
 
     /* IO Stream/File */
     LZ6IO_setNotificationLevel(displayLevel);
-    if (decode)
+    if (seqMode)
+    {
+        /* lz6seq entropy codec path: simple file-in/file-out (or stdin/stdout). */
+        operationResult = seq_mode_main(input_filename, output_filename, decode, cLevel, displayLevel);
+    }
+    else if (decode)
     {
       if (multiple_inputs)
         operationResult = LZ6IO_decompressMultipleFilenames(inFileNames, ifnIdx, LZ6_EXTENSION);

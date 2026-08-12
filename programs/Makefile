@@ -33,6 +33,7 @@
 
 BINDIR  := $(PREFIX)/bin
 MANDIR  := $(PREFIX)/share/man/man1
+INCLUDEDIR := $(PREFIX)/include
 LZ6DIR  := ../lib
 
 DESTDIR  ?=
@@ -68,9 +69,6 @@ bins: lz6 fullbench frametest datagen
 all: bins m32
 
 lz6: $(LZ6DIR)/lz6.o $(LZ6DIR)/lz6hc.o $(LZ6DIR)/lz6frame.o $(LZ6DIR)/xxhash.o $(LZ6DIR)/lz6fse.o $(LZ6DIR)/lz6rc.o $(LZ6DIR)/lz6seq.o bench.o lz6io.o lz6cli.o
-	$(CC) $(FLAGS) $^ -o $@$(EXT)
-
-lz6seqcli: $(LZ6DIR)/lz6.o $(LZ6DIR)/lz6hc.o $(LZ6DIR)/lz6fse.o $(LZ6DIR)/lz6rc.o $(LZ6DIR)/lz6seq.o lz6seqcli.o
 	$(CC) $(FLAGS) $^ -o $@$(EXT)
 
 lz6seq_test: $(LZ6DIR)/lz6.o $(LZ6DIR)/lz6hc.o $(LZ6DIR)/lz6fse.o $(LZ6DIR)/lz6rc.o $(LZ6DIR)/lz6seq.o lz6seq_test.o
@@ -117,12 +115,13 @@ clean:
 #make install is validated only for Linux, OSX, kFreeBSD and Hurd targets
 ifneq (,$(filter $(shell uname),Linux Darwin GNU/kFreeBSD GNU MSYS_NT-10.0))
 
-install: lz6 
+install: lz6
 	@echo Installing binaries
-	@install -d -m 755 $(DESTDIR)$(BINDIR)/ $(DESTDIR)$(MANDIR)/
+	@install -d -m 755 $(DESTDIR)$(BINDIR)/ $(DESTDIR)$(MANDIR)/ $(DESTDIR)$(INCLUDEDIR)/
 	@install -m 755 lz6 $(DESTDIR)$(BINDIR)/lz6
 	@ln -sf lz6 $(DESTDIR)$(BINDIR)/lz6cat
 	@ln -sf lz6 $(DESTDIR)$(BINDIR)/unlz6
+	@install -m 644 $(LZ6DIR)/lz6seq.h $(DESTDIR)$(INCLUDEDIR)/lz6seq.h
 	@echo Installing man pages
 	@install -m 644 lz6.1 $(DESTDIR)$(MANDIR)/lz6.1
 	@ln -sf lz6.1 $(DESTDIR)$(MANDIR)/lz6cat.1
@@ -133,6 +132,7 @@ uninstall:
 	rm -f $(DESTDIR)$(BINDIR)/lz6cat
 	rm -f $(DESTDIR)$(BINDIR)/unlz6
 	[ -x $(DESTDIR)$(BINDIR)/lz6 ] && rm -f $(DESTDIR)$(BINDIR)/lz6
+	[ -f $(DESTDIR)$(INCLUDEDIR)/lz6seq.h ] && rm -f $(DESTDIR)$(INCLUDEDIR)/lz6seq.h
 	[ -f $(DESTDIR)$(MANDIR)/lz6.1 ] && rm -f $(DESTDIR)$(MANDIR)/lz6.1
 	rm -f $(DESTDIR)$(MANDIR)/lz6cat.1
 	rm -f $(DESTDIR)$(MANDIR)/unlz6.1

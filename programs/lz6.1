@@ -88,6 +88,12 @@ only the latest one will be applied.
 .
 .SS "Operation mode"
 .TP
+.BR \-\-seq
+Use the lz6seq entropy codec (LZ match finding + FSE/rANS) instead of
+the native LZ6 frame format. Produces a stream that is not compatible
+with the standard .lz6 format; decompress with the same option.
+Compression level is selected with the usual \-1..\-15 flags.
+.TP
 .BR \-z ", " \-\-compress
 Compress.
 This is the default operation mode 
@@ -97,7 +103,7 @@ no other operation mode is implied from the command name
 .B unlz6
 implies
 .B \-\-decompress ),
-nor from the input file name
+nor from the input file name 
 (for example, a file extension
 .B .lz6
 implies
