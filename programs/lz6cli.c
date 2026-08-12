@@ -50,8 +50,7 @@
 #include "bench.h"    /* BMK_benchFile, BMK_SetNbIterations, BMK_SetBlocksize, BMK_SetPause */
 #include "lz6io.h"    /* LZ6IO_compressFilename, LZ6IO_decompressFilename, LZ6IO_compressMultipleFilenames */
 #include "lz6.h"      // LZ6_VERSION
-#include "lz6seq.h"   /* LZ6_compress_seq, LZ6_decompress_seq (--seq mode) */
-
+#include "entropy/lz6seq.h"   /* LZ6_compress_seq, LZ6_decompress_seq (--seq mode) */
 
 /*-************************************
 *  OS-specific Includes

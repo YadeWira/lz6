@@ -68,10 +68,10 @@ bins: lz6 fullbench frametest datagen
 
 all: bins m32
 
-lz6: $(LZ6DIR)/lz6.o $(LZ6DIR)/lz6hc.o $(LZ6DIR)/lz6frame.o $(LZ6DIR)/xxhash.o $(LZ6DIR)/lz6fse.o $(LZ6DIR)/lz6rc.o $(LZ6DIR)/lz6seq.o bench.o lz6io.o lz6cli.o
+lz6: $(LZ6DIR)/lz6.o $(LZ6DIR)/lz6hc.o $(LZ6DIR)/lz6frame.o $(LZ6DIR)/xxhash.o $(LZ6DIR)/entropy/lz6fse.o $(LZ6DIR)/entropy/lz6rc.o $(LZ6DIR)/entropy/lz6seq.o bench.o lz6io.o lz6cli.o
 	$(CC) $(FLAGS) $^ -o $@$(EXT)
 
-lz6seq_test: $(LZ6DIR)/lz6.o $(LZ6DIR)/lz6hc.o $(LZ6DIR)/lz6fse.o $(LZ6DIR)/lz6rc.o $(LZ6DIR)/lz6seq.o lz6seq_test.o
+lz6seq_test: $(LZ6DIR)/lz6.o $(LZ6DIR)/lz6hc.o $(LZ6DIR)/entropy/lz6fse.o $(LZ6DIR)/entropy/lz6rc.o $(LZ6DIR)/entropy/lz6seq.o lz6seq_test.o
 	$(CC) $(FLAGS) $^ -o $@$(EXT)
 
 lz6_32: $(LZ6DIR)/lz6.c $(LZ6DIR)/lz6hc.c $(LZ6DIR)/lz6frame.c $(LZ6DIR)/xxhash.c bench.c lz6io.c lz6cli.c
@@ -96,9 +96,9 @@ datagen : datagen.o datagencli.c
 	$(CC) $(FLAGS) $< -c -o $@
 
 # The seq codec (lz6fse/lz6seq) miscompiles under -O3 — build at -O2.
-$(LZ6DIR)/lz6fse.o: $(LZ6DIR)/lz6fse.c
+$(LZ6DIR)/entropy/lz6fse.o: $(LZ6DIR)/entropy/lz6fse.c
 	$(CC) -O2 $(CPPFLAGS) -std=c99 -Wall $< -c -o $@
-$(LZ6DIR)/lz6seq.o: $(LZ6DIR)/lz6seq.c
+$(LZ6DIR)/entropy/lz6seq.o: $(LZ6DIR)/entropy/lz6seq.c
 	$(CC) -O2 $(CPPFLAGS) -std=c99 -Wall $< -c -o $@
 
 clean:
@@ -121,7 +121,7 @@ install: lz6
 	@install -m 755 lz6 $(DESTDIR)$(BINDIR)/lz6
 	@ln -sf lz6 $(DESTDIR)$(BINDIR)/lz6cat
 	@ln -sf lz6 $(DESTDIR)$(BINDIR)/unlz6
-	@install -m 644 $(LZ6DIR)/lz6seq.h $(DESTDIR)$(INCLUDEDIR)/lz6seq.h
+	@install -m 644 $(LZ6DIR)/entropy/lz6seq.h $(DESTDIR)$(INCLUDEDIR)/lz6seq.h
 	@echo Installing man pages
 	@install -m 644 lz6.1 $(DESTDIR)$(MANDIR)/lz6.1
 	@ln -sf lz6.1 $(DESTDIR)$(MANDIR)/lz6cat.1

@@ -2,7 +2,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include "../lib/lz6seq.h"
+#include "../lib/entropy/lz6seq.h"
 
 int main(int argc, char** argv) {
     if (argc < 2) { fprintf(stderr, "usage: %s file [level]\n", argv[0]); return 1; }

@@ -6,8 +6,8 @@
  */
 
 #include "lz6seq.h"
-#include "lz6.h"
-#include "lz6hc.h"
+#include "../lz6.h"
+#include "../lz6hc.h"
 #include "lz6fse.h"
 
 #include <stdlib.h>
