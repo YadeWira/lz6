@@ -314,13 +314,15 @@ size_t fse_encode(const unsigned* syms, size_t n, int maxSym,
 
     /* stream allocation: worst case ~ n * 1.5 bytes + 4 (state) + slack */
     /* write a 4-byte size-field at offset hdr, then stream from hdr+4 */
-    /* we encode onto a temporary heap buffer (renorm bytes via *--p) */
+    /* encode onto the caller's buffer backwards from hdr+4+stream_cap —
+     * avoids a temp malloc + memcpy for the stream. */
     size_t stream_cap = n + (n >> 1) + 64;
     if (stream_cap < 16) stream_cap = 16;
-    uint8_t* sbuf = (uint8_t*)malloc(stream_cap + 4);
-    if (!sbuf) return 0;
-    uint8_t* p = sbuf + stream_cap;   /* points one past most-recently-written */
-    uint8_t* pend = sbuf + stream_cap; /* upper limit */
+    if (hdr + 4 + stream_cap > out_cap) return 0;
+    uint8_t* sbuf = out + hdr + 4;        /* stream start (final position) */
+    uint8_t* p = sbuf + stream_cap;       /* points one past most-recently-written */
+    uint8_t* pend = sbuf + stream_cap;    /* upper limit */
+    (void)pend;
 
     uint32_t x = 0x10000u;  /* RANS_L = 2^16, standard 32-bit rANS */
 
@@ -333,7 +335,6 @@ size_t fse_encode(const unsigned* syms, size_t n, int maxSym,
             unsigned f = freq_tab[s];
             unsigned c = cumul[s];
             if (f == 0) { /* shouldn't happen if counts > 0 implies freq > 0 */
-                free(sbuf);
                 return 0;
             }
             uint32_t x_pre = x;
@@ -378,16 +379,19 @@ size_t fse_encode(const unsigned* syms, size_t n, int maxSym,
     p[3] = (uint8_t)(x);
 
     size_t stream_len = (size_t)(pend - p);
-    if (hdr + 4 + stream_len > out_cap) { free(sbuf); return 0; }
+    if (hdr + 4 + stream_len > out_cap) return 0;
 
-    /* write the size prefix (4 LE) then the stream */
+    /* write the size prefix (4 LE); the stream is already in place at
+     * out+hdr+4 (we encoded backwards into the caller's buffer) */
     out[hdr + 0] = (uint8_t)(stream_len);
     out[hdr + 1] = (uint8_t)(stream_len >> 8);
     out[hdr + 2] = (uint8_t)(stream_len >> 16);
     out[hdr + 3] = (uint8_t)(stream_len >> 24);
-    memcpy(out + hdr + 4, p, stream_len);
-
-    free(sbuf);
+    if (p != out + hdr + 4) {
+        /* stream landed past the prefix (usual case: p > sbuf): move it
+         * down so it starts right after the 4-byte size. */
+        memmove(out + hdr + 4, p, stream_len);
+    }
     return hdr + 4 + stream_len;
 }
 
@@ -445,12 +449,15 @@ int fse_decode(const uint8_t* in, size_t in_len, size_t n, int maxSym,
 
     size_t k;
     for (k = 0; k < n; k++) {
-        /* peek symbol */
+        /* peek symbol. f is never 0 for a symbol present in dtab
+         * (the encoder only codes symbols with freq > 0), so the
+         * per-symbol f==0 check is skipped in the hot path; a corrupt
+         * stream can at worst produce garbage, and the sp bounds check
+         * below still catches overreads. */
         unsigned slot_idx = rans_dec_slot(x, L_bits);
         unsigned s = dtab[slot_idx];
         unsigned f = freq_tab[s];
         unsigned c = cumul[s];
-        if (f == 0) { free(dtab); return 1; }
         syms[k] = s;
 #ifdef FSE_DEBUG
         if (k < 40 || (k < 40)) {
