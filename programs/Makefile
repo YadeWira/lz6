@@ -31,13 +31,14 @@
 # datagen : generates synthetic data samples for tests & benchmarks
 # ##########################################################################
 
+DESTDIR  ?=
+PREFIX   ?= /usr/local
+
 BINDIR  := $(PREFIX)/bin
 MANDIR  := $(PREFIX)/share/man/man1
 INCLUDEDIR := $(PREFIX)/include
 LZ6DIR  := ../lib
 
-DESTDIR  ?=
-PREFIX   ?= /usr/local
 CFLAGS   ?= -O3 -std=gnu99    # can select customized optimized flags such as for example: make CFLAGS="-g"
 FFLAGS   ?= -fomit-frame-pointer -fstrict-aliasing -fforce-addr -ffast-math
 WFLAGS   ?= -Wall -Wextra -Wundef -Wshadow -Wcast-align -Wcast-qual -Wstrict-prototypes -pedantic -Wno-variadic-macros
