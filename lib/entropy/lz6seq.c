@@ -143,9 +143,10 @@ size_t LZ6_compress_seq(const char* src, size_t srcSize,
     memset(&sc, 0, sizeof(sc));
     sc.src = (const uint8_t*)src;
     sc.lits = (uint8_t*)malloc(srcSize + 65536);
-    if (!sc.lits) { free(hc); return 0; }
+    if (!sc.lits) { LZ6_free_mem_HC(hc); free(hc); return 0; }
     int rc = LZ6HC_compress_sequences(hc, src, srcSize, collect_seq, &sc);
-    free(hc);
+    LZ6_free_mem_HC(hc);   /* free internal hash tables (64MB with max hashLog) */
+    free(hc);              /* free the state struct itself */
     if (rc) { free(sc.lits); free(sc.lit_lens); free(sc.match_lens); free(sc.offsets); return 0; }
     fill_literals(&sc);
     int sc_cnt = (int)sc.n;
