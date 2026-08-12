@@ -163,7 +163,7 @@ size_t LZ6_compress_seq(const char* src, size_t srcSize,
         unsigned* lit_syms = (unsigned*)malloc((size_t)lit_count * sizeof(unsigned));
         if (!lit_syms) { free(sc.lits); free(sc.lit_lens); free(sc.match_lens); free(sc.offsets); return 0; }
         for (int i = 0; i < lit_count; i++) lit_syms[i] = sc.lits[i];
-        size_t lit_cap = (size_t)lit_count + 1024;
+        size_t lit_cap = (size_t)lit_count * 2 + 4096;  /* fse_encode writes backwards; needs ~1.5n */
         uint8_t* lit_buf = (uint8_t*)malloc(lit_cap);
         if (!lit_buf) { free(lit_syms); free(sc.lits); free(sc.lit_lens); free(sc.match_lens); free(sc.offsets); return 0; }
         size_t lit_ts;

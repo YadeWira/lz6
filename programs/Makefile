@@ -97,6 +97,12 @@ datagen : datagen.o datagencli.c
 .c.o:
 	$(CC) $(FLAGS) $< -c -o $@
 
+# The seq codec (lz6fse/lz6seq) miscompiles under -O3 — build at -O2.
+$(LZ6DIR)/lz6fse.o: $(LZ6DIR)/lz6fse.c
+	$(CC) -O2 $(CPPFLAGS) -std=c99 -Wall $< -c -o $@
+$(LZ6DIR)/lz6seq.o: $(LZ6DIR)/lz6seq.c
+	$(CC) -O2 $(CPPFLAGS) -std=c99 -Wall $< -c -o $@
+
 clean:
 	@$(MAKE) -C $(LZ6DIR) $@
 	@rm -f core *.o *.test tmp* \

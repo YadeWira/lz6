@@ -42,6 +42,9 @@ PREFIX ?= /usr/local
 CPPFLAGS= -DXXH_NAMESPACE=LZ6_
 CFLAGS ?= -O3
 CFLAGS += -std=c99 -Wall -Wextra -Wundef -Wshadow -Wcast-align -Wcast-qual -Wstrict-prototypes -pedantic
+# The seq codec (lz6seq/lz6fse) miscompiles under -O3 (rANS buffer
+# writes) — keep it at -O2 where it round-trips correctly.
+SEQ_CFLAGS = -O2
 FLAGS   = $(CPPFLAGS) $(CFLAGS) $(LDFLAGS)
 
 LIBDIR?= $(PREFIX)/lib
