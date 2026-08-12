@@ -500,8 +500,10 @@ static void MEM_wildCopy(void* dstPtr, const void* srcPtr, void* dstEnd)
 /* 16-byte wildcopy, overwrites up to 15 bytes beyond dstEnd.
    Only use where the caller's guard accounts for the wider overrun.
    Uses 'while' not 'do-while' so it writes nothing when (d >= e) —
-   the pre-copy may already have covered the full match. */
-static void MEM_wildCopy16(void* dstPtr, const void* srcPtr, void* dstEnd)
+   the pre-copy may already have covered the full match.
+   MEM_STATIC (not plain static): carries __attribute__((unused)) so
+   TUs that don't call it don't warn. */
+MEM_STATIC void MEM_wildCopy16(void* dstPtr, const void* srcPtr, void* dstEnd)
 {
     BYTE* d = (BYTE*)dstPtr;
     const BYTE* s = (const BYTE*)srcPtr;

@@ -202,15 +202,20 @@ int LZ6_saveDictHC (LZ6_streamHC_t* streamHCPtr, char* safeBuffer, int maxDictSi
    You can also define LZ6_DEPRECATE_WARNING_DEFBLOCK. */
 #ifndef LZ6_DEPRECATE_WARNING_DEFBLOCK
 #  define LZ6_DEPRECATE_WARNING_DEFBLOCK
-#  if (LZ6_GCC_VERSION >= 405) || defined(__clang__)
-#    define LZ6_DEPRECATED(message) __attribute__((deprecated(message)))
-#  elif (LZ6_GCC_VERSION >= 301)
-#    define LZ6_DEPRECATED(message) __attribute__((deprecated))
-#  elif defined(_MSC_VER)
-#    define LZ6_DEPRECATED(message) __declspec(deprecated(message))
-#  else
-#    pragma message("WARNING: You need to implement LZ6_DEPRECATED for this compiler")
-#    define LZ6_DEPRECATED(message)
+#  ifndef LZ6_GCC_VERSION
+#    define LZ6_GCC_VERSION (__GNUC__ * 100 + __GNUC_MINOR__)
+#  endif
+#  ifndef LZ6_DEPRECATED
+#    if (LZ6_GCC_VERSION >= 405) || defined(__clang__)
+#      define LZ6_DEPRECATED(message) __attribute__((deprecated(message)))
+#    elif (LZ6_GCC_VERSION >= 301)
+#      define LZ6_DEPRECATED(message) __attribute__((deprecated))
+#    elif defined(_MSC_VER)
+#      define LZ6_DEPRECATED(message) __declspec(deprecated(message))
+#    else
+#      pragma message("WARNING: You need to implement LZ6_DEPRECATED for this compiler")
+#      define LZ6_DEPRECATED(message)
+#    endif
 #  endif
 #endif // LZ6_DEPRECATE_WARNING_DEFBLOCK
 

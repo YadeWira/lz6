@@ -1103,6 +1103,7 @@ size_t LZ6F_decompress(LZ6F_decompressionContext_t decompressionContext,
                 dctxPtr->tmpInSize = 0;
                 dctxPtr->tmpInTarget = minFHSize;   /* minimum to attempt decode */
                 dctxPtr->dStage = dstage_storeHeader;
+                __attribute__((fallthrough));  /* header too small, store into tmpIn */
             }
 
         case dstage_storeHeader:
