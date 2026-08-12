@@ -224,6 +224,7 @@ static inline uint32_t rans_dec_advance(uint32_t x, unsigned f,
 static inline uint32_t rans_dec_renorm(uint32_t x, int L_bits,
                                        const uint8_t** pp)
 {
+    (void)L_bits;
     /* Decoder refill to RANS_L = 1 << 16 (standard 32-bit-state rANS). */
     unsigned lo = 0x10000u;
 #ifdef FSE_DEBUG
@@ -252,6 +253,7 @@ size_t fse_encode(const unsigned* syms, size_t n, int maxSym,
                   const uint64_t* inv_M, int inv_l,
                   size_t* table_size_out)
 {
+    (void)inv_M; (void)inv_l;
     /* count symbols */
     unsigned counts[256];
     int i;
@@ -339,10 +341,14 @@ size_t fse_encode(const unsigned* syms, size_t n, int maxSym,
             if (f == 0) { /* shouldn't happen if counts > 0 implies freq > 0 */
                 return 0;
             }
+#ifdef FSE_DEBUG
             uint32_t x_pre = x;
             uint8_t* p_pre = p;
+#endif
             x = rans_enc_renorm(x, L_bits, f, &p);
+#ifdef FSE_DEBUG
             int refilled = (int)(p_pre - p);
+#endif
             /* Lemire reciprocal (corrected).
              *
              * M computed once above (per call) from freq_tab so the M

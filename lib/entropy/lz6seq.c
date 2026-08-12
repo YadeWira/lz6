@@ -375,10 +375,10 @@ size_t LZ6_compress_seq(const char* src, size_t srcSize,
         result = blk_len;
     } else if (srcSize + 5 <= dstCap) {
         /* raw fallback: flags=1 + isize + payload */
-        uint8_t* rp = out;
-        w8(&rp, 1);
-        w32le(&rp, (uint32_t)srcSize);
-        memcpy(rp, src, srcSize);
+        uint8_t* rop = out;
+        w8(&rop, 1);
+        w32le(&rop, (uint32_t)srcSize);
+        memcpy(rop, src, srcSize);
         result = srcSize + 5;
     }
 
@@ -454,7 +454,7 @@ size_t LZ6_decompress_seq(const char* src, size_t srcSize,
     } else if (lit_mode == 3) {
         /* FSE order-1: 32B bitmap + 1B L_bits + order-0 table + per-active tables + stream */
         int lit_csize = rvlq(&p, end);
-        if ((size_t)(end - p) < lit_csize) return 0;
+        if ((size_t)(end - p) < (size_t)lit_csize) return 0;
         const uint8_t* lp = p;
         const uint8_t* lpe = lp + lit_csize;
         if (lpe - lp < 33) return 0;
@@ -462,7 +462,7 @@ size_t LZ6_decompress_seq(const char* src, size_t srcSize,
         memset(active, 0, sizeof(active));
         for (int c = 0; c < 256; c++) if (lp[c >> 3] & (1 << (c & 7))) active[c] = 1;
         lp += 32;
-        int L_bits = *lp++;
+        (void)*lp++;  /* L_bits: fixed per-block, same value for every table */
         fse_ctx_table tables[256];
         memset(tables, 0, sizeof(tables));
         /* order-0 fallback table (ctx 256) */
