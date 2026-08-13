@@ -112,11 +112,11 @@ uninstall:
 	@rm -f $(DESTDIR)$(LIBDIR)/liblz6.$(SHARED_EXT)
 	@rm -f $(DESTDIR)$(LIBDIR)/liblz6.$(SHARED_EXT_MAJOR)
 	@rm -f $(DESTDIR)$(LIBDIR)/pkgconfig/liblz6.pc
-	@[ -x $(DESTDIR)$(LIBDIR)/liblz6.$(SHARED_EXT_VER) ] && rm -f $(DESTDIR)$(LIBDIR)/liblz6.$(SHARED_EXT_VER)
-	@[ -f $(DESTDIR)$(LIBDIR)/liblz6.a ] && rm -f $(DESTDIR)$(LIBDIR)/liblz6.a
-	@[ -f $(DESTDIR)$(INCLUDEDIR)/lz6.h ] && rm -f $(DESTDIR)$(INCLUDEDIR)/lz6.h
-	@[ -f $(DESTDIR)$(INCLUDEDIR)/lz6hc.h ] && rm -f $(DESTDIR)$(INCLUDEDIR)/lz6hc.h
-	@[ -f $(DESTDIR)$(INCLUDEDIR)/lz6frame.h ] && rm -f $(DESTDIR)$(INCLUDEDIR)/lz6frame.h
+	@rm -f $(DESTDIR)$(LIBDIR)/liblz6.$(SHARED_EXT_VER)
+	@rm -f $(DESTDIR)$(LIBDIR)/liblz6.a
+	@rm -f $(DESTDIR)$(INCLUDEDIR)/lz6.h
+	@rm -f $(DESTDIR)$(INCLUDEDIR)/lz6hc.h
+	@rm -f $(DESTDIR)$(INCLUDEDIR)/lz6frame.h
 	@rm -f $(DESTDIR)$(INCLUDEDIR)/lz6fse.h $(DESTDIR)$(INCLUDEDIR)/lz6rc.h $(DESTDIR)$(INCLUDEDIR)/lz6seq.h $(DESTDIR)$(INCLUDEDIR)/lz6huf.h
 	@echo lz6 libraries successfully uninstalled
 

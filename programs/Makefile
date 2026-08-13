@@ -70,10 +70,10 @@ bins: lz6 fullbench frametest datagen
 all: bins m32
 
 lz6: $(LZ6DIR)/lz6.o $(LZ6DIR)/lz6hc.o $(LZ6DIR)/lz6frame.o $(LZ6DIR)/xxhash.o $(LZ6DIR)/entropy/lz6fse.o $(LZ6DIR)/entropy/lz6rc.o $(LZ6DIR)/entropy/lz6seq.o $(LZ6DIR)/entropy/lz6huf.o bench.o lz6io.o lz6cli.o
-	$(CC) $(FLAGS) $^ -o $@$(EXT)
+	$(CC) $(FLAGS) $^ -o $@$(EXT) -lm
 
-lz6seq_test: $(LZ6DIR)/lz6.o $(LZ6DIR)/lz6hc.o $(LZ6DIR)/entropy/lz6fse.o $(LZ6DIR)/entropy/lz6rc.o $(LZ6DIR)/entropy/lz6seq.o lz6seq_test.o
-	$(CC) $(FLAGS) $^ -o $@$(EXT)
+lz6seq_test: $(LZ6DIR)/lz6.o $(LZ6DIR)/lz6hc.o $(LZ6DIR)/entropy/lz6fse.o $(LZ6DIR)/entropy/lz6rc.o $(LZ6DIR)/entropy/lz6seq.o $(LZ6DIR)/entropy/lz6huf.o lz6seq_test.o
+	$(CC) $(FLAGS) $^ -o $@$(EXT) -lm
 
 lz6_32: $(LZ6DIR)/lz6.c $(LZ6DIR)/lz6hc.c $(LZ6DIR)/lz6frame.c $(LZ6DIR)/xxhash.c bench.c lz6io.c lz6cli.c
 	$(CC) -m32 $(FLAGS) $^ -o $@$(EXT)
@@ -134,9 +134,9 @@ install: lz6
 uninstall:
 	rm -f $(DESTDIR)$(BINDIR)/lz6cat
 	rm -f $(DESTDIR)$(BINDIR)/unlz6
-	[ -x $(DESTDIR)$(BINDIR)/lz6 ] && rm -f $(DESTDIR)$(BINDIR)/lz6
-	[ -f $(DESTDIR)$(INCLUDEDIR)/lz6seq.h ] && rm -f $(DESTDIR)$(INCLUDEDIR)/lz6seq.h
-	[ -f $(DESTDIR)$(MANDIR)/lz6.1 ] && rm -f $(DESTDIR)$(MANDIR)/lz6.1
+	rm -f $(DESTDIR)$(BINDIR)/lz6
+	rm -f $(DESTDIR)$(INCLUDEDIR)/lz6seq.h
+	rm -f $(DESTDIR)$(MANDIR)/lz6.1
 	rm -f $(DESTDIR)$(MANDIR)/lz6cat.1
 	rm -f $(DESTDIR)$(MANDIR)/unlz6.1
 	@echo lz6 programs successfully uninstalled

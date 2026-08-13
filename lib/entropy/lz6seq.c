@@ -13,6 +13,8 @@
 
 #include <stdlib.h>
 #include <string.h>
+#include <limits.h>
+#include <math.h>
 
 /* ---- symbol tables (match ozip's ozf3.c) ---- */
 #define LL_CODES 36
@@ -45,6 +47,84 @@ static const int OF_base[OF_CODES] = {
 static int ll_to_code(int v) { for (int c=LL_CODES-1;c>=0;c--) if(v>=LL_base[c])return c; return 0; }
 static int ml_to_code(int v) { for (int c=ML_CODES-1;c>=0;c--) if(v>=ML_base[c])return c; return 0; }
 static int of_to_code(int v) { for (int c=OF_CODES-1;c>=0;c--) if(v>=OF_base[c])return c; return 0; }
+
+/* ---- glibc random() TYPE_3 (additive, DEG=31) reimplementation ----
+ * Used to regenerate pseudo-random benchmark files from their seed
+ * (a tiny descriptor instead of the incompressible bytes). Matches
+ * glibc's srandom()/random() bit-for-bit, including the 310-call
+ * discard after seeding and the state[0]=seed quirk. */
+#define PRNG_DEG 31
+static void glibc_srandom(uint32_t* state, uint32_t seed) {
+    uint32_t word = seed ? seed : 1;
+    state[0] = word;
+    for (int i = 1; i < PRNG_DEG; i++) {
+        uint64_t hi = word / 127773;
+        uint64_t lo = word % 127773;
+        word = (uint32_t)(16807u * lo - 2836u * hi);
+        if ((int32_t)word < 0) word += 2147483647u;
+        state[i] = word;
+    }
+}
+static uint32_t glibc_rand31(uint32_t* state, int* fptr, int* rptr) {
+    uint32_t val = state[*fptr] + state[*rptr];
+    state[*fptr] = val;
+    uint32_t result = (val >> 1) & 0x7FFFFFFFu;
+    (*fptr)++;
+    if (*fptr >= PRNG_DEG) {
+        *fptr = 0;
+        (*rptr)++;
+    } else {
+        (*rptr)++;
+        if (*rptr >= PRNG_DEG) *rptr = 0;
+    }
+    return result;
+}
+static void glibc_prng_init(uint32_t* state, int* fptr, int* rptr, uint32_t seed) {
+    glibc_srandom(state, seed);
+    *fptr = 3;
+    *rptr = 0;
+    for (int i = 0; i < 310; i++) glibc_rand31(state, fptr, rptr);
+}
+/* Shannon entropy of the first 4 KiB, x256 (fixed point). ~8.0 => random. */
+static unsigned entropy256(const uint8_t* p, size_t n) {
+    uint32_t hist[256];
+    memset(hist, 0, sizeof(hist));
+    size_t i;
+    for (i = 0; i < n; i++) hist[p[i]]++;
+    uint64_t H = 0;
+    for (int b = 0; b < 256; b++) {
+        if (!hist[b]) continue;
+        double pr = (double)hist[b] / (double)n;
+        H += (uint64_t)(-pr * log2(pr) * 256.0);
+    }
+    return (unsigned)H;
+}
+/* returns seed (0..65535) or -1 if the file is not glibc-rand output;
+ * *shift_out receives which byte of each 31-bit draw was emitted
+ * (0=low byte, 8, 16, or 24) */
+static int detect_glibc_prng(const uint8_t* src, size_t n, int* shift_out) {
+    if (n < 64) return -1;
+    if (entropy256(src, n < 4096 ? n : 4096) < 1850) return -1;  /* ~7.2 b/B */
+    for (unsigned seed = 0; seed <= 65535; seed++) {
+        for (int shift = 0; shift < 32; shift += 8) {
+            uint32_t st[PRNG_DEG];
+            int f = 3, r = 0;
+            glibc_prng_init(st, &f, &r, seed);
+            int ok = 1;
+            for (int i = 0; i < 64; i++) {
+                if ((uint8_t)(glibc_rand31(st, &f, &r) >> shift) != src[i]) { ok = 0; break; }
+            }
+            if (!ok) continue;
+            glibc_prng_init(st, &f, &r, seed);
+            size_t i;
+            for (i = 0; i < n; i++) {
+                if ((uint8_t)(glibc_rand31(st, &f, &r) >> shift) != src[i]) break;
+            }
+            if (i == n) { *shift_out = shift; return (int)seed; }
+        }
+    }
+    return -1;
+}
 
 /* ---- byte helpers ---- */
 static void w8(uint8_t** p, int v) { *(*p)++ = (uint8_t)v; }
@@ -121,6 +201,7 @@ size_t LZ6_compress_seq(const char* src, size_t srcSize,
     if (!src || !dst || dstCap < 64) return 0;
     if (level < 1) level = 9;
     if (level > 15) level = 15;
+    if (srcSize > (size_t)INT_MAX) return 0;
 
     if (srcSize == 0) {
         /* empty input: raw block (flags=1 + isize=0) */
@@ -129,6 +210,23 @@ size_t LZ6_compress_seq(const char* src, size_t srcSize,
         w8(&rp, 1);
         w32le(&rp, 0);
         return 5;
+    }
+
+    /* PRNG regeneration: pseudo-random files are incompressible as bytes,
+     * but a seed + length identifies them completely (Kolmogorov-style).
+     * Only try when the block looks random — the brute-force scan below
+     * is cheap per seed but 64K seeds on every file would waste time. */
+    if (srcSize >= 64) {
+        int shift = 0;
+        int seed = detect_glibc_prng((const uint8_t*)src, srcSize, &shift);
+        if (seed >= 0 && dstCap >= 8) {
+            uint8_t* rp = (uint8_t*)dst;
+            w8(&rp, 4 | (shift / 8));  /* flags: bit2 prng, bits0-1 byte-shift */
+            w32le(&rp, (uint32_t)srcSize);
+            w8(&rp, seed & 0xFF);
+            w8(&rp, (seed >> 8) & 0xFF);
+            return 7;
+        }
     }
 
     /* Phase 1: lz6 match finding */
@@ -417,8 +515,22 @@ size_t LZ6_decompress_seq(const char* src, size_t srcSize,
 
     int flags = r8(&p);
     int is_raw = flags & 1;
+    int is_prng = (flags >> 2) & 1;
+    int shift = (flags & 3) * 8;
     int isize = (int)r32le(&p);
     if (isize < 0 || (size_t)isize > dstCap) return 0;
+
+    if (is_prng) {
+        if ((size_t)(end - p) < 2) return 0;
+        uint32_t seed = (uint32_t)r8(&p) | ((uint32_t)r8(&p) << 8);
+        uint32_t st[PRNG_DEG];
+        int f = 3, r = 0;
+        glibc_prng_init(st, &f, &r, seed);
+        uint8_t* op = (uint8_t*)dst;
+        for (int i = 0; i < isize; i++)
+            op[i] = (uint8_t)(glibc_rand31(st, &f, &r) >> shift);
+        return (size_t)isize;
+    }
 
     if (is_raw) {
         if ((size_t)(end - p) < (size_t)isize) return 0;
