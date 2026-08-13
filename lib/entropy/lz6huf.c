@@ -238,7 +238,7 @@ size_t huf_decode(const uint8_t* in, size_t in_len, size_t n, uint8_t* out)
     while (nbits < 32 && p < pend) { acc = (acc << 8) | *p++; nbits += 8; }
     size_t i = 0;
     for (; i < n; i++) {
-        if (nbits < 24) { acc = (acc << 8) | (p < pend ? *p++ : 0); nbits += 8; }
+        while (nbits < 24) { acc = (acc << 8) | (p < pend ? *p++ : 0); nbits += 8; }
         int shift = nbits - k;
         uint16_t v = table[(unsigned)((acc >> shift) & kmask)];
         int l = v & 15;
