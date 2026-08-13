@@ -614,8 +614,16 @@ static size_t compress_normal(const char* src, size_t srcSize,
         p += 4;
         size_t r8_csz = fse_encode(resid_top8[b], resid_n[b], 255, p, blk_cap - (size_t)(p-blk), NULL, 0, &ts);
         if (r8_csz == 0) goto oom;
-        szp[0] = (uint8_t)(r8_csz); szp[1] = (uint8_t)(r8_csz >> 8);
-        szp[2] = (uint8_t)(r8_csz >> 16); szp[3] = (uint8_t)(r8_csz >> 24);
+        /* small buckets: FSE header (~40B) costs more than raw symbols —
+         * mark raw with bit31 of the size field. */
+        uint32_t szword = (uint32_t)r8_csz;
+        if (resid_n[b] * 1 + 8 < r8_csz && resid_n[b] + 4 <= (size_t)(blk_cap - (p - blk))) {
+            szword = 0x80000000u | (uint32_t)resid_n[b];
+            memcpy(p, resid_top8[b], resid_n[b]);
+            r8_csz = resid_n[b];
+        }
+        szp[0] = (uint8_t)szword; szp[1] = (uint8_t)(szword >> 8);
+        szp[2] = (uint8_t)(szword >> 16); szp[3] = (uint8_t)(szword >> 24);
         p += r8_csz;
     }
     w8(&p, 0);
@@ -851,6 +859,30 @@ size_t LZ6_compress_seq(const char* src, size_t srcSize,
             w8(&rp, seed & 0xFF);
             w8(&rp, (seed >> 8) & 0xFF);
             return 7;
+        }
+    }
+
+    /* incompressible fast-path: random/high-entropy data (testing L/P,
+     * most of A) can't beat raw — skip the match finder entirely.
+     * Sample the first 32KB: H0 > 7.9 b/B means no structure to exploit. */
+    if (srcSize >= 32768) {
+        uint32_t h[256];
+        memset(h, 0, sizeof(h));
+        size_t n = srcSize < 32768 ? srcSize : 32768;
+        const uint8_t* sp = (const uint8_t*)src;
+        for (size_t i = 0; i < n; i++) h[sp[i]]++;
+        double H = 0;
+        for (int b = 0; b < 256; b++) {
+            if (!h[b]) continue;
+            double pr = (double)h[b] / (double)n;
+            H -= pr * log2(pr);
+        }
+        if (H > 7.9 && srcSize + 5 <= dstCap) {
+            uint8_t* rp = (uint8_t*)dst;
+            w8(&rp, 1);
+            w32le(&rp, (uint32_t)srcSize);
+            memcpy(rp, src, srcSize);
+            return srcSize + 5;
         }
     }
 
@@ -1119,6 +1151,18 @@ static size_t decode_normal(const char* src, size_t srcSize,
         uint32_t rsz = (uint32_t)p[1] | ((uint32_t)p[2]<<8) | ((uint32_t)p[3]<<16) | ((uint32_t)p[4]<<24);
         p += 5;
         if (rsz == 0) break;
+        if (rsz & 0x80000000u) {
+            /* raw bucket (bit31 set): symbols stored verbatim */
+            uint32_t rn = rsz & 0x7FFFFFFFu;
+            if (bid < 0 || bid >= OF_CODES || (size_t)(end - p) < rn) goto fail;
+            unsigned* top8 = (unsigned*)malloc((size_t)rn * sizeof(unsigned));
+            if (!top8) goto fail;
+            for (uint32_t i = 0; i < rn; i++) top8[i] = p[i];
+            resid_top8[bid] = top8;
+            resid_n[bid] = rn;
+            p += rn;
+            continue;
+        }
         if (bid < 0 || bid >= OF_CODES || (size_t)(end - p) < rsz) goto fail;
         unsigned cnt = 0;
         for (int j = 0; j < sc; j++) {
