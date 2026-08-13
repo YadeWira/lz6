@@ -272,27 +272,226 @@ static size_t compress_normal(const char* src, size_t srcSize,
             size_t lit_ts;
             lit_sz = fse_encode(lit_syms, (size_t)lit_count, 255, lit_buf, lit_cap, NULL, 0, &lit_ts);
         }
-        if (hsz > 0) {
+        /* order-1 FSE candidate (lit_mode=3): context = previous literal.
+         * ~30% smaller literal stream than order-0 on text (B/C/H), at the
+         * cost of a 256-table header (active contexts only) and a slower
+         * encode. Compete with huffman/order-0 and keep the smallest.
+         * Gate: sample-estimate H0/H1 first — only pay the full table
+         * build+encode cost when order-1 clearly beats order-0 (text
+         * H1/H0 ~0.70; binary A 0.996; random lanes ~1.0). */
+        uint8_t* ctx_buf = NULL;
+        size_t ctx_sz = 0;
+        int ctx_mode16 = 0;
+        /* order-1 only at level >= 4: at L1 its encode+decode cost dwarfs
+         * the ~3% ratio gain and sinks the Weissman score (W 2.31 -> 1.71
+         * measured on A-H); at higher levels the parser already dominates
+         * the time budget and the ratio win is free. */
+        if (lit_count >= 65536 && level >= 4) {
+            /* sample up to 64K literals */
+            int samp = lit_count < 65536 ? lit_count : 65536;
+            uint32_t hist0[256], hist1[256];
+            memset(hist0, 0, sizeof(hist0));
+            memset(hist1, 0, sizeof(hist1));
+            for (int i = 0; i < samp; i++) {
+                hist0[lit_syms[i]]++;
+                if (i > 0) hist1[lit_syms[i - 1] * 0 + lit_syms[i]]++;
+            }
+            /* H0 estimate */
+            double h0 = 0;
+            for (int s = 0; s < 256; s++) {
+                if (!hist0[s]) continue;
+                double pr = (double)hist0[s] / samp;
+                h0 -= pr * log2(pr);
+            }
+            /* H1 estimate via 16 high-nibble contexts */
+            uint32_t hctx[16][256];
+            uint32_t ctx_tot[16];
+            memset(hctx, 0, sizeof(hctx));
+            memset(ctx_tot, 0, sizeof(ctx_tot));
+            for (int i = 1; i < samp; i++) {
+                int c = lit_syms[i - 1] >> 4;
+                hctx[c][lit_syms[i]]++;
+                ctx_tot[c]++;
+            }
+            double h1 = 0;
+            for (int c = 0; c < 16; c++) {
+                if (!ctx_tot[c]) continue;
+                for (int s = 0; s < 256; s++) {
+                    if (!hctx[c][s]) continue;
+                    double pr = (double)hctx[c][s] / ctx_tot[c];
+                    h1 -= (double)ctx_tot[c] / (samp - 1) * pr * log2(pr);
+                }
+            }
+            /* order-1 pays off only when it cuts entropy > 12% */
+            if (h1 < h0 * 0.88) {
+                /* 16-context version (lit_mode=6): context = prev>>4.
+                 * Header is 16*513 = 8KB vs 65KB for the 256-ctx mode,
+                 * and the stream gains ~21% on text (vs 30%) — better
+                 * Weissman for mid-size blocks. */
+                uint32_t nib_counts[16][256];
+                uint32_t g_counts2[256];
+                memset(nib_counts, 0, sizeof(nib_counts));
+                memset(g_counts2, 0, sizeof(g_counts2));
+                for (int i = 0; i < lit_count; i++) g_counts2[lit_syms[i]]++;
+                for (int i = 1; i < lit_count; i++)
+                    nib_counts[lit_syms[i - 1] >> 4][lit_syms[i]]++;
+                fse_ctx_table ntab[16];
+                int ok6 = 1;
+                for (int c = 0; c < 16; c++)
+                    if (!fse_ctx_table_build(&ntab[c], nib_counts[c], 255, 12)) { ok6 = 0; break; }
+                if (ok6) {
+                    unsigned* ctxs6 = (unsigned*)malloc((size_t)lit_count * sizeof(unsigned));
+                    uint8_t* s6 = ctxs6 ? (uint8_t*)malloc((size_t)lit_count * 2 + 1024) : NULL;
+                    if (ctxs6 && s6) {
+                        ctxs6[0] = 0;
+                        for (int i = 1; i < lit_count; i++) ctxs6[i] = lit_syms[i - 1] >> 4;
+                        size_t ssz6 = fse_encode_ctx(lit_syms, ctxs6, (size_t)lit_count,
+                                                     ntab, 16, s6, (size_t)lit_count * 2 + 1024);
+                        if (ssz6 > 0) {
+                            size_t hdr6 = 1 + 16 * 513;
+                            ctx_buf = (uint8_t*)malloc(hdr6 + ssz6);
+                            if (ctx_buf) {
+                                uint8_t* q6 = ctx_buf;
+                                *q6++ = 12;  /* L_bits */
+                                for (int c = 0; c < 16; c++)
+                                    q6 += fse_ctx_table_write(&ntab[c], q6, 513);
+                                memcpy(q6, s6, ssz6);
+                                ctx_sz = hdr6 + ssz6;
+                                ctx_mode16 = 1;
+                            }
+                        }
+                    }
+                    free(s6);
+                    free(ctxs6);
+                }
+                for (int c = 0; c < 16; c++) fse_ctx_table_free(&ntab[c]);
+            }
+            /* 256-ctx version (lit_mode=3) — competes with 16ctx: some
+             * corpora (C) have skewed byte-pair structure that 256 ctx
+             * exploits better than the 16-ctx high-nibble split. */
+            {
+                unsigned (*pair_counts)[256] = (unsigned(*)[256])calloc(256, sizeof(unsigned[256]));
+                if (pair_counts) {
+                for (int i = 1; i < lit_count; i++)
+                    pair_counts[lit_syms[i - 1]][lit_syms[i]]++;
+                /* active contexts: enough samples to make a table pay off */
+                unsigned char active_ctx[256];
+                int n_active = 0;
+                unsigned g_counts[256];
+                memset(g_counts, 0, sizeof(g_counts));
+                for (int i = 0; i < lit_count; i++) g_counts[lit_syms[i]]++;
+                for (int c = 0; c < 256; c++) {
+                    unsigned tot = 0;
+                    for (int s = 0; s < 256; s++) tot += pair_counts[c][s];
+                    active_ctx[c] = (tot >= 128) ? 1 : 0;
+                    if (active_ctx[c]) n_active++;
+                }
+                /* context table set: 256 active + 1 order-0 fallback */
+                fse_ctx_table* ctab = (fse_ctx_table*)calloc(257, sizeof(fse_ctx_table));
+                if (ctab) {
+                    int ok = 1;
+                    for (int c = 0; c < 256; c++) {
+                        if (!active_ctx[c]) continue;
+                        if (!fse_ctx_table_build(&ctab[c], pair_counts[c], 255, 12)) { ok = 0; break; }
+                    }
+                    if (ok && !fse_ctx_table_build(&ctab[256], g_counts, 255, 12)) ok = 0;
+                    if (ok) {
+                        /* serialize: bitmap(32) + L_bits(1) + gtab + active tabs */
+                        size_t hdr_sz = 32 + 1 + (size_t)(1 + n_active) * 513;
+                        uint8_t* ctx_hdr = (uint8_t*)malloc(hdr_sz);
+                        if (ctx_hdr) {
+                            uint8_t* q = ctx_hdr;
+                            memset(q, 0, 32);  /* bitmap must be zeroed: garbage bits would
+                                                 * mark unwritten contexts as active */
+                            for (int c = 0; c < 256; c++)
+                                if (active_ctx[c]) q[c >> 3] |= (uint8_t)(1 << (c & 7));
+                            q += 32;
+                            *q++ = 12;  /* L_bits */
+                            q += fse_ctx_table_write(&ctab[256], q, 513);
+                            for (int c = 0; c < 256; c++)
+                                if (active_ctx[c])
+                                    q += fse_ctx_table_write(&ctab[c], q, 513);
+                            /* ctx array: prev byte for i>=1, 0 for i==0;
+                             * inactive contexts route to the fallback (256) */
+                            unsigned* ctxs = (unsigned*)malloc((size_t)lit_count * sizeof(unsigned));
+                            if (ctxs) {
+                                ctxs[0] = active_ctx[0] ? 0u : 256u;
+                                for (int i = 1; i < lit_count; i++) {
+                                    unsigned p = lit_syms[i - 1];
+                                    ctxs[i] = active_ctx[p] ? p : 256u;
+                                }
+                                /* build unified table pointer array for fse_encode_ctx */
+                                fse_ctx_table unified[257];
+                                memcpy(unified, ctab, sizeof(unified));
+                                /* fse_encode_ctx reads tables[0].L_bits as the
+                                 * shared L_bits; context 0 may be inactive
+                                 * (unbuilt, L_bits=0) — patch it. */
+                                if (unified[0].L_bits == 0) unified[0].L_bits = 12;
+                                uint8_t* stream = (uint8_t*)malloc((size_t)lit_count * 2 + 1024);
+                                if (stream) {
+                                    size_t ssz = fse_encode_ctx(lit_syms, ctxs, (size_t)lit_count,
+                                                                unified, 257, stream,
+                                                                (size_t)lit_count * 2 + 1024);
+                                    if (ssz > 0) {
+                                        /* keep 16ctx result; replace only if smaller */
+                                        uint8_t* nb = (uint8_t*)malloc(hdr_sz + ssz);
+                                        if (nb) {
+                                            if (ctx_sz == 0 || hdr_sz + ssz < ctx_sz) {
+                                                free(ctx_buf);
+                                                memcpy(nb, ctx_hdr, hdr_sz);
+                                                memcpy(nb + hdr_sz, stream, ssz);
+                                                ctx_buf = nb;
+                                                ctx_sz = hdr_sz + ssz;
+                                                ctx_mode16 = 0;
+                                            } else {
+                                                free(nb);
+                                            }
+                                        }
+                                    }
+                                    free(stream);
+                                }
+                                free(ctxs);
+                            }
+                            free(ctx_hdr);
+                        }
+                    }
+                    for (int c = 0; c < 257; c++) fse_ctx_table_free(&ctab[c]);
+                    free(ctab);
+                }
+                free(pair_counts);
+                }
+            }
+        }
+        if (hsz > 0 && (ctx_sz == 0 || hsz <= ctx_sz)) {
             w8(&p, 5);  /* lit_mode=huffman */
             p += wvlq(p, lit_count);
             p += wvlq(p, (int)hsz);
-            if ((size_t)(p - blk) + hsz > blk_cap) { free(lit_buf); free(huf_buf); free(lit_syms); free(sc.lits); free(sc.lit_lens); free(sc.match_lens); free(sc.offsets); return 0; }
+            if ((size_t)(p - blk) + hsz > blk_cap) { free(ctx_buf); free(lit_buf); free(huf_buf); free(lit_syms); free(sc.lits); free(sc.lit_lens); free(sc.match_lens); free(sc.offsets); return 0; }
             memcpy(p, huf_buf, hsz);
             p += hsz;
+        } else if (ctx_sz > 0 && ctx_sz < (size_t)lit_count &&
+                   (lit_sz == 0 || ctx_sz <= lit_sz)) {
+            w8(&p, ctx_mode16 ? 6 : 3);  /* lit_mode=order-1 FSE (16ctx / 256ctx) */
+            p += wvlq(p, lit_count);
+            p += wvlq(p, (int)ctx_sz);
+            if ((size_t)(p - blk) + ctx_sz > blk_cap) { free(ctx_buf); free(lit_buf); free(huf_buf); free(lit_syms); free(sc.lits); free(sc.lit_lens); free(sc.match_lens); free(sc.offsets); return 0; }
+            memcpy(p, ctx_buf, ctx_sz);
+            p += ctx_sz;
         } else if (lit_sz > 0 && lit_sz < (size_t)lit_count) {
             w8(&p, 1);  /* lit_mode=fse */
             p += wvlq(p, lit_count);
             p += wvlq(p, (int)lit_sz);
-            if ((size_t)(p - blk) + lit_sz > blk_cap) { free(lit_buf); free(huf_buf); free(lit_syms); free(sc.lits); free(sc.lit_lens); free(sc.match_lens); free(sc.offsets); return 0; }
+            if ((size_t)(p - blk) + lit_sz > blk_cap) { free(ctx_buf); free(lit_buf); free(huf_buf); free(lit_syms); free(sc.lits); free(sc.lit_lens); free(sc.match_lens); free(sc.offsets); return 0; }
             memcpy(p, lit_buf, lit_sz);
             p += lit_sz;
         } else {
             w8(&p, 0);  /* lit_mode=raw */
             p += wvlq(p, lit_count);
-            if ((size_t)(p - blk) + (size_t)lit_count > blk_cap) { free(lit_buf); free(huf_buf); free(lit_syms); free(sc.lits); free(sc.lit_lens); free(sc.match_lens); free(sc.offsets); return 0; }
+            if ((size_t)(p - blk) + (size_t)lit_count > blk_cap) { free(ctx_buf); free(lit_buf); free(huf_buf); free(lit_syms); free(sc.lits); free(sc.lit_lens); free(sc.match_lens); free(sc.offsets); return 0; }
             memcpy(p, sc.lits, (size_t)lit_count);
             p += lit_count;
         }
+        free(ctx_buf);
         free(lit_buf);
         free(huf_buf);
         free(lit_syms);
@@ -664,13 +863,14 @@ size_t LZ6_compress_seq(const char* src, size_t srcSize,
             if (plane_len == 0) { free(plane_buf); plane_buf = NULL; }
         }
     }
-    /* A plane block at <=80% of the input wins against the normal L1
-     * block on every observed file (E: 0.80, F: 0.80, G: 0.30); the
-     * plane gate (lane entropy < 5 b/B) already excludes text/binary
-     * files with weak lane skew, so skip the normal encode and save the
-     * full-match pass. */
+    /* A plane block at <=80% of the input wins against the normal block
+     * on every observed file (E: 0.80, F: 0.80, G: 0.30); the plane gate
+     * (lane entropy < 5 b/B) already excludes text/binary files with
+     * weak lane skew. Lanes are compressed internally at level 1, so the
+     * outer level is irrelevant for these files — skip the normal pass
+     * regardless of level. */
     if (plane_len > 0 && plane_len <= dstCap &&
-        plane_len * 5 <= srcSize * 4 && level <= 1) {
+        plane_len * 5 <= srcSize * 4) {
         memcpy(dst, plane_buf, plane_len);
         free(plane_buf);
         return plane_len;
@@ -752,6 +952,50 @@ static size_t decode_normal(const char* src, size_t srcSize,
         if (huf_decode(p, (size_t)lit_csize, (size_t)lit_count, literals) == 0) {
             free(literals); return 0;
         }
+        p += lit_csize;
+    } else if (lit_mode == 6) {
+        /* FSE order-1, 16 contexts (prev>>4): [L_bits:1][16 tables][stream] */
+        int lit_csize = rvlq(&p, end);
+        if ((size_t)(end - p) < (size_t)lit_csize) return 0;
+        const uint8_t* lp = p;
+        const uint8_t* lpe = lp + lit_csize;
+        if (lpe - lp < 1 + 16 * 513) return 0;
+        (void)*lp++;  /* L_bits */
+        fse_ctx_table tables6[16];
+        memset(tables6, 0, sizeof(tables6));
+        for (int c = 0; c < 16; c++) {
+            size_t rr = fse_ctx_table_read(&tables6[c], lp, (size_t)(lpe - lp));
+            if (rr == 0) { for (int k = 0; k < 16; k++) fse_ctx_table_free(&tables6[k]); return 0; }
+            lp += rr;
+        }
+        literals = (uint8_t*)malloc((size_t)lit_count + 16);
+        if (!literals) { for (int k = 0; k < 16; k++) fse_ctx_table_free(&tables6[k]); return 0; }
+        {
+            if ((size_t)(lpe - lp) < 8) { for (int k = 0; k < 16; k++) fse_ctx_table_free(&tables6[k]); free(literals); return 0; }
+            uint32_t stream_len = (uint32_t)lp[0] | ((uint32_t)lp[1] << 8) | ((uint32_t)lp[2] << 16) | ((uint32_t)lp[3] << 24);
+            lp += 4;
+            if ((size_t)(lpe - lp) < stream_len || stream_len < 4) { for (int k = 0; k < 16; k++) fse_ctx_table_free(&tables6[k]); free(literals); return 0; }
+            const uint8_t* sp = lp;
+            const uint8_t* sp_end = sp + stream_len;
+            uint32_t x = ((uint32_t)sp[0] << 24) | ((uint32_t)sp[1] << 16) | ((uint32_t)sp[2] << 8) | (uint32_t)sp[3];
+            sp += 4;
+            int prev = 0;
+            for (int i = 0; i < lit_count; i++) {
+                const fse_ctx_table* t = &tables6[prev >> 4];
+                unsigned slot_idx = x & (t->M - 1);
+                unsigned s = t->dtab[slot_idx];
+                unsigned f = t->freq[s];
+                if (f == 0) { for (int k = 0; k < 16; k++) fse_ctx_table_free(&tables6[k]); free(literals); return 0; }
+                literals[i] = (uint8_t)s;
+                x = f * (x >> t->L_bits) + (x & (t->M - 1)) - t->cumul[s];
+                while (x < 0x10000u) {
+                    if (sp >= sp_end) { for (int k = 0; k < 16; k++) fse_ctx_table_free(&tables6[k]); free(literals); return 0; }
+                    x = (x << 8) | *sp++;
+                }
+                prev = (int)s;
+            }
+        }
+        for (int k = 0; k < 16; k++) fse_ctx_table_free(&tables6[k]);
         p += lit_csize;
     } else if (lit_mode == 3) {
         /* FSE order-1: 32B bitmap + 1B L_bits + order-0 table + per-active tables + stream */

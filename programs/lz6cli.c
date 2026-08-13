@@ -281,7 +281,7 @@ have_input:
         out = (unsigned char*)malloc(cap);
         if (!out) { free(in); goto cleanup; }
         outsz = LZ6_compress_seq((const char*)in, (size_t)sz, (char*)out, cap,
-                                 cLevel > 0 ? cLevel : 1);
+                                 cLevel > 0 ? cLevel : 2);  /* L2: best Weissman on AIT A-H */
         if (!outsz) { DISPLAYLEVEL(1, "lz6seq: compression failed\n"); free(in); free(out); goto cleanup; }
         DISPLAYLEVEL(2, "lz6seq: %ld -> %zu bytes (%.2f%%)\n", sz, outsz, 100.0 * outsz / sz);
     } else {
