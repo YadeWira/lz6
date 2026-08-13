@@ -261,13 +261,16 @@ static size_t compress_normal(const char* src, size_t srcSize,
         int hk = 0;
         size_t hhdr = huf_build_header(hcounts, 255, huf_buf, lit_cap, &hk);
         size_t hsz = 0;
-        /* k>10 -> long codes force the slow walk decode; FSE wins there,
-         * so skip the huffman stream entirely. */
-        if (hhdr > 0 && hk <= 10) {
+        /* k<=12 keeps table decode (4096 entries); only deeper trees fall
+         * back to FSE. The old k<=10 gate skipped huffman for most text. */
+        if (hhdr > 0 && hk <= 12) {
             size_t hstr = huf_encode_stream(huf_buf, lit_syms, (size_t)lit_count, huf_buf + hhdr, lit_cap - hhdr);
             if (hstr > 0) hsz = hhdr + hstr;
         }
         size_t lit_sz = 0;
+        /* FSE vs Huffman: huffman's encode is ~2x cheaper and its decode
+         * ~2x faster (table walk), so it wins any near-tie. Run FSE only
+         * when huffman is absent/pathological. */
         if (hsz == 0) {
             size_t lit_ts;
             lit_sz = fse_encode(lit_syms, (size_t)lit_count, 255, lit_buf, lit_cap, NULL, 0, &lit_ts);
@@ -462,7 +465,10 @@ static size_t compress_normal(const char* src, size_t srcSize,
                 }
             }
         }
-        if (hsz > 0 && (ctx_sz == 0 || hsz <= ctx_sz)) {
+        if (hsz > 0 && (ctx_sz == 0 || hsz <= ctx_sz) &&
+            (lit_sz == 0 || (size_t)hsz <= lit_sz + (size_t)lit_sz / 50)) {
+            /* Huffman wins ties and near-ties (within 2%): its table
+             * decode is faster than FSE/rANS renormalization. */
             w8(&p, 5);  /* lit_mode=huffman */
             p += wvlq(p, lit_count);
             p += wvlq(p, (int)hsz);
@@ -582,7 +588,8 @@ static size_t compress_normal(const char* src, size_t srcSize,
     if (low_nbits > 0) low_buf[low_len++] = (uint8_t)(low_acc & 0xFF);
     size_t low_bytes = low_len;
 
-    /* FSE encode 3 streams */
+    /* FSE encode 3 streams (huffman measured no better: +771B headers
+     * and double encode outweigh the decode win on 64K-symbol streams) */
     size_t ts;
     size_t ll_csz = fse_encode(ll_syms, (size_t)sc_cnt, LL_CODES-1, p, blk_cap - (size_t)(p-blk), NULL, 0, &ts);
     if (ll_csz == 0) goto oom;
@@ -1087,7 +1094,8 @@ static size_t decode_normal(const char* src, size_t srcSize,
     for (int st = 0; st < 3; st++) {
         size_t hdr = fse_read_table(p, (size_t)(end - p), counts, &rmax, &rL);
         if (hdr == 0) goto fail;
-        uint32_t slen = p[hdr] | (p[hdr+1]<<8) | (p[hdr+2]<<16) | (p[hdr+3]<<24);
+        uint32_t slen = (uint32_t)(unsigned char)p[hdr] | ((uint32_t)(unsigned char)p[hdr+1] << 8)
+                      | ((uint32_t)(unsigned char)p[hdr+2] << 16) | ((uint32_t)(unsigned char)p[hdr+3] << 24);
         size_t total = hdr + 4 + slen;
         unsigned* dst_syms = st==0 ? ll_syms : st==1 ? ml_syms : of_syms;
         if (fse_decode(p, total, (size_t)sc, rmax, dst_syms)) goto fail;
