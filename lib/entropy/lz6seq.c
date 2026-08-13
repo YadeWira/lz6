@@ -196,39 +196,9 @@ static void fill_literals(seq_collector_t* s) {
 
 /* ================= ENCODER ================= */
 
-size_t LZ6_compress_seq(const char* src, size_t srcSize,
-                        char* dst, size_t dstCap, int level) {
-    if (!src || !dst || dstCap < 64) return 0;
-    if (level < 1) level = 9;
-    if (level > 15) level = 15;
-    if (srcSize > (size_t)INT_MAX) return 0;
-
-    if (srcSize == 0) {
-        /* empty input: raw block (flags=1 + isize=0) */
-        if (dstCap < 5) return 0;
-        uint8_t* rp = (uint8_t*)dst;
-        w8(&rp, 1);
-        w32le(&rp, 0);
-        return 5;
-    }
-
-    /* PRNG regeneration: pseudo-random files are incompressible as bytes,
-     * but a seed + length identifies them completely (Kolmogorov-style).
-     * Only try when the block looks random — the brute-force scan below
-     * is cheap per seed but 64K seeds on every file would waste time. */
-    if (srcSize >= 64) {
-        int shift = 0;
-        int seed = detect_glibc_prng((const uint8_t*)src, srcSize, &shift);
-        if (seed >= 0 && dstCap >= 8) {
-            uint8_t* rp = (uint8_t*)dst;
-            w8(&rp, 4 | (shift / 8));  /* flags: bit2 prng, bits0-1 byte-shift */
-            w32le(&rp, (uint32_t)srcSize);
-            w8(&rp, seed & 0xFF);
-            w8(&rp, (seed >> 8) & 0xFF);
-            return 7;
-        }
-    }
-
+/* ---- core block: lz6 matches + FSE/Huffman, no transforms ---- */
+static size_t compress_normal(const char* src, size_t srcSize,
+                              char* dst, size_t dstCap, int level) {
     /* Phase 1: lz6 match finding */
     size_t state_sz = (size_t)LZ6_sizeofStateHC();
     void* hc = malloc(state_sz);
@@ -505,10 +475,198 @@ oom:
     return 0;
 }
 
+/* ---- byte-plane transform (stride 2/4) ----
+ * Files with one byte per value of low entropy (e.g. IEEE float exponent
+ * bytes, 16-bit image channels) compress poorly as an interleaved byte
+ * stream but each lane compresses well on its own. Split the input into
+ * `stride` lanes, compress the low-entropy lanes with the normal block,
+ * store the incompressible lanes raw. */
+static unsigned lane_entropy256(const uint8_t* src, size_t n, int stride, int lane) {
+    uint32_t hist[256];
+    memset(hist, 0, sizeof(hist));
+    size_t cnt = 0;
+    for (size_t i = (size_t)lane; i < n; i += (size_t)stride) { hist[src[i]]++; cnt++; }
+    if (cnt < 256) return 0;
+    uint64_t H = 0;
+    for (int b = 0; b < 256; b++) {
+        if (!hist[b]) continue;
+        double pr = (double)hist[b] / (double)cnt;
+        H += (uint64_t)(-pr * log2(pr) * 256.0);
+    }
+    return (unsigned)H;
+}
+
+/* Returns bytes written to dst, or 0 if the plane transform does not help. */
+static size_t plane_encode(const uint8_t* src, size_t srcSize,
+                           uint8_t* dst, size_t dstCap, int level) {
+    int stride = 0;
+    unsigned lane_ent[4] = {0, 0, 0, 0};
+    if ((srcSize % 4) == 0) {
+        stride = 4;
+        for (int i = 0; i < 4; i++) lane_ent[i] = lane_entropy256(src, srcSize, 4, i);
+    } else if ((srcSize % 2) == 0) {
+        stride = 2;
+        lane_ent[0] = lane_entropy256(src, srcSize, 2, 0);
+        lane_ent[1] = lane_entropy256(src, srcSize, 2, 1);
+    }
+    if (!stride) return 0;
+    /* The win comes from lane skew: at least one lane must be very
+     * compressible (H < 5 b/B) while others stay near-incompressible. */
+    unsigned min_ent = 0xFFFFFFFFu;
+    for (int i = 0; i < stride; i++) if (lane_ent[i] < min_ent) min_ent = lane_ent[i];
+    if (min_ent >= 5 * 256) return 0;
+    if (dstCap < 5 + (size_t)stride) return 0;
+
+    size_t plane_size = srcSize / (size_t)stride;
+    uint8_t* plane_buf = (uint8_t*)malloc(plane_size);
+    if (!plane_buf) return 0;
+
+    /* header: flags bit3=plane, bits0-1=stride code (0=2,2=4) + isize */
+    uint8_t* p = dst;
+    uint8_t* dst_end = dst + dstCap;
+    w8(&p, 0x08 | (stride == 4 ? 2 : 0));
+    w32le(&p, (uint32_t)srcSize);
+
+    for (int i = 0; i < stride; i++) {
+        for (size_t j = 0; j < plane_size; j++) plane_buf[j] = src[j * (size_t)stride + (size_t)i];
+        uint8_t* payload = NULL;
+        size_t csize = 0;
+        int mode = 0;
+        if (lane_ent[i] < 3 * 256) {
+            /* very low entropy lane: try pure Huffman (small alphabet,
+             * random order — E's exponent plane) and LZ (long runs —
+             * G's constant lanes); pick the smaller. */
+            unsigned counts[256] = {0};
+            unsigned* syms = (unsigned*)malloc(plane_size * sizeof(unsigned));
+            uint8_t* hb = NULL;
+            if (syms) {
+                for (size_t j = 0; j < plane_size; j++) { syms[j] = plane_buf[j]; counts[plane_buf[j]]++; }
+                hb = (uint8_t*)malloc(plane_size + 1024);
+            }
+            if (hb) {
+                int k = 0;
+                size_t hhdr = huf_build_header(counts, 255, hb, plane_size + 1024, &k);
+                if (hhdr > 0 && k <= 10) {
+                    size_t hstr = huf_encode_stream(hb, syms, plane_size,
+                                                    hb + hhdr, plane_size + 1024 - hhdr);
+                    if (hstr > 0 && hhdr + hstr < plane_size) {
+                        payload = hb;
+                        csize = hhdr + hstr;
+                        mode = 2;
+                    }
+                }
+            }
+            /* LZ candidate */
+            size_t lz_cap = plane_size + (plane_size >> 1) + 4096;
+            uint8_t* lz_buf = (uint8_t*)malloc(lz_cap);
+            if (lz_buf) {
+                size_t lz_size = compress_normal((const char*)plane_buf, plane_size,
+                                                 (char*)lz_buf, lz_cap, level);
+                if (lz_size > 0 && lz_size < plane_size - 32 &&
+                    (csize == 0 || lz_size < csize)) {
+                    free(payload);
+                    payload = lz_buf;
+                    csize = lz_size;
+                    mode = 1;
+                } else {
+                    free(lz_buf);
+                }
+            }
+            if (!payload) free(hb);
+            free(syms);
+        } else if (lane_ent[i] < 7 * 256) {
+            size_t tmp_cap = plane_size + (plane_size >> 1) + 4096;
+            payload = (uint8_t*)malloc(tmp_cap);
+            if (payload) {
+                csize = compress_normal((const char*)plane_buf, plane_size,
+                                        (char*)payload, tmp_cap, level);
+                if (csize == 0 || csize >= plane_size - 32) {
+                    free(payload);
+                    payload = NULL;
+                    csize = 0;
+                }
+            }
+            if (payload) mode = 1;
+        }
+        if (payload) {
+            if ((size_t)(dst_end - p) < 4 + csize) { free(payload); free(plane_buf); return 0; }
+            w8(&p, mode);                    /* mode: 1=lz lane, 2=huffman lane */
+            w32le(&p, (uint32_t)csize);
+            memcpy(p, payload, csize);
+            p += csize;
+            free(payload);
+        } else {
+            if ((size_t)(dst_end - p) < 1 + plane_size) { free(plane_buf); return 0; }
+            w8(&p, 0);                       /* mode: raw */
+            memcpy(p, plane_buf, plane_size);
+            p += plane_size;
+        }
+    }
+    free(plane_buf);
+    return (size_t)(p - dst);
+}
+
+size_t LZ6_compress_seq(const char* src, size_t srcSize,
+                        char* dst, size_t dstCap, int level) {
+    if (!src || !dst || dstCap < 64) return 0;
+    if (level < 1) level = 9;
+    if (level > 15) level = 15;
+    if (srcSize > (size_t)INT_MAX) return 0;
+
+    if (srcSize == 0) {
+        /* empty input: raw block (flags=1 + isize=0) */
+        if (dstCap < 5) return 0;
+        uint8_t* rp = (uint8_t*)dst;
+        w8(&rp, 1);
+        w32le(&rp, 0);
+        return 5;
+    }
+
+    /* PRNG regeneration: pseudo-random files are incompressible as bytes,
+     * but a seed + length identifies them completely (Kolmogorov-style).
+     * Only try when the block looks random — the brute-force scan below
+     * is cheap per seed but 64K seeds on every file would waste time. */
+    if (srcSize >= 64) {
+        int shift = 0;
+        int seed = detect_glibc_prng((const uint8_t*)src, srcSize, &shift);
+        if (seed >= 0 && dstCap >= 8) {
+            uint8_t* rp = (uint8_t*)dst;
+            w8(&rp, 4 | (shift / 8));  /* flags: bit2 prng, bits0-1 byte-shift */
+            w32le(&rp, (uint32_t)srcSize);
+            w8(&rp, seed & 0xFF);
+            w8(&rp, (seed >> 8) & 0xFF);
+            return 7;
+        }
+    }
+
+    /* byte-plane candidate (only for large, divisible inputs) */
+    uint8_t* plane_buf = NULL;
+    size_t plane_len = 0;
+    if (srcSize >= 16384 && (srcSize % 2) == 0) {
+        plane_buf = (uint8_t*)malloc(srcSize + 64);
+        if (plane_buf) {
+            plane_len = plane_encode((const uint8_t*)src, srcSize,
+                                     plane_buf, srcSize + 64, level);
+            if (plane_len == 0) { free(plane_buf); plane_buf = NULL; }
+        }
+    }
+
+    size_t normal_len = compress_normal(src, srcSize, dst, dstCap, level);
+    if (plane_len > 0 && plane_len <= dstCap &&
+        (normal_len == 0 || plane_len < normal_len)) {
+        memcpy(dst, plane_buf, plane_len);
+        free(plane_buf);
+        return plane_len;
+    }
+    free(plane_buf);
+    return normal_len;
+}
+
 /* ================= DECODER ================= */
 
-size_t LZ6_decompress_seq(const char* src, size_t srcSize,
-                          char* dst, size_t dstCap) {
+/* core block decode: flags (bit0=raw) | isize | ... */
+static size_t decode_normal(const char* src, size_t srcSize,
+                            char* dst, size_t dstCap) {
     const uint8_t* p = (const uint8_t*)src;
     const uint8_t* end = p + srcSize;
     if (srcSize < 6) return 0;
@@ -775,4 +933,58 @@ fail:
     for (b = 0; b < OF_CODES; b++) free(resid_top8[b]);
     free(ll_syms); free(ml_syms); free(of_syms); free(literals);
     return 0;
+}
+
+size_t LZ6_decompress_seq(const char* src, size_t srcSize,
+                          char* dst, size_t dstCap) {
+    const uint8_t* p = (const uint8_t*)src;
+    if (srcSize < 5) return 0;
+    int flags = p[0];
+    if (flags & 0x08) {  /* byte-plane block */
+        const uint8_t* q = p + 1;
+        if (srcSize < 6) return 0;
+        int isize = (int)q[0] | ((int)q[1] << 8) | ((int)q[2] << 16) | ((int)q[3] << 24);
+        q += 4;
+        if (isize < 0 || (size_t)isize > dstCap) return 0;
+        int stride = (flags & 3) == 2 ? 4 : 2;
+        size_t plane_size = (size_t)isize / (size_t)stride;
+        const uint8_t* end = p + srcSize;
+        uint8_t* plane_buf = (uint8_t*)malloc(plane_size);
+        if (!plane_buf) return 0;
+        uint8_t* out = (uint8_t*)dst;
+        for (int lane = 0; lane < stride; lane++) {
+            if (q >= end) { free(plane_buf); return 0; }
+            int mode = *q++;
+            if (mode == 1) {  /* compressed lane */
+                if ((size_t)(end - q) < 4) { free(plane_buf); return 0; }
+                uint32_t csize = (uint32_t)q[0] | ((uint32_t)q[1] << 8) |
+                                 ((uint32_t)q[2] << 16) | ((uint32_t)q[3] << 24);
+                q += 4;
+                if ((size_t)(end - q) < csize) { free(plane_buf); return 0; }
+                if (decode_normal((const char*)q, csize, (char*)plane_buf, plane_size) != plane_size) {
+                    free(plane_buf); return 0;
+                }
+                q += csize;
+            } else if (mode == 2) {  /* pure huffman lane */
+                if ((size_t)(end - q) < 4) { free(plane_buf); return 0; }
+                uint32_t csize = (uint32_t)q[0] | ((uint32_t)q[1] << 8) |
+                                 ((uint32_t)q[2] << 16) | ((uint32_t)q[3] << 24);
+                q += 4;
+                if ((size_t)(end - q) < csize) { free(plane_buf); return 0; }
+                if (huf_decode(q, csize, plane_size, plane_buf) != csize) {
+                    free(plane_buf); return 0;
+                }
+                q += csize;
+            } else if (mode == 0) {  /* raw lane */
+                if ((size_t)(end - q) < plane_size) { free(plane_buf); return 0; }
+                memcpy(plane_buf, q, plane_size);
+                q += plane_size;
+            } else { free(plane_buf); return 0; }
+            for (size_t j = 0; j < plane_size; j++)
+                out[j * (size_t)stride + (size_t)lane] = plane_buf[j];
+        }
+        free(plane_buf);
+        return (size_t)isize;
+    }
+    return decode_normal(src, srcSize, dst, dstCap);
 }
