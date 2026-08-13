@@ -420,8 +420,8 @@ static size_t compress_normal(const char* src, size_t srcSize,
                             if (ctxs) {
                                 ctxs[0] = active_ctx[0] ? 0u : 256u;
                                 for (int i = 1; i < lit_count; i++) {
-                                    unsigned p = lit_syms[i - 1];
-                                    ctxs[i] = active_ctx[p] ? p : 256u;
+                                    unsigned prev = lit_syms[i - 1];
+                                    ctxs[i] = active_ctx[prev] ? prev : 256u;
                                 }
                                 /* build unified table pointer array for fse_encode_ctx */
                                 fse_ctx_table unified[257];
