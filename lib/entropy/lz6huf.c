@@ -226,24 +226,27 @@ size_t huf_decode(const uint8_t* in, size_t in_len, size_t n, uint8_t* out)
         }
     }
 
-    uint32_t acc = 0;
+    /* fast table-only path: when every code length <= k (the caller's
+     * encode gate guarantees this for k=hk), the 0xFFFF long-code slot is
+     * never hit and the decode is a tight branch-predictable loop with a
+     * 64-bit accumulator (refill 1 byte when below 24 bits). */
+    uint64_t acc = 0;
     int nbits = 0;
     const uint8_t* p = stream;
     const uint8_t* pend = stream + nbytes;
+    const uint32_t kmask = (1u << k) - 1;
+    while (nbits < 32 && p < pend) { acc = (acc << 8) | *p++; nbits += 8; }
     size_t i = 0;
     for (; i < n; i++) {
-        while (nbits < k) {
-            acc = (acc << 8) | (p < pend ? *p++ : 0);
-            nbits += 8;
-        }
+        if (nbits < 24) { acc = (acc << 8) | (p < pend ? *p++ : 0); nbits += 8; }
         int shift = nbits - k;
-        uint16_t v = table[(acc >> shift) & ((1u << k) - 1)];
+        uint16_t v = table[(unsigned)((acc >> shift) & kmask)];
         int l = v & 15;
         if (l != 0 && l <= k) {
             out[i] = (uint8_t)(v >> 4);
             nbits -= l;
         } else {
-            /* long code: canonical bit-by-bit walk */
+            /* long code: canonical bit-by-bit walk (rare) */
             int codev = 0;
             int l2 = 0;
             for (l2 = 1; l2 <= HUF_MAX_CODE_BITS; l2++) {

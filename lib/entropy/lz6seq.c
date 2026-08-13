@@ -32,7 +32,7 @@ static const int LL_base[LL_CODES] = {
 };
 static const int ML_extra[ML_CODES] = {
  0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,
- 1,1,1,1,2,2,3,3,4,4,5,5,6,7,8,9,10,11,12,16
+ 1,1,1,1,2,2,3,3,4,4,5,5,6,7,8,9,10,11,12,24
 };
 static const int ML_base[ML_CODES] = {
  3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,
@@ -619,7 +619,7 @@ static size_t compress_normal(const char* src, size_t srcSize,
         uint32_t szword = (uint32_t)r8_csz;
         if (resid_n[b] * 1 + 8 < r8_csz && resid_n[b] + 4 <= (size_t)(blk_cap - (p - blk))) {
             szword = 0x80000000u | (uint32_t)resid_n[b];
-            memcpy(p, resid_top8[b], resid_n[b]);
+            for (size_t i = 0; i < resid_n[b]; i++) p[i] = (uint8_t)resid_top8[b][i];
             r8_csz = resid_n[b];
         }
         szp[0] = (uint8_t)szword; szp[1] = (uint8_t)(szword >> 8);
