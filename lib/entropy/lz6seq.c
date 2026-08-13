@@ -282,10 +282,9 @@ static size_t compress_normal(const char* src, size_t srcSize,
         uint8_t* ctx_buf = NULL;
         size_t ctx_sz = 0;
         int ctx_mode16 = 0;
-        /* order-1 only at level >= 4: at L1 its encode+decode cost dwarfs
-         * the ~3% ratio gain and sinks the Weissman score (W 2.31 -> 1.71
-         * measured on A-H); at higher levels the parser already dominates
-         * the time budget and the ratio win is free. */
+        /* order-1 only at level >= 4: at L1/L2 its encode cost dwarfs the
+         * ratio gain and sinks the Weissman score (measured on A-H:
+         * L2 W 2.32 -> 1.76 with order-1 on; L4+ parser dominates time). */
         if (lit_count >= 65536 && level >= 4) {
             /* sample up to 64K literals */
             int samp = lit_count < 65536 ? lit_count : 65536;
@@ -322,8 +321,9 @@ static size_t compress_normal(const char* src, size_t srcSize,
                     h1 -= (double)ctx_tot[c] / (samp - 1) * pr * log2(pr);
                 }
             }
-            /* order-1 pays off only when it cuts entropy > 12% */
-            if (h1 < h0 * 0.88) {
+            /* order-1 pays off when it cuts entropy > 10% (text corpora
+             * measure 0.79-0.86 H1/H0; binary stays ~1.0) */
+            if (h1 < h0 * 0.90) {
                 /* 16-context version (lit_mode=6): context = prev>>4.
                  * Header is 16*513 = 8KB vs 65KB for the 256-ctx mode,
                  * and the stream gains ~21% on text (vs 30%) — better
