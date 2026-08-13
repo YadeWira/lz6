@@ -233,7 +233,7 @@ static void waitEnter(void)
 /* --seq mode: lz6seq entropy codec, simple file-in/file-out (or stdin/stdout).
    Returns 0 on success, non-zero on error. */
 static int seq_mode_main(const char* input_filename, const char* output_filename,
-                         int decode, int cLevel, int displayLevel)
+                         int decode, int cLevel)
 {
     FILE* fin = stdin;
     FILE* fout = stdout;
@@ -612,7 +612,7 @@ int main(int argc, char** argv)
     if (seqMode)
     {
         /* lz6seq entropy codec path: simple file-in/file-out (or stdin/stdout). */
-        operationResult = seq_mode_main(input_filename, output_filename, decode, cLevel, displayLevel);
+        operationResult = seq_mode_main(input_filename, output_filename, decode, cLevel);
     }
     else if (decode)
     {
