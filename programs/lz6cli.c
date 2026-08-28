@@ -50,7 +50,6 @@
 #include "bench.h"    /* BMK_benchFile, BMK_SetNbIterations, BMK_SetBlocksize, BMK_SetPause */
 #include "lz6io.h"    /* LZ6IO_compressFilename, LZ6IO_decompressFilename, LZ6IO_compressMultipleFilenames */
 #include "lz6.h"      // LZ6_VERSION
-#include "entropy/lz6seq.h"   /* LZ6_compress_seq, LZ6_decompress_seq (--seq mode) */
 
 /*-************************************
 *  OS-specific Includes
@@ -157,7 +156,8 @@ static int usage_advanced(void)
     DISPLAY( "--no-frame-crc : disable stream checksum (default:enabled)\n");
     DISPLAY( "--content-size : compressed frame includes original size (default:not present)\n");
     DISPLAY( "--[no-]sparse  : sparse mode (default:enabled on file, disabled on stdout)\n");
-    DISPLAY( "--seq          : use the lz6seq entropy codec (LZ + FSE/rANS, non-standard format)\n");
+    DISPLAY( "--hc           : use the classic LZ6-HC frame codec (levels 1-15) instead of the seq engine\n");
+    DISPLAY( "  (without --hc, levels 1-15 compress with the lz6seq entropy codec: LZ matcher + FSE/rANS)\n");
     DISPLAY( "Benchmark arguments :\n");
     DISPLAY( " -b     : benchmark file(s)\n");
     DISPLAY( " -i#    : iteration loops [1-9](default : 3), benchmark mode only\n");
@@ -230,136 +230,6 @@ static void waitEnter(void)
 }
 
 
-/* --seq mode: lz6seq entropy codec, simple file-in/file-out (or stdin/stdout).
-   The codec's internal sizes are 32-bit, so inputs > INT_MAX are rejected by
-   LZ6_compress_seq. This wrapper streams the input in 256MB chunks and frames
-   them with a small header:
-       magic "LZ6S1" (5 bytes)
-       per chunk: u32le csize | u32le usize | payload[csize]
-       terminator: u32le 0
-   Decode auto-detects: streams starting with the magic are framed (multi-
-   chunk), anything else is a legacy single-block stream decoded directly.
-   Returns 0 on success, non-zero on error. */
-#define SEQ_MAGIC "LZ6S1"
-/* 256 MB: fits the codec's 32-bit sizes while keeping peak RAM well under
-   the 8 GB challenge limit (lit_syms 4B/sym + lits + 3 entropy bufs + fixed
-   ~288MB HC tables ≈ 3.5 GB peak at this chunk size). */
-#define SEQ_CHUNK_MAX ((size_t)256 << 20)
-
-static int seq_mode_main(const char* input_filename, const char* output_filename,
-                         int decode, int cLevel)
-{
-    FILE* fin = stdin;
-    FILE* fout = stdout;
-    int close_in = 0, close_out = 0;
-    int rc = 1;
-
-    if (input_filename && strcmp(input_filename, stdinmark) != 0) {
-        fin = fopen(input_filename, "rb");
-        if (!fin) { DISPLAYLEVEL(1, "lz6seq: cannot open %s\n", input_filename); return 1; }
-        close_in = 1;
-    }
-    if (output_filename && strcmp(output_filename, stdoutmark) != 0) {
-        fout = fopen(output_filename, "wb");
-        if (!fout) { DISPLAYLEVEL(1, "lz6seq: cannot open %s\n", output_filename); if (close_in) fclose(fin); return 1; }
-        close_out = 1;
-    }
-
-    if (!decode) {
-        /* -------- encode: stream chunks, framed with LZ6S1 -------- */
-        unsigned char* in = (unsigned char*)malloc(SEQ_CHUNK_MAX);
-        unsigned char* out = (unsigned char*)malloc(SEQ_CHUNK_MAX + (SEQ_CHUNK_MAX >> 1) + 65536);
-        if (!in || !out) { DISPLAYLEVEL(1, "lz6seq: out of memory\n"); free(in); free(out); goto cleanup; }
-        if (fwrite(SEQ_MAGIC, 1, 5, fout) != 5) { DISPLAYLEVEL(1, "lz6seq: write error\n"); free(in); free(out); goto cleanup; }
-        for (;;) {
-            size_t n = fread(in, 1, SEQ_CHUNK_MAX, fin);
-            if (n == 0) break;
-            size_t cap = n + (n >> 1) + 65536;
-            size_t outsz = LZ6_compress_seq((const char*)in, n, (char*)out, cap,
-                                            cLevel > 0 ? cLevel : 2);  /* L2: best Weissman on AIT A-H */
-            if (!outsz) { DISPLAYLEVEL(1, "lz6seq: compression failed\n"); free(in); free(out); goto cleanup; }
-            unsigned char hdr[8];
-            hdr[0] = (unsigned char)outsz;         hdr[1] = (unsigned char)(outsz >> 8);
-            hdr[2] = (unsigned char)(outsz >> 16); hdr[3] = (unsigned char)(outsz >> 24);
-            hdr[4] = (unsigned char)n;             hdr[5] = (unsigned char)(n >> 8);
-            hdr[6] = (unsigned char)(n >> 16);     hdr[7] = (unsigned char)(n >> 24);
-            if (fwrite(hdr, 1, 8, fout) != 8 || fwrite(out, 1, outsz, fout) != outsz) {
-                DISPLAYLEVEL(1, "lz6seq: write error\n"); free(in); free(out); goto cleanup;
-            }
-        }
-        if (ferror(fin)) {
-            /* a read error must not silently produce an empty/truncated
-             * archive: it would decode to a short file with exit code 0 */
-            DISPLAYLEVEL(1, "lz6seq: read error\n"); free(in); free(out); goto cleanup;
-        }
-        { unsigned char z[8] = {0,0,0,0,0,0,0,0}; if (fwrite(z, 1, 8, fout) != 8) { DISPLAYLEVEL(1, "lz6seq: write error\n"); free(in); free(out); goto cleanup; } }
-        free(in);
-        free(out);
-        rc = 0;
-    } else {
-        /* -------- decode: framed (LZ6S1) or legacy single block -------- */
-        unsigned char magic[5];
-        size_t got = fread(magic, 1, 5, fin);
-        if (got == 5 && !memcmp(magic, SEQ_MAGIC, 5)) {
-            /* framed: chunks until csize==0 */
-            for (;;) {
-                unsigned char hdr[8];
-                if (fread(hdr, 1, 8, fin) != 8) { DISPLAYLEVEL(1, "lz6seq: truncated frame\n"); goto cleanup; }
-                size_t csize = (size_t)hdr[0] | ((size_t)hdr[1] << 8) | ((size_t)hdr[2] << 16) | ((size_t)hdr[3] << 24);
-                size_t usize = (size_t)hdr[4] | ((size_t)hdr[5] << 8) | ((size_t)hdr[6] << 16) | ((size_t)hdr[7] << 24);
-                if (csize == 0) break;   /* terminator */
-                if (csize > SEQ_CHUNK_MAX + (SEQ_CHUNK_MAX >> 1) + 65536 || usize > SEQ_CHUNK_MAX) {
-                    DISPLAYLEVEL(1, "lz6seq: corrupt frame header\n"); goto cleanup;
-                }
-                unsigned char* in = (unsigned char*)malloc(csize ? csize : 1);
-                unsigned char* out = (unsigned char*)malloc(usize ? usize + 65536 : 1);
-                if (!in || !out) { DISPLAYLEVEL(1, "lz6seq: out of memory\n"); free(in); free(out); goto cleanup; }
-                if (fread(in, 1, csize, fin) != csize) { DISPLAYLEVEL(1, "lz6seq: read error\n"); free(in); free(out); goto cleanup; }
-                size_t outsz = LZ6_decompress_seq((const char*)in, csize, (char*)out, usize + 65536);
-                if (!outsz || outsz != usize) { DISPLAYLEVEL(1, "lz6seq: decompression failed\n"); free(in); free(out); goto cleanup; }
-                if (fwrite(out, 1, outsz, fout) != outsz) { DISPLAYLEVEL(1, "lz6seq: write error\n"); free(in); free(out); goto cleanup; }
-                free(in); free(out);
-            }
-            rc = 0;
-        } else {
-            /* legacy: single block, no magic — push back the 5 bytes and decode whole */
-            size_t cap = 1 << 20, len = 0;
-            unsigned char* in = (unsigned char*)malloc(cap);
-            if (!in) goto cleanup;
-            if (got) { if (got > cap - len) { cap = got; unsigned char* ni = (unsigned char*)realloc(in, cap); if (!ni) { free(in); goto cleanup; } in = ni; } memcpy(in, magic, got); len = got; }
-            while (!feof(fin)) {
-                if (len == cap) { cap *= 2; unsigned char* ni = (unsigned char*)realloc(in, cap); if (!ni) { free(in); goto cleanup; } in = ni; }
-                len += fread(in + len, 1, cap - len, fin);
-            }
-            if (len < 5) { free(in); goto cleanup; }
-            /* the codec is 32-bit internally, so a claimed isize over INT_MAX
-             * cannot be a legit stream — reject before allocating for it */
-            size_t orig = (size_t)in[1] | ((size_t)in[2] << 8) | ((size_t)in[3] << 16) | ((size_t)in[4] << 24);
-            if (orig > (size_t)0x7FFFFFFF) { DISPLAYLEVEL(1, "lz6seq: corrupt legacy header\n"); free(in); goto cleanup; }
-            size_t dcap = orig ? orig + 65536 : len * 4 + (1 << 20);
-            unsigned char* out = (unsigned char*)malloc(dcap);
-            if (!out) { DISPLAYLEVEL(1, "lz6seq: out of memory\n"); free(in); goto cleanup; }
-            size_t outsz = LZ6_decompress_seq((const char*)in, len, (char*)out, dcap);
-            if (!outsz) { DISPLAYLEVEL(1, "lz6seq: decompression failed\n"); free(in); free(out); goto cleanup; }
-            if (fwrite(out, 1, outsz, fout) != outsz) { DISPLAYLEVEL(1, "lz6seq: write error\n"); free(in); free(out); goto cleanup; }
-            free(in); free(out);
-            rc = 0;
-        }
-    }
-
-cleanup:
-    if (close_in) fclose(fin);
-    /* fclose/fflush flush buffered output: a disk-full at that point must
-     * fail the run, not report success on data that never hit the disk */
-    if (close_out) {
-        if (fclose(fout) != 0 && rc == 0) { DISPLAYLEVEL(1, "lz6seq: write error\n"); rc = 1; }
-    } else if (fflush(fout) != 0 && rc == 0) {
-        DISPLAYLEVEL(1, "lz6seq: write error\n"); rc = 1;
-    }
-    return rc;
-}
-
-
 int main(int argc, char** argv)
 {
     int i,
@@ -370,7 +240,7 @@ int main(int argc, char** argv)
         forceCompress=0,
         main_pause=0,
         multiple_inputs=0,
-        seqMode=0,
+        forceHC=0,
         operationResult=0,
         blockSizeIdUserSet=0;
     const char* input_filename=0;
@@ -418,7 +288,7 @@ int main(int argc, char** argv)
         if (!strcmp(argument,  "--quiet")) { if (displayLevel) displayLevel--; continue; }
         if (!strcmp(argument,  "--version")) { DISPLAY(WELCOME_MESSAGE); return 0; }
         if (!strcmp(argument,  "--keep")) { continue; }   /* keep source file (default anyway; just for xz/lzma compatibility) */
-        if (!strcmp(argument,  "--seq")) { seqMode = 1; continue; }   /* use the lz6seq entropy codec */
+        if (!strcmp(argument,  "--hc")) { forceHC = 1; continue; }   /* classic LZ6-HC frame codec instead of the seq engine */
 
 
         /* Short commands (note : aggregated short commands are allowed) */
@@ -656,12 +526,11 @@ int main(int argc, char** argv)
 
     /* IO Stream/File */
     LZ6IO_setNotificationLevel(displayLevel);
-    if (seqMode)
-    {
-        /* lz6seq entropy codec path: simple file-in/file-out (or stdin/stdout). */
-        operationResult = seq_mode_main(input_filename, output_filename, decode, cLevel);
-    }
-    else if (decode)
+    /* Level mapping: 0 (default) = fast LZ frame; levels 1-15 = the seq
+     * entropy engine unless --hc selects the classic LZ6-HC frame codec.
+     * Decode is codec-agnostic: the frame layer dispatches on the magic. */
+    if (cLevel >= 1 && !forceHC) LZ6IO_setBlockCodec(1);
+    if (decode)
     {
       if (multiple_inputs)
         operationResult = LZ6IO_decompressMultipleFilenames(inFileNames, ifnIdx, LZ6_EXTENSION);

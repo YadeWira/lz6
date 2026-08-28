@@ -72,6 +72,10 @@ int LZ6IO_setOverwrite(int yes);
    return : -1 if error, blockSize if OK */
 int LZ6IO_setBlockSizeID(int blockSizeID);
 
+/* blockCodec : 0 = LZ/HC frame (magic 0x184D2206), 1 = seq frame (0x184D2207)
+   return : blockCodec mode (0/1) */
+int LZ6IO_setBlockCodec(int codec);
+
 /* Default setting : independent blocks */
 typedef enum { LZ6IO_blockLinked=0, LZ6IO_blockIndependent} LZ6IO_blockMode_t;
 int LZ6IO_setBlockMode(LZ6IO_blockMode_t blockMode);

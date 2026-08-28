@@ -76,6 +76,7 @@
 #include "lz6io.h"
 #include "lz6.h"       /* still required for legacy format */
 #include "lz6hc.h"     /* still required for legacy format */
+#include "entropy/lz6seq.h"   /* legacy --seq envelope decoder */
 #include "lz6frame.h"
 
 
@@ -100,6 +101,8 @@
 
 #define MAGICNUMBER_SIZE    4
 #define LZ6IO_MAGICNUMBER   0x184D2206U
+#define LZ6IO_MAGICNUMBER_SEQ 0x184D2207U   /* seq-coded frame */
+#define LZ6IO_MAGICNUMBER_LEGACY_SEQ 0x53365A4CU  /* "LZ6S" — legacy --seq envelope */
 #define LZ6IO_SKIPPABLE0    0x184D2A50U
 #define LZ6IO_SKIPPABLEMASK 0xFFFFFFF0U
 
@@ -136,6 +139,7 @@ static int g_streamChecksum = 1;
 static int g_blockIndependence = 1;
 static int g_sparseFileSupport = 1;
 static int g_contentSizeFlag = 0;
+static int g_blockCodec = 0;   /* 0 = LZ/HC frame (magic ...06), 1 = seq frame (magic ...07) */
 
 static const int minBlockSizeID = 1;
 static const int maxBlockSizeID = 7;
@@ -183,6 +187,13 @@ int LZ6IO_setBlockSizeID(int bsid)
     if ((bsid < minBlockSizeID) || (bsid > maxBlockSizeID)) return -1;
     g_blockSizeId = bsid;
     return blockSizeTable[g_blockSizeId-minBlockSizeID];
+}
+
+/* blockCodec : 0 = LZ/HC frame, 1 = seq frame */
+int LZ6IO_setBlockCodec(int codec)
+{
+    g_blockCodec = (codec != 0);
+    return g_blockCodec;
 }
 
 int LZ6IO_setBlockMode(LZ6IO_blockMode_t blockMode)
@@ -405,6 +416,7 @@ static int LZ6IO_compressFilename_extRess(cRess_t ress, const char* srcFileName,
     prefs.frameInfo.blockMode = (LZ6F_blockMode_t)g_blockIndependence;
     prefs.frameInfo.blockSizeID = (LZ6F_blockSizeID_t)g_blockSizeId;
     prefs.frameInfo.contentChecksumFlag = (LZ6F_contentChecksum_t)g_streamChecksum;
+    prefs.frameInfo.blockCodec = (LZ6F_blockCodec_t)g_blockCodec;
     if (g_contentSizeFlag)
     {
       unsigned long long fileSize = LZ6IO_GetFileSize(srcFileName);
@@ -685,7 +697,7 @@ static void LZ6IO_freeDResources(dRess_t ress)
 }
 
 
-static unsigned long long LZ6IO_decompressLZ6F(dRess_t ress, FILE* srcFile, FILE* dstFile)
+static unsigned long long LZ6IO_decompressLZ6F(dRess_t ress, FILE* srcFile, FILE* dstFile, unsigned magicNumber)
 {
     unsigned long long filesize = 0;
     LZ6F_errorCode_t nextToLoad;
@@ -695,7 +707,7 @@ static unsigned long long LZ6IO_decompressLZ6F(dRess_t ress, FILE* srcFile, FILE
     {
         size_t inSize = MAGICNUMBER_SIZE;
         size_t outSize= 0;
-        LZ6IO_writeLE32(ress.srcBuffer, LZ6IO_MAGICNUMBER);
+        LZ6IO_writeLE32(ress.srcBuffer, magicNumber);
         nextToLoad = LZ6F_decompress(ress.dCtx, ress.dstBuffer, &outSize, ress.srcBuffer, &inSize, NULL);
         if (LZ6F_isError(nextToLoad)) EXM_THROW(62, "Header error : %s", LZ6F_getErrorName(nextToLoad));
     }
@@ -769,6 +781,51 @@ static unsigned long long LZ6IO_passThrough(FILE* finput, FILE* foutput, unsigne
 
 #define ENDOFSTREAM ((unsigned long long)-1)
 static unsigned g_magicRead = 0;
+
+/* Legacy --seq envelope from pre frame-integration builds ("LZ6S1" magic):
+ * per chunk u32le csize | u32le usize | payload, 8 zero bytes terminate.
+ * decode-only compatibility shim — nothing produces this format anymore.
+ * magic4 holds the 4 magic bytes already consumed from finput. */
+#define LZ6IO_LEGACY_SEQ_CHUNK_MAX ((size_t)256 << 20)
+static unsigned long long LZ6IO_decompressLegacySeq(FILE* finput, FILE* foutput, const unsigned char* magic4)
+{
+    unsigned char magic[5];
+    unsigned long long filesize = 0;
+    memcpy(magic, magic4, 4);
+    {
+        int c = fgetc(finput);
+        if (c == EOF) EXM_THROW(40, "Unrecognized header : Magic Number unreadable");
+        magic[4] = (unsigned char)c;
+    }
+    if (memcmp(magic, "LZ6S1", 5) != 0) EXM_THROW(44, "Unrecognized header : file cannot be decoded");
+    DISPLAYLEVEL(4, "Detected legacy --seq envelope \n");
+
+    for (;;)
+    {
+        unsigned char hdr[8];
+        size_t csize, usize;
+        unsigned char *in, *out;
+        size_t dSize;
+
+        if (fread(hdr, 1, 8, finput) != 8) EXM_THROW(44, "Unrecognized header : truncated legacy seq frame");
+        csize = (size_t)hdr[0] | ((size_t)hdr[1] << 8) | ((size_t)hdr[2] << 16) | ((size_t)hdr[3] << 24);
+        usize = (size_t)hdr[4] | ((size_t)hdr[5] << 8) | ((size_t)hdr[6] << 16) | ((size_t)hdr[7] << 24);
+        if (csize == 0) break;   /* terminator */
+        if (csize > LZ6IO_LEGACY_SEQ_CHUNK_MAX + (LZ6IO_LEGACY_SEQ_CHUNK_MAX >> 1) + 65536 || usize > LZ6IO_LEGACY_SEQ_CHUNK_MAX)
+            EXM_THROW(44, "Corrupt legacy seq frame header");
+        in = (unsigned char*)malloc(csize ? csize : 1);
+        out = (unsigned char*)malloc(usize ? usize + 65536 : 1);
+        if (!in || !out) EXM_THROW(45, "Allocation error : not enough memory");
+        if (fread(in, 1, csize, finput) != csize) { free(in); free(out); EXM_THROW(44, "Unrecognized header : truncated legacy seq chunk"); }
+        dSize = LZ6_decompress_seq((const char*)in, csize, (char*)out, usize + 65536);
+        if (!dSize || dSize != usize) { free(in); free(out); EXM_THROW(46, "Legacy seq decompression failed"); }
+        if (fwrite(out, 1, dSize, foutput) != dSize) { free(in); free(out); EXM_THROW(47, "Write error : cannot write decoded block"); }
+        filesize += dSize;
+        free(in); free(out);
+    }
+    return filesize;
+}
+
 static unsigned long long selectDecoder(dRess_t ress, FILE* finput, FILE* foutput)
 {
     unsigned char MNstore[MAGICNUMBER_SIZE];
@@ -798,7 +855,10 @@ static unsigned long long selectDecoder(dRess_t ress, FILE* finput, FILE* foutpu
     switch(magicNumber)
     {
     case LZ6IO_MAGICNUMBER:
-        return LZ6IO_decompressLZ6F(ress, finput, foutput);
+    case LZ6IO_MAGICNUMBER_SEQ:
+        return LZ6IO_decompressLZ6F(ress, finput, foutput, magicNumber);
+    case LZ6IO_MAGICNUMBER_LEGACY_SEQ:
+        return LZ6IO_decompressLegacySeq(finput, foutput, MNstore);
     case LZ6IO_SKIPPABLE0:
         DISPLAYLEVEL(4, "Skipping detected skippable area \n");
         nbReadBytes = fread(MNstore, 1, 4, finput);

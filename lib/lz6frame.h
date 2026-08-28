@@ -104,11 +104,21 @@ typedef enum {
     LZ6F_OBSOLETE_ENUM(skippableFrame = LZ6F_skippableFrame)
 } LZ6F_frameType_t;
 
+/* Per-block compression engine. LZ6F_blockCodec_lz = the classic LZ/HC
+ * match coders (magic 0x184D2206); LZ6F_blockCodec_seq = the sequence
+ * entropy coder (magic 0x184D2207), one-shot per block, no cross-block
+ * state. 0 == default (LZ). */
+typedef enum {
+    LZ6F_blockCodec_lz=0,
+    LZ6F_blockCodec_seq=1
+} LZ6F_blockCodec_t;
+
 #ifndef LZ6F_DISABLE_OBSOLETE_ENUMS
 typedef LZ6F_blockSizeID_t blockSizeID_t;
 typedef LZ6F_blockMode_t blockMode_t;
 typedef LZ6F_frameType_t frameType_t;
 typedef LZ6F_contentChecksum_t contentChecksum_t;
+typedef LZ6F_blockCodec_t blockCodec_t;
 #endif
 
 typedef struct {
@@ -117,6 +127,7 @@ typedef struct {
   LZ6F_contentChecksum_t contentChecksumFlag;   /* noContentChecksum, contentChecksumEnabled ; 0 == default  */
   LZ6F_frameType_t       frameType;             /* LZ6F_frame, skippableFrame ; 0 == default */
   unsigned long long     contentSize;           /* Size of uncompressed (original) content ; 0 == unknown */
+  LZ6F_blockCodec_t      blockCodec;            /* LZ6F_blockCodec_lz, LZ6F_blockCodec_seq ; 0 == default */
   unsigned               reserved[2];           /* must be zero for forward compatibility */
 } LZ6F_frameInfo_t;
 
@@ -158,7 +169,7 @@ typedef struct {
 
 /* Resource Management */
 
-#define LZ6F_VERSION 100
+#define LZ6F_VERSION 101
 LZ6F_errorCode_t LZ6F_createCompressionContext(LZ6F_compressionContext_t* cctxPtr, unsigned version);
 LZ6F_errorCode_t LZ6F_freeCompressionContext(LZ6F_compressionContext_t cctx);
 /* LZ6F_createCompressionContext() :

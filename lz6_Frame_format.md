@@ -72,6 +72,14 @@ __Magic Number__
 4 Bytes, Little endian format.
 Value : 0x184D2206 (it was 0x184D2205 for LZ5, 0x184D2204 for LZ4)
 
+A second magic value, 0x184D2207, selects the same frame structure with
+every data block coded by the seq entropy coder (LZ match finding +
+FSE/rANS; see `lib/entropy/lz6seq.h`) instead of the classic LZ/HC match
+coders. The frame descriptor, block headers, EndMark and content
+checksum are identical; blocks remain self-describing and independently
+decodable. `LZ6_decompress_seq` replaces the LZ block decoder; the
+block-header "uncompressed" flag works the same way for either codec.
+
 __Frame Descriptor__
 
 3 to 11 Bytes, to be detailed in the next part.

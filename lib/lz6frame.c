@@ -63,6 +63,7 @@ You can contact the author at :
 #include "lz6frame_static.h"
 #include "lz6.h"
 #include "lz6hc.h"
+#include "entropy/lz6seq.h"
 #include "xxhash.h"
 
 
@@ -100,6 +101,7 @@ typedef unsigned long long  U64;
 
 #define LZ6F_MAGIC_SKIPPABLE_START 0x184D2A50U
 #define LZ6F_MAGICNUMBER 0x184D2206U
+#define LZ6F_MAGICNUMBER_SEQ 0x184D2207U    /* blocks coded by the seq entropy coder */
 #define LZ6F_BLOCKUNCOMPRESSED_FLAG 0x80000000U
 #define LZ6F_BLOCKSIZEID_DEFAULT LZ6F_max64KB
 #define LZ6F_DICT_SIZE (1 << 22)
@@ -108,6 +110,7 @@ static const size_t minFHSize = 7;
 static const size_t maxFHSize = 15;
 static const size_t BHSize = 4;
 static const int    minHClevel = 1;
+#define LZ6F_CCTX_SEQ 3   /* lz6CtxLevel sentinel: seq engine (no LZ/HC stream) */
 
 
 /**************************************
@@ -309,6 +312,8 @@ size_t LZ6F_compressFrame(void* dstBuffer, size_t dstMaxSize, const void* srcBuf
     memset(&options, 0, sizeof(options));
 
     cctxI.version = LZ6F_VERSION;
+    cctxI.lz6CtxLevel = 0;        /* stack cctx: init the ctx fields freeStream reads */
+    cctxI.lz6CtxPtr = NULL;
     cctxI.maxBufferSize = 5 MB;   /* mess with real buffer size to prevent allocation; works because autoflush==1 & stableSrc==1 */
 
     if (preferencesPtr!=NULL)
@@ -418,6 +423,16 @@ size_t LZ6F_compressBegin(LZ6F_compressionContext_t compressionContext, void* ds
         size_t const newMaxBlockSize = LZ6F_getBlockSize(cctxPtr->prefs.frameInfo.blockSizeID);
 
         /* ctx Management */
+        if (cctxPtr->prefs.frameInfo.blockCodec == LZ6F_blockCodec_seq)
+        {
+            /* seq engine: one-shot per block, no cross-block stream. The
+             * seq wrapper reads the level from the cctx, so lz6CtxPtr
+             * points back at it (never freed — freeStream only owns 1/2). */
+            LZ6F_freeStream(cctxPtr);
+            cctxPtr->lz6CtxLevel = LZ6F_CCTX_SEQ;
+            cctxPtr->lz6CtxPtr = cctxPtr;
+        }
+        else
         {
             U32 tableID = (cctxPtr->prefs.compressionLevel < minHClevel) ? 1 : 2;  /* 0:nothing ; 1:LZ6_createStream ; 2:LZ6_createStreamHC */
             /* recreate on level change, or (for HC) when the block size changed, since the window is sized to it */
@@ -452,13 +467,14 @@ size_t LZ6F_compressBegin(LZ6F_compressionContext_t compressionContext, void* ds
     cctxPtr->tmpIn = cctxPtr->tmpBuff;
     cctxPtr->tmpInSize = 0;
     XXH32_reset(&(cctxPtr->xxh), 0);
-    if (cctxPtr->prefs.compressionLevel < minHClevel)
+    if (cctxPtr->lz6CtxLevel == 1)
         LZ6_resetStream((LZ6_stream_t*)(cctxPtr->lz6CtxPtr));
-    else
+    else if (cctxPtr->lz6CtxLevel == 2)
         LZ6_resetStreamHC((LZ6_streamHC_t*)(cctxPtr->lz6CtxPtr));
 
     /* Magic Number */
-    LZ6F_writeLE32(dstPtr, LZ6F_MAGICNUMBER);
+    LZ6F_writeLE32(dstPtr, cctxPtr->prefs.frameInfo.blockCodec == LZ6F_blockCodec_seq
+                           ? LZ6F_MAGICNUMBER_SEQ : LZ6F_MAGICNUMBER);
     dstPtr += 4;
     headerStart = dstPtr;
 
@@ -511,6 +527,16 @@ size_t LZ6F_compressBound(size_t srcSize, const LZ6F_preferences_t* preferencesP
 
 typedef int (*compressFunc_t)(void* ctx, const char* src, char* dst, int srcSize, int dstSize);
 
+/* seq blocks: adapt LZ6_decompress_seq to the frame decoder signature
+ * (the dict arguments are meaningless — seq blocks are self-contained).
+ * Returns -1 on failure like the LZ decoders. */
+static int LZ6F_localLZ6_decompress_seq(const char* src, char* dst, int compressedSize, int maxDstCapacity, const char* dict, int dictSize)
+{
+    size_t const dSize = LZ6_decompress_seq(src, (size_t)compressedSize, dst, (size_t)maxDstCapacity);
+    (void)dict; (void)dictSize;
+    return dSize ? (int)dSize : -1;
+}
+
 static size_t LZ6F_compressBlock(void* dst, const void* src, size_t srcSize, compressFunc_t compress, void* lz6ctx)
 {
     /* compress one block */
@@ -543,8 +569,23 @@ static int LZ6F_localLZ6_compressHC_limitedOutput_continue(void* ctx, const char
     return LZ6_compress_HC_continue((LZ6_streamHC_t*)ctx, src, dst, srcSize, dstSize);
 }
 
-static compressFunc_t LZ6F_selectCompression(LZ6F_blockMode_t blockMode, int level)
+static int LZ6F_localLZ6_compress_seq(void* ctx, const char* src, char* dst, int srcSize, int dstSize)
 {
+    /* ctx is the cctx itself (lz6CtxLevel == LZ6F_CCTX_SEQ). Returns 0 when
+     * the seq output doesn't fit dstSize (= srcSize-1): the frame then
+     * stores the block uncompressed (bit31 escape), which is cheaper than
+     * the seq coder's own raw escape (4+n vs 5+n) and keeps the frame's
+     * compressBound contract (a block never codes larger than its input). */
+    LZ6F_cctx_t* cctxPtr = (LZ6F_cctx_t*)ctx;
+    size_t const cSize = LZ6_compress_seq(src, (size_t)srcSize, dst, (size_t)dstSize,
+                                          cctxPtr->prefs.compressionLevel);
+    return (int)cSize;
+}
+
+static compressFunc_t LZ6F_selectCompression(LZ6F_blockMode_t blockMode, int level, LZ6F_blockCodec_t blockCodec)
+{
+    if (blockCodec == LZ6F_blockCodec_seq)
+        return LZ6F_localLZ6_compress_seq;
     if (level < minHClevel)
     {
         if (blockMode == LZ6F_blockIndependent) return LZ6F_localLZ6_compress_limitedOutput_withState;
@@ -591,7 +632,7 @@ size_t LZ6F_compressUpdate(LZ6F_compressionContext_t compressionContext, void* d
     if (compressOptionsPtr == NULL) compressOptionsPtr = &cOptionsNull;
 
     /* select compression function */
-    compress = LZ6F_selectCompression(cctxPtr->prefs.frameInfo.blockMode, cctxPtr->prefs.compressionLevel);
+    compress = LZ6F_selectCompression(cctxPtr->prefs.frameInfo.blockMode, cctxPtr->prefs.compressionLevel, cctxPtr->prefs.frameInfo.blockCodec);
 
     /* complete tmp buffer */
     if (cctxPtr->tmpInSize > 0)   /* some data already within tmp buffer */
@@ -697,7 +738,7 @@ size_t LZ6F_flush(LZ6F_compressionContext_t compressionContext, void* dstBuffer,
     (void)compressOptionsPtr;   /* not yet useful */
 
     /* select compression function */
-    compress = LZ6F_selectCompression(cctxPtr->prefs.frameInfo.blockMode, cctxPtr->prefs.compressionLevel);
+    compress = LZ6F_selectCompression(cctxPtr->prefs.frameInfo.blockMode, cctxPtr->prefs.compressionLevel, cctxPtr->prefs.frameInfo.blockCodec);
 
     /* compress tmp buffer */
     dstPtr += LZ6F_compressBlock(dstPtr, cctxPtr->tmpIn, cctxPtr->tmpInSize, compress, cctxPtr->lz6CtxPtr);
@@ -851,7 +892,11 @@ static size_t LZ6F_decodeHeader(LZ6F_dctx_t* dctxPtr, const void* srcVoidPtr, si
     }
 
     /* control magic number */
-    if (LZ6F_readLE32(srcPtr) != LZ6F_MAGICNUMBER) return (size_t)-LZ6F_ERROR_frameType_unknown;
+    if (LZ6F_readLE32(srcPtr) == LZ6F_MAGICNUMBER_SEQ)
+        dctxPtr->frameInfo.blockCodec = LZ6F_blockCodec_seq;
+    else if (LZ6F_readLE32(srcPtr) == LZ6F_MAGICNUMBER)
+        dctxPtr->frameInfo.blockCodec = LZ6F_blockCodec_lz;
+    else return (size_t)-LZ6F_ERROR_frameType_unknown;
     dctxPtr->frameInfo.frameType = LZ6F_frame;
 
     /* Flags */
@@ -1254,7 +1299,9 @@ size_t LZ6F_decompress(LZ6F_decompressionContext_t decompressionContext,
                 int (*decoder)(const char*, char*, int, int, const char*, int);
                 int decodedSize;
 
-                if (dctxPtr->frameInfo.blockMode == LZ6F_blockLinked)
+                if (dctxPtr->frameInfo.blockCodec == LZ6F_blockCodec_seq)
+                    decoder = LZ6F_localLZ6_decompress_seq;
+                else if (dctxPtr->frameInfo.blockMode == LZ6F_blockLinked)
                     decoder = LZ6_decompress_safe_usingDict;
                 else
                     decoder = LZ6F_decompress_safe;
@@ -1279,7 +1326,9 @@ size_t LZ6F_decompress(LZ6F_decompressionContext_t decompressionContext,
                 int (*decoder)(const char*, char*, int, int, const char*, int);
                 int decodedSize;
 
-                if (dctxPtr->frameInfo.blockMode == LZ6F_blockLinked)
+                if (dctxPtr->frameInfo.blockCodec == LZ6F_blockCodec_seq)
+                    decoder = LZ6F_localLZ6_decompress_seq;
+                else if (dctxPtr->frameInfo.blockMode == LZ6F_blockLinked)
                     decoder = LZ6_decompress_safe_usingDict;
                 else
                     decoder = LZ6F_decompress_safe;

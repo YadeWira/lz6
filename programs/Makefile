@@ -75,6 +75,9 @@ lz6: $(LZ6DIR)/lz6.o $(LZ6DIR)/lz6hc.o $(LZ6DIR)/lz6frame.o $(LZ6DIR)/xxhash.o $
 lz6seq_test: $(LZ6DIR)/lz6.o $(LZ6DIR)/lz6hc.o $(LZ6DIR)/entropy/lz6fse.o $(LZ6DIR)/entropy/lz6rc.o $(LZ6DIR)/entropy/lz6seq.o $(LZ6DIR)/entropy/lz6huf.o lz6seq_test.o
 	$(CC) $(FLAGS) $^ -o $@$(EXT) -lm
 
+seqframetest: $(LZ6DIR)/lz6.o $(LZ6DIR)/lz6hc.o $(LZ6DIR)/lz6frame.o $(LZ6DIR)/xxhash.o $(LZ6DIR)/entropy/lz6fse.o $(LZ6DIR)/entropy/lz6rc.o $(LZ6DIR)/entropy/lz6seq.o $(LZ6DIR)/entropy/lz6huf.o seqframetest.o
+	$(CC) $(FLAGS) $^ -o $@$(EXT) -lm
+
 lz6_32: $(LZ6DIR)/lz6.c $(LZ6DIR)/lz6hc.c $(LZ6DIR)/lz6frame.c $(LZ6DIR)/xxhash.c bench.c lz6io.c lz6cli.c
 	$(CC) -m32 $(FLAGS) $^ -o $@$(EXT)
 
@@ -84,11 +87,11 @@ fullbench: $(LZ6DIR)/lz6.o $(LZ6DIR)/lz6hc.o $(LZ6DIR)/lz6frame.o $(LZ6DIR)/xxha
 fullbench32: $(LZ6DIR)/lz6.c $(LZ6DIR)/lz6hc.c $(LZ6DIR)/lz6frame.c $(LZ6DIR)/xxhash.c fullbench.c
 	$(CC) -m32 $(FLAGS) $^ -o $@$(EXT)
 
-frametest: $(LZ6DIR)/lz6frame.o $(LZ6DIR)/lz6.o $(LZ6DIR)/lz6hc.o $(LZ6DIR)/xxhash.o frametest.c
-	$(CC) $(FLAGS) $^ -o $@$(EXT)
+frametest: $(LZ6DIR)/lz6frame.o $(LZ6DIR)/lz6.o $(LZ6DIR)/lz6hc.o $(LZ6DIR)/xxhash.o $(LZ6DIR)/entropy/lz6fse.o $(LZ6DIR)/entropy/lz6rc.o $(LZ6DIR)/entropy/lz6seq.o $(LZ6DIR)/entropy/lz6huf.o frametest.c
+	$(CC) $(FLAGS) $^ -o $@$(EXT) -lm
 
-frametest32: $(LZ6DIR)/lz6frame.c $(LZ6DIR)/lz6.c $(LZ6DIR)/lz6hc.c $(LZ6DIR)/xxhash.c frametest.c
-	$(CC) -m32 $(FLAGS) $^ -o $@$(EXT)
+frametest32: $(LZ6DIR)/lz6frame.c $(LZ6DIR)/lz6.c $(LZ6DIR)/lz6hc.c $(LZ6DIR)/xxhash.c $(LZ6DIR)/entropy/lz6fse.c $(LZ6DIR)/entropy/lz6rc.c $(LZ6DIR)/entropy/lz6seq.c $(LZ6DIR)/entropy/lz6huf.c frametest.c
+	$(CC) -m32 $(FLAGS) $^ -o $@$(EXT) -lm
 
 datagen : datagen.o datagencli.c
 	$(CC) $(FLAGS) $^ -o $@$(EXT)

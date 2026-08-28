@@ -84,11 +84,11 @@ echo "== lz5 v1.5 default"
 $LZ5 -b $FILES 2>&1 | sum_lines
 echo "== lz5 v1.5 -15"
 $LZ5 -15 -b $FILES 2>&1 | sum_lines
-echo "== lz6 frame default"
+echo "== lz6 frame default (fast)"
 $LZ6 -b $FILES 2>&1 | sum_lines
-echo "== lz6 frame -15"
-$LZ6 -15 -b $FILES 2>&1 | sum_lines
-echo "== lz6 --seq L2 (bench_seq)"
+echo "== lz6 --hc -15 (HC frame)"
+$LZ6 --hc -15 -b $FILES 2>&1 | sum_lines
+echo "== lz6 -2 seq frame (bench_seq)"
 "$BS" --level 2 $FILES | grep -E "^TOTAL"
-echo "== lz6 --seq L15 (bench_seq)"
+echo "== lz6 -15 seq frame (bench_seq)"
 "$BS" --level 15 $FILES | grep -E "^TOTAL"

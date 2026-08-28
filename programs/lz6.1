@@ -88,11 +88,10 @@ only the latest one will be applied.
 .
 .SS "Operation mode"
 .TP
-.BR \-\-seq
-Use the lz6seq entropy codec (LZ match finding + FSE/rANS) instead of
-the native LZ6 frame format. Produces a stream that is not compatible
-with the standard .lz6 format; decompress with the same option.
-Compression level is selected with the usual \-1..\-15 flags.
+.BR \-\-hc
+Compress with the classic LZ6-HC frame codec (hash chains + binary
+tree, levels 1-15) instead of the default seq engine. Decompression is
+codec-agnostic: the frame magic selects the block coder automatically.
 .TP
 .BR \-z ", " \-\-compress
 Compress.
