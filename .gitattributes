@@ -9,6 +9,13 @@
 *.odt binary
 *.png binary
 *.lz6 binary
+*.lz6s1 binary
+
+# Benchmark corpora and fixtures are raw bytes — never normalize
+bakeoff/corpora/* binary
+bakeoff/compat_LZ6S1_C.lz6s1 binary
+bakeoff/compat_LZ6S1_C.orig binary
+bakeoff/encode_baseline/* binary
 
 # Visual Studio
 *.sln text eol=crlf

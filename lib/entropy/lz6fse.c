@@ -430,6 +430,7 @@ size_t fse_dtable_prepare(fse_dtable* t, const uint8_t* in, size_t in_len,
      * the M-byte table. */
     t->dtab = (uint8_t*)malloc(M);
     if (!t->dtab) return 0;
+    t->owned = 1;
     unsigned slot = 0;
     for (int i = 0; i <= rmaxSym; i++) {
         unsigned f = t->freq_tab[i];
@@ -442,9 +443,47 @@ size_t fse_dtable_prepare(fse_dtable* t, const uint8_t* in, size_t in_len,
     return hdr;
 }
 
+size_t fse_dtable_prepare_scratch(fse_dtable* t, const uint8_t* in, size_t in_len,
+                                  int maxSym, uint8_t* scratch, size_t scratch_cap)
+{
+    /* identical validation, but the lookup table lives in the caller's
+     * scratch buffer (t->owned = 0: fse_dtable_free must not free it) */
+    memset(t, 0, sizeof(*t));
+    unsigned counts[256];
+    int rmaxSym, L_bits;
+    size_t hdr = fse_read_table(in, in_len, counts, &rmaxSym, &L_bits);
+    if (hdr == 0) return 0;
+    if (rmaxSym > maxSym) return 0;
+    if (L_bits < 1 || L_bits > 16) return 0;
+    unsigned M = 1u << L_bits;
+    if (scratch_cap < M) return 0;
+
+    t->L_bits = L_bits;
+    t->M = M;
+    for (int i = 0; i < 256; i++) t->freq_tab[i] = counts[i];
+    unsigned acc = 0;
+    for (int i = 0; i <= rmaxSym; i++) {
+        t->cumul[i] = acc;
+        acc += t->freq_tab[i];
+    }
+    t->dtab = scratch;
+    t->owned = 0;
+    unsigned slot = 0;
+    for (int i = 0; i <= rmaxSym; i++) {
+        unsigned f = t->freq_tab[i];
+        while (f--) {
+            if (slot >= M) { t->dtab = NULL; return 0; }
+            t->dtab[slot++] = (uint8_t)i;
+        }
+    }
+    if (slot != M) { t->dtab = NULL; return 0; }
+    return hdr;
+}
+
 void fse_dtable_free(fse_dtable* t) {
-    free(t->dtab);
+    if (t->owned) free(t->dtab);
     t->dtab = NULL;
+    t->owned = 0;
 }
 
 static int fse_decode_syms(const fse_dtable* t, const uint8_t* in, size_t in_len,

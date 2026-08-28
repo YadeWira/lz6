@@ -1145,10 +1145,10 @@ FORCE_INLINE int LZ6HC_encodeSequence (
 }
 
 
-#define SET_PRICE(pos, mlen, offset, litlen, price)   \
+#define SET_PRICE(pos, ml_, offset, litlen, price)   \
     {                                                 \
         while (last_pos < pos)  { opt[last_pos+1].price = 1<<30; last_pos++; } \
-        opt[pos].mlen = (int)mlen;                         \
+        opt[pos].mlen = (int)(ml_);                        \
         opt[pos].off = (int)offset;                        \
         opt[pos].litlen = (int)litlen;                     \
         opt[pos].price = (int)price;                       \
@@ -1252,24 +1252,30 @@ static int LZ6HC_compress_optimal_price (
        }
 
        // set prices using matches at position = 0
+       // stack-aware: a match offset sitting in the current rep stack codes
+       // as a 2-bit rep flag in the seq backend — price it like rep0
        for (i = 0; i < match_num; i++)
        {
            mlen = (i>0) ? (size_t)matches[i-1].len+1 : best_mlen;
            best_mlen = (matches[i].len < LZ6_OPT_NUM) ? matches[i].len : LZ6_OPT_NUM;
            LZ6_LOG_PARSER("%d: start Found mlen=%d off=%d best_mlen=%d last_pos=%d\n", (int)(ip-source), matches[i].len, matches[i].off, best_mlen, last_pos);
+           U32 eff_off = (U32)matches[i].off;
+           if (ctx->emitSeq && (eff_off == (U32)ctx->last_off || eff_off == ctx->rep_off2 || eff_off == ctx->rep_off3)) eff_off = 0;
            while (mlen <= best_mlen)
            {
                 litlen = 0;
-                price = LZ6HC_get_price(llen + litlen, matches[i].off, mlen - MINMATCH) - llen;
+                price = LZ6HC_get_price(llen + litlen, eff_off, mlen - MINMATCH) - llen;
                 if (mlen > last_pos || price < (size_t)opt[mlen].price)
                     SET_PRICE(mlen, mlen, matches[i].off, litlen, price);
                 mlen++;
            }
-        }
+       }
 
         if (last_pos < MINMATCH) { ip++; continue; }
 
         opt[0].rep = opt[1].rep = ctx->last_off;
+        opt[0].rep2 = opt[1].rep2 = (int)ctx->rep_off2;
+        opt[0].rep3 = opt[1].rep3 = (int)ctx->rep_off3;
         opt[0].mlen = opt[1].mlen = 1;
 
         // check further positions
@@ -1312,20 +1318,34 @@ static int LZ6HC_compress_optimal_price (
            {
                 mlen = opt[cur].mlen;
                 offset = opt[cur].off;
-                if (offset < 1)
+                /* maintain the hypothetical MTF rep-stack for the DP: the
+                 * chosen match at cur was (offset, mlen) starting from the
+                 * stack at cur-mlen */
                 {
-                    opt[cur].rep = opt[cur-mlen].rep;
-                    LZ6_LOG_PARSER("%d: COPYREP1 cur=%d mlen=%d rep=%d\n", (int)(inr-source), cur, mlen, opt[cur-mlen].rep);
-                }
-                else
-                {
-                    opt[cur].rep = (int)offset;
-                    LZ6_LOG_PARSER("%d: COPYREP2 cur=%d offset=%d rep=%d\n", (int)(inr-source), cur, offset, opt[cur].rep);
+                    U32 r0 = (U32)opt[cur-mlen].rep, r1 = (U32)opt[cur-mlen].rep2, r2 = (U32)opt[cur-mlen].rep3;
+                    if (offset < 1 || (U32)offset == r0)
+                    {
+                        opt[cur].rep = (int)r0; opt[cur].rep2 = (int)r1; opt[cur].rep3 = (int)r2;
+                    }
+                    else if ((U32)offset == r1)
+                    {
+                        opt[cur].rep = (int)r1; opt[cur].rep2 = (int)r0; opt[cur].rep3 = (int)r2;
+                    }
+                    else if ((U32)offset == r2)
+                    {
+                        opt[cur].rep = (int)r2; opt[cur].rep2 = (int)r0; opt[cur].rep3 = (int)r1;
+                    }
+                    else
+                    {
+                        opt[cur].rep = offset; opt[cur].rep2 = (int)r0; opt[cur].rep3 = (int)r1;
+                    }
                 }
            }
            else
            {
                 opt[cur].rep = opt[cur-1].rep; // copy rep
+                opt[cur].rep2 = opt[cur-1].rep2;
+                opt[cur].rep3 = opt[cur-1].rep3;
            }
 
 
@@ -1392,6 +1412,55 @@ static int LZ6HC_compress_optimal_price (
                 while (mlen >= MINMATCH);
             }
 
+            /* rep1/rep2 candidates: same price as rep0 — the seq backend
+             * codes any rep-stack hit as a 2-bit flag — but stored with
+             * their real offset so the emit passes it through and the
+             * encoder's MTF detection codes it as pc=2/3. Seq-only: the
+             * frame format has a single repeat offset (rep0), so pricing
+             * rep1/2 at rep cost would lie about its codewords. */
+            if (ctx->emitSeq)
+            for (int rix = 1; rix <= 2; rix++)
+            {
+                U32 r = (rix == 1) ? (U32)opt[cur].rep2 : (U32)opt[cur].rep3;
+                if (r == 0 || r == (U32)opt[cur].rep) continue;
+                int rmlen = (int)MEM_count(inr, inr - r, matchlimit);
+                if (rmlen < MINMATCH) continue;
+
+                if ((size_t)rmlen > sufficient_len || cur + rmlen >= LZ6_OPT_NUM)
+                {
+                    best_mlen = rmlen;
+                    best_off = (int)r;
+                    last_pos = cur + 1;
+                    goto encode;
+                }
+
+                if (opt[cur].mlen == 1)
+                {
+                    litlen = opt[cur].litlen;
+                    if (cur != litlen)
+                        price = opt[cur - litlen].price + LZ6HC_get_price(litlen, 0, rmlen - MINMATCH);
+                    else
+                        price = LZ6HC_get_price(llen + litlen, 0, rmlen - MINMATCH) - llen;
+                }
+                else
+                {
+                    litlen = 0;
+                    price = opt[cur].price + LZ6HC_get_price(litlen, 0, rmlen - MINMATCH);
+                }
+
+                if ((size_t)rmlen > best_mlen) best_mlen = rmlen;
+                {
+                    int mm = rmlen;
+                    do
+                    {
+                        if (cur + mm > last_pos || price <= (size_t)opt[cur + mm].price)
+                            SET_PRICE(cur + mm, mm, (int)r, litlen, price);
+                        mm--;
+                    }
+                    while (mm >= MINMATCH);
+                }
+            }
+
             if (faster_get_matches && skip_num > 0)
             {
                 skip_num--; 
@@ -1436,7 +1505,13 @@ static int LZ6HC_compress_optimal_price (
                 LZ6_LOG_PARSER("%d: Found1 cur=%d cur2=%d mlen=%d off=%d best_mlen=%d last_pos=%d\n", (int)(inr-source), cur, cur2, matches[i].len, matches[i].off, best_mlen, last_pos);
 
                 if (mlen < (size_t)matches[i].back + 1)
-                    mlen = matches[i].back + 1; 
+                    mlen = matches[i].back + 1;
+
+                /* stack-aware pricing: an offset in the rep stack at the
+                 * match's source position (cur2) codes as a 2-bit rep flag.
+                 * Seq-only — the frame format has no rep1/rep2 stack. */
+                U32 eff_off = (U32)matches[i].off;
+                if (ctx->emitSeq && (eff_off == (U32)opt[cur2].rep || eff_off == (U32)opt[cur2].rep2 || eff_off == (U32)opt[cur2].rep3)) eff_off = 0;
 
                 while (mlen <= best_mlen)
                 {
@@ -1445,14 +1520,14 @@ static int LZ6HC_compress_optimal_price (
                         litlen = opt[cur2].litlen;
 
                         if (cur2 != litlen)
-                            price = opt[cur2 - litlen].price + LZ6HC_get_price(litlen, matches[i].off, mlen - MINMATCH);
+                            price = opt[cur2 - litlen].price + LZ6HC_get_price(litlen, eff_off, mlen - MINMATCH);
                         else
-                            price = LZ6HC_get_price(llen + litlen, matches[i].off, mlen - MINMATCH) - llen;
+                            price = LZ6HC_get_price(llen + litlen, eff_off, mlen - MINMATCH) - llen;
                     }
                     else
                     {
                         litlen = 0;
-                        price = opt[cur2].price + LZ6HC_get_price(litlen, matches[i].off, mlen - MINMATCH);
+                        price = opt[cur2].price + LZ6HC_get_price(litlen, eff_off, mlen - MINMATCH);
                     }
 
                     LZ6_LOG_PARSER("%d: Found2 pred=%d mlen=%d best_mlen=%d off=%d price=%d litlen=%d price[%d]=%d\n", (int)(inr-source), matches[i].back, mlen, best_mlen, matches[i].off, price, litlen, cur - litlen, opt[cur - litlen].price);
@@ -1593,6 +1668,21 @@ static int LZ6HC_compress_lowest_price (
 			ip += back;
 			ref += back;
 		}
+
+        /* Rep-stack preference (seq codec): same rationale as the fast
+         * strategy — a rep offset within 2 bytes of the chain match saves
+         * the whole offset coding. Gated on emitSeq. */
+        if (ctx->emitSeq && (ctx->rep_off2 || ctx->rep_off3))
+        {
+            const U32 repcands[2] = { ctx->rep_off2, ctx->rep_off3 };
+            for (int ri = 0; ri < 2; ri++) {
+                U32 r = repcands[ri];
+                if (r == 0 || r == ctx->last_off || r > (U32)(ip - lowPrefixPtr)) continue;
+                const BYTE* rref = ip - r;
+                int rml = (int)MEM_count(ip, rref, matchlimit);
+                if (rml >= MINMATCH && rml + 2 >= ml) { ref = rref; ml = rml; break; }
+            }
+        }
 
         /* saved, in case we would skip too much */
         start0 = ip;

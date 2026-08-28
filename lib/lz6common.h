@@ -306,6 +306,11 @@ typedef struct
 	int mlen;
 	int litlen;
    	int rep;
+	/* hypothetical MTF rep-stack positions 1..2 at this DP position
+	 * (rep == position 0 / last_off). Maintained by the optimal parser's
+	 * transitions so rep1/rep2 candidates can be priced and tracked. */
+	int rep2;
+	int rep3;
 } LZ6HC_optimal_t;
 
 

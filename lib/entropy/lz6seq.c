@@ -1196,6 +1196,9 @@ static size_t decode_normal(const char* src, size_t srcSize,
     size_t resid_n[OF_CODES];
     int b;
     for (b = 0; b < OF_CODES; b++) { resid_top8[b] = NULL; resid_n[b] = 0; }
+    /* scratch for bucket lookup tables (M <= 2^16): decoded sequentially,
+     * so one buffer serves every bucket — no malloc/free churn */
+    uint8_t dtab_scratch[1 << 16];
 
     /* 3 symbol streams: tables prepared once, then all symbols decoded in
      * one interleaved pass into byte arrays. Measured faster than decoding
@@ -1281,7 +1284,9 @@ static size_t decode_normal(const char* src, size_t srcSize,
             p += rn;
             continue;
         }
-        /* FSE bucket: w = stream size, cnt = exact symbol count */
+        /* FSE bucket: w = stream size, cnt = exact symbol count.
+         * The lookup table lives in a stack scratch buffer (buckets are
+         * short-lived and decoded sequentially): no malloc/free churn. */
         uint32_t rsz = w;
         if (bid < 0 || bid >= OF_CODES || rsz == 0 || (size_t)(end - p) < 4) goto fail;
         uint32_t cnt = (uint32_t)p[0] | ((uint32_t)p[1]<<8) | ((uint32_t)p[2]<<16) | ((uint32_t)p[3]<<24);
@@ -1290,7 +1295,14 @@ static size_t decode_normal(const char* src, size_t srcSize,
         if (resid_top8[bid]) { goto fail; }   /* duplicate bucket: corrupt */
         unsigned* top8 = (unsigned*)malloc((size_t)cnt * sizeof(unsigned));
         if (!top8) goto fail;
-        if (fse_decode(p, rsz, cnt, 255, top8)) { free(top8); goto fail; }
+        fse_dtable bt;
+        size_t bhdr = fse_dtable_prepare_scratch(&bt, p, rsz, 255, dtab_scratch, sizeof(dtab_scratch));
+        if (bhdr == 0 || fse_decode_prepared(&bt, p + bhdr, rsz - bhdr, cnt, top8)) {
+            fse_dtable_free(&bt);
+            free(top8);
+            goto fail;
+        }
+        fse_dtable_free(&bt);
         resid_top8[bid] = top8;
         resid_n[bid] = cnt;
         p += rsz;

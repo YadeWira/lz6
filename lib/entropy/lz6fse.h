@@ -60,6 +60,8 @@ typedef struct {
     unsigned freq_tab[256];
     unsigned cumul[256];
     uint8_t* dtab;          /* M entries; NULL until prepared */
+    unsigned owned;         /* 1 = dtab malloc'd (freed by fse_dtable_free);
+                               0 = dtab points at caller scratch memory */
 } fse_dtable;
 
 /* Parse the table header at `in` (as written by fse_write_table) and build
@@ -69,6 +71,14 @@ typedef struct {
  * fse_dtable_free). */
 size_t fse_dtable_prepare(fse_dtable* t, const uint8_t* in, size_t in_len,
                           int maxSym);
+
+/* Same as fse_dtable_prepare but the M-byte lookup table lives in the
+ * caller's scratch buffer (must be >= 2^16 bytes, the max M) instead of a
+ * per-call malloc — for short-lived tables decoded sequentially (bucket
+ * streams). The table is only valid until the next prepare_scratch call on
+ * the same scratch buffer. */
+size_t fse_dtable_prepare_scratch(fse_dtable* t, const uint8_t* in, size_t in_len,
+                                  int maxSym, uint8_t* scratch, size_t scratch_cap);
 
 void fse_dtable_free(fse_dtable* t);
 
