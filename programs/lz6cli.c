@@ -232,7 +232,7 @@ static void waitEnter(void)
 
 /* --seq mode: lz6seq entropy codec, simple file-in/file-out (or stdin/stdout).
    The codec's internal sizes are 32-bit, so inputs > INT_MAX are rejected by
-   LZ6_compress_seq. This wrapper streams the input in <=1GB chunks and frames
+   LZ6_compress_seq. This wrapper streams the input in 256MB chunks and frames
    them with a small header:
        magic "LZ6S1" (5 bytes)
        per chunk: u32le csize | u32le usize | payload[csize]
@@ -269,7 +269,7 @@ static int seq_mode_main(const char* input_filename, const char* output_filename
         /* -------- encode: stream chunks, framed with LZ6S1 -------- */
         unsigned char* in = (unsigned char*)malloc(SEQ_CHUNK_MAX);
         unsigned char* out = (unsigned char*)malloc(SEQ_CHUNK_MAX + (SEQ_CHUNK_MAX >> 1) + 65536);
-        if (!in || !out) { free(in); free(out); goto cleanup; }
+        if (!in || !out) { DISPLAYLEVEL(1, "lz6seq: out of memory\n"); free(in); free(out); goto cleanup; }
         if (fwrite(SEQ_MAGIC, 1, 5, fout) != 5) { DISPLAYLEVEL(1, "lz6seq: write error\n"); free(in); free(out); goto cleanup; }
         for (;;) {
             size_t n = fread(in, 1, SEQ_CHUNK_MAX, fin);
@@ -286,6 +286,11 @@ static int seq_mode_main(const char* input_filename, const char* output_filename
             if (fwrite(hdr, 1, 8, fout) != 8 || fwrite(out, 1, outsz, fout) != outsz) {
                 DISPLAYLEVEL(1, "lz6seq: write error\n"); free(in); free(out); goto cleanup;
             }
+        }
+        if (ferror(fin)) {
+            /* a read error must not silently produce an empty/truncated
+             * archive: it would decode to a short file with exit code 0 */
+            DISPLAYLEVEL(1, "lz6seq: read error\n"); free(in); free(out); goto cleanup;
         }
         { unsigned char z[8] = {0,0,0,0,0,0,0,0}; if (fwrite(z, 1, 8, fout) != 8) { DISPLAYLEVEL(1, "lz6seq: write error\n"); free(in); free(out); goto cleanup; } }
         free(in);
@@ -308,7 +313,7 @@ static int seq_mode_main(const char* input_filename, const char* output_filename
                 }
                 unsigned char* in = (unsigned char*)malloc(csize ? csize : 1);
                 unsigned char* out = (unsigned char*)malloc(usize ? usize + 65536 : 1);
-                if (!in || !out) { free(in); free(out); goto cleanup; }
+                if (!in || !out) { DISPLAYLEVEL(1, "lz6seq: out of memory\n"); free(in); free(out); goto cleanup; }
                 if (fread(in, 1, csize, fin) != csize) { DISPLAYLEVEL(1, "lz6seq: read error\n"); free(in); free(out); goto cleanup; }
                 size_t outsz = LZ6_decompress_seq((const char*)in, csize, (char*)out, usize + 65536);
                 if (!outsz || outsz != usize) { DISPLAYLEVEL(1, "lz6seq: decompression failed\n"); free(in); free(out); goto cleanup; }
@@ -327,10 +332,13 @@ static int seq_mode_main(const char* input_filename, const char* output_filename
                 len += fread(in + len, 1, cap - len, fin);
             }
             if (len < 5) { free(in); goto cleanup; }
+            /* the codec is 32-bit internally, so a claimed isize over INT_MAX
+             * cannot be a legit stream — reject before allocating for it */
             size_t orig = (size_t)in[1] | ((size_t)in[2] << 8) | ((size_t)in[3] << 16) | ((size_t)in[4] << 24);
+            if (orig > (size_t)0x7FFFFFFF) { DISPLAYLEVEL(1, "lz6seq: corrupt legacy header\n"); free(in); goto cleanup; }
             size_t dcap = orig ? orig + 65536 : len * 4 + (1 << 20);
             unsigned char* out = (unsigned char*)malloc(dcap);
-            if (!out) { free(in); goto cleanup; }
+            if (!out) { DISPLAYLEVEL(1, "lz6seq: out of memory\n"); free(in); goto cleanup; }
             size_t outsz = LZ6_decompress_seq((const char*)in, len, (char*)out, dcap);
             if (!outsz) { DISPLAYLEVEL(1, "lz6seq: decompression failed\n"); free(in); free(out); goto cleanup; }
             if (fwrite(out, 1, outsz, fout) != outsz) { DISPLAYLEVEL(1, "lz6seq: write error\n"); free(in); free(out); goto cleanup; }
@@ -341,7 +349,13 @@ static int seq_mode_main(const char* input_filename, const char* output_filename
 
 cleanup:
     if (close_in) fclose(fin);
-    if (close_out) fclose(fout);
+    /* fclose/fflush flush buffered output: a disk-full at that point must
+     * fail the run, not report success on data that never hit the disk */
+    if (close_out) {
+        if (fclose(fout) != 0 && rc == 0) { DISPLAYLEVEL(1, "lz6seq: write error\n"); rc = 1; }
+    } else if (fflush(fout) != 0 && rc == 0) {
+        DISPLAYLEVEL(1, "lz6seq: write error\n"); rc = 1;
+    }
     return rc;
 }
 
