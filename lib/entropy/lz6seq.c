@@ -128,6 +128,20 @@ static int detect_glibc_prng(const uint8_t* src, size_t n, int* shift_out) {
 
 /* ---- byte helpers ---- */
 static void w8(uint8_t** p, int v) { *(*p)++ = (uint8_t)v; }
+/* one rANS symbol from a prepared table; returns 1 when the stream is
+ * exhausted mid-renorm (corrupt input) */
+static int seq_dec_sym(const fse_dtable* t, uint32_t* x, const uint8_t** sp,
+                       const uint8_t* send, unsigned* out) {
+    unsigned s = t->dtab[*x & (t->M - 1)];
+    *out = s;
+    uint32_t v = t->freq_tab[s] * (*x >> t->L_bits) + (*x & (t->M - 1)) - t->cumul[s];
+    while (v < 0x10000u) {
+        if (*sp >= send) return 1;
+        v = (v << 8) | (unsigned char)*(*sp)++;
+    }
+    *x = v;
+    return 0;
+}
 static void w32le(uint8_t** p, uint32_t v) {
     w8(p, v&0xFF); w8(p, (v>>8)&0xFF); w8(p, (v>>16)&0xFF); w8(p, (v>>24)&0xFF);
 }
@@ -1139,19 +1153,45 @@ static size_t decode_normal(const char* src, size_t srcSize,
     int b;
     for (b = 0; b < OF_CODES; b++) { resid_top8[b] = NULL; resid_n[b] = 0; }
 
-    /* FSE decode 3 streams */
-    unsigned counts[256]; int rmax, rL;
-    for (int st = 0; st < 3; st++) {
-        size_t hdr = fse_read_table(p, (size_t)(end - p), counts, &rmax, &rL);
-        if (hdr == 0) goto fail;
-        if ((size_t)(end - p) < hdr + 4) goto fail;
-        uint32_t slen = (uint32_t)(unsigned char)p[hdr] | ((uint32_t)(unsigned char)p[hdr+1] << 8)
-                      | ((uint32_t)(unsigned char)p[hdr+2] << 16) | ((uint32_t)(unsigned char)p[hdr+3] << 24);
-        size_t total = hdr + 4 + slen;
-        if ((size_t)(end - p) < total) goto fail;
-        unsigned* dst_syms = st==0 ? ll_syms : st==1 ? ml_syms : of_syms;
-        if (fse_decode(p, total, (size_t)sc, rmax, dst_syms)) goto fail;
-        p += total;
+    /* FSE decode 3 streams, interleaved: three independent rANS chains
+     * keep the OOO window busy where sequential decode would stall on
+     * each state's renorm dependency. True encoder alphabets:
+     * ll codes 0..35, ml codes 0..36, of codes 0..24 (reps 0..2 or bucket). */
+    {
+        static const int smax[3] = { 35, 36, 24 };
+        fse_dtable dt[3];
+        uint32_t xs[3];
+        const uint8_t *sp3[3], *se3[3];
+        size_t dhdr[3], off = 0;
+        int ok = 1, st;
+        for (st = 0; st < 3 && ok; st++) {
+            if ((size_t)(end - p) < off + 2) { ok = 0; break; }
+            dhdr[st] = fse_dtable_prepare(&dt[st], p + off,
+                                          (size_t)(end - p) - off, smax[st]);
+            if (dhdr[st] == 0) { ok = 0; break; }
+            off += dhdr[st];
+            if ((size_t)(end - p) < off + 4) { ok = 0; break; }
+            uint32_t slen = (uint32_t)p[off] | ((uint32_t)p[off+1] << 8)
+                          | ((uint32_t)p[off+2] << 16) | ((uint32_t)p[off+3] << 24);
+            off += 4;
+            if (slen < 4 || (size_t)(end - p) < off + slen) { ok = 0; break; }
+            sp3[st] = p + off;
+            se3[st] = sp3[st] + slen;
+            xs[st] = ((uint32_t)sp3[st][0] << 24) | ((uint32_t)sp3[st][1] << 16)
+                   | ((uint32_t)sp3[st][2] << 8) | (uint32_t)sp3[st][3];
+            sp3[st] += 4;
+            off += slen;
+        }
+        if (ok) {
+            p += off;
+            for (int i = 0; i < sc && ok; i++) {
+                if (seq_dec_sym(&dt[0], &xs[0], &sp3[0], se3[0], &ll_syms[i])) ok = 0;
+                else if (seq_dec_sym(&dt[1], &xs[1], &sp3[1], se3[1], &ml_syms[i])) ok = 0;
+                else if (seq_dec_sym(&dt[2], &xs[2], &sp3[2], se3[2], &of_syms[i])) ok = 0;
+            }
+        }
+        for (st = 0; st < 3; st++) fse_dtable_free(&dt[st]);
+        if (!ok) goto fail;
     }
 
     /* rep flags */

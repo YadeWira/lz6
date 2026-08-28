@@ -49,8 +49,33 @@ size_t fse_encode(const unsigned* symbols, size_t n,
  * Caller supplies `n` (recovered from container) and `maxSym`.
  * Returns 0 on success, non-zero on error. */
 int    fse_decode(const uint8_t* in, size_t in_len,
-                  size_t n, int maxSym,
-                  unsigned* out);
+                   size_t n, int maxSym,
+                   unsigned* out);
+
+/* Prepared decode table: parse + build once, decode many (or interleave
+ * several tables from one loop for ILP). */
+typedef struct {
+    int L_bits;
+    unsigned M;
+    unsigned freq_tab[256];
+    unsigned cumul[256];
+    uint8_t* dtab;          /* M entries; NULL until prepared */
+} fse_dtable;
+
+/* Parse the table header at `in` (as written by fse_write_table) and build
+ * the flat decode table. `maxSym` caps the alphabet (corrupt headers with
+ * larger symbols are rejected). On success returns the header size in
+ * bytes; on error returns 0 with t->dtab == NULL (safe for
+ * fse_dtable_free). */
+size_t fse_dtable_prepare(fse_dtable* t, const uint8_t* in, size_t in_len,
+                          int maxSym);
+
+void fse_dtable_free(fse_dtable* t);
+
+/* Decode n symbols from a [4B size][stream] block using a prepared table.
+ * Returns 0 on success, non-zero on error. */
+int fse_decode_prepared(const fse_dtable* t, const uint8_t* in, size_t in_len,
+                        size_t n, unsigned* out);
 
 /* Table-only: write the normalized frequency table to `out` for `out_cap`.
  * Counts are normalized to 2^L (powers of two) automatically.

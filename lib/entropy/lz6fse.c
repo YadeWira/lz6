@@ -403,59 +403,67 @@ size_t fse_encode(const unsigned* syms, size_t n, int maxSym,
     return hdr + 4 + stream_len;
 }
 
-int fse_decode(const uint8_t* in, size_t in_len, size_t n, int maxSym,
-               unsigned* syms)
+size_t fse_dtable_prepare(fse_dtable* t, const uint8_t* in, size_t in_len,
+                          int maxSym)
 {
+    memset(t, 0, sizeof(*t));
     unsigned counts[256];
     int rmaxSym, L_bits;
     size_t hdr = fse_read_table(in, in_len, counts, &rmaxSym, &L_bits);
-    if (hdr == 0) return 1;
-    if (rmaxSym > maxSym) return 1;
+    if (hdr == 0) return 0;
+    if (rmaxSym > maxSym) return 0;
     /* encoder's pick_L_bits only emits 10..16; anything else is corrupt
      * and would make M (and every table index) unreliable */
-    if (L_bits < 1 || L_bits > 16) return 1;
-    maxSym = rmaxSym;
+    if (L_bits < 1 || L_bits > 16) return 0;
     unsigned M = 1u << L_bits;
 
-    /* build cumul + flat decode table */
-    unsigned freq_tab[256];
-    int i;
-    for (i = 0; i < 256; i++) freq_tab[i] = counts[i];
-    unsigned cumul[256];
+    t->L_bits = L_bits;
+    t->M = M;
+    for (int i = 0; i < 256; i++) t->freq_tab[i] = counts[i];
     unsigned acc = 0;
-    for (i = 0; i <= maxSym; i++) {
-        cumul[i] = acc;
-        acc += freq_tab[i];
+    for (int i = 0; i <= rmaxSym; i++) {
+        t->cumul[i] = acc;
+        acc += t->freq_tab[i];
     }
     /* decode lookup table: slot (0..M-1) -> symbol. The freqs must sum to
      * exactly M: a corrupt table with inflated freqs must not write past
      * the M-byte table. */
-    uint8_t* dtab = (uint8_t*)malloc(M);
-    if (!dtab) return 1;
+    t->dtab = (uint8_t*)malloc(M);
+    if (!t->dtab) return 0;
     unsigned slot = 0;
-    for (i = 0; i <= maxSym; i++) {
-        unsigned f = freq_tab[i];
+    for (int i = 0; i <= rmaxSym; i++) {
+        unsigned f = t->freq_tab[i];
         while (f--) {
-            if (slot >= M) { free(dtab); return 1; }
-            dtab[slot++] = (uint8_t)i;
+            if (slot >= M) { fse_dtable_free(t); return 0; }
+            t->dtab[slot++] = (uint8_t)i;
         }
     }
-    if (slot != M) { free(dtab); return 1; }
+    if (slot != M) { fse_dtable_free(t); return 0; }
+    return hdr;
+}
 
+void fse_dtable_free(fse_dtable* t) {
+    free(t->dtab);
+    t->dtab = NULL;
+}
+
+static int fse_decode_syms(const fse_dtable* t, const uint8_t* in, size_t in_len,
+                           size_t n, unsigned* syms)
+{
     /* read 4 LE size field then stream */
-    size_t pos = hdr;
-    if (pos + 8 > in_len) { free(dtab); return 1; }
+    size_t pos = 0;
+    if (pos + 8 > in_len) return 1;
     uint32_t stream_len = (uint32_t)in[pos]
                         | ((uint32_t)in[pos+1] << 8)
                         | ((uint32_t)in[pos+2] << 16)
                         | ((uint32_t)in[pos+3] << 24);
     pos += 4;
-    if (pos + stream_len > in_len) { free(dtab); return 1; }
+    if (pos + stream_len > in_len) return 1;
     const uint8_t* sp = in + pos;
     const uint8_t* sp_end = sp + stream_len;
 
     /* read x_state as 4 BE bytes */
-    if (stream_len < 4) { free(dtab); return 1; }
+    if (stream_len < 4) return 1;
     uint32_t x = ((uint32_t)sp[0] << 24) | ((uint32_t)sp[1] << 16) |
                  ((uint32_t)sp[2] << 8) | (uint32_t)sp[3];
     sp += 4;
@@ -468,26 +476,36 @@ int fse_decode(const uint8_t* in, size_t in_len, size_t n, int maxSym,
          * per-symbol f==0 check is skipped in the hot path; a corrupt
          * stream can at worst produce garbage, and the sp bounds check
          * below still catches overreads. */
-        unsigned slot_idx = rans_dec_slot(x, L_bits);
-        unsigned s = dtab[slot_idx];
-        unsigned f = freq_tab[s];
-        unsigned c = cumul[s];
+        unsigned slot_idx = rans_dec_slot(x, t->L_bits);
+        unsigned s = t->dtab[slot_idx];
+        unsigned f = t->freq_tab[s];
+        unsigned c = t->cumul[s];
         syms[k] = s;
-#ifdef FSE_DEBUG
-        if (k < 40 || (k < 40)) {
-            fprintf(stderr, "  dec[%2zu] x=%u slot=%u s=%u f=%u c=%u\n",
-                    k, x, slot_idx, s, f, c);
-        }
-#endif
         /* advance (must come BEFORE refill: x is initially valid after encoder flush) */
-        x = rans_dec_advance(x, f, c, L_bits);
+        x = rans_dec_advance(x, f, c, t->L_bits);
         /* refill now that x may have dropped below M */
         x = rans_dec_renorm(x, &sp, sp_end, &rerr);
-        if (rerr) { free(dtab); return 1; }
+        if (rerr) return 1;
     }
-
-    free(dtab);
     return 0;
+}
+
+int fse_decode_prepared(const fse_dtable* t, const uint8_t* in, size_t in_len,
+                        size_t n, unsigned* out)
+{
+    return fse_decode_syms(t, in, in_len, n, out);
+}
+
+int fse_decode(const uint8_t* in, size_t in_len, size_t n, int maxSym,
+               unsigned* syms)
+{
+    fse_dtable t;
+    size_t hdr = fse_dtable_prepare(&t, in, in_len, maxSym);
+    if (hdr == 0) return 1;
+    /* the stream follows the table header */
+    int rc = fse_decode_syms(&t, in + hdr, in_len - hdr, n, syms);
+    fse_dtable_free(&t);
+    return rc;
 }
 
 /* ================================================================== */
