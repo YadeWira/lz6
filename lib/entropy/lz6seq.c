@@ -143,15 +143,28 @@ static uint32_t r32le(const uint8_t** p) {
     *p += 4; return v;
 }
 static int rvlq(const uint8_t** p, const uint8_t* end) {
-    int v = 0;
-    while (*p < end) { int b = *(*p)++; v += b; if (b != 255) return v; }
-    return v;
+    /* unsigned accumulation with a sanity cap: a corrupt stream of 0xFF
+     * bytes must not overflow the int return value */
+    unsigned v = 0;
+    while (*p < end) {
+        int b = *(*p)++;
+        v += (unsigned)b;
+        if (b != 255) break;
+        if (v >= (1u << 30)) break;
+    }
+    return (int)v;
 }
-static uint32_t br_bits(uint32_t* acc, int* nbits, const uint8_t** pp, int n) {
-    while (*nbits < n) { *acc |= (uint32_t)*(*pp)++ << *nbits; *nbits += 8; }
+/* bit reader for extra/low bits: bounded by `end`; sets *err when the
+ * stream is exhausted mid-field (corrupt input) */
+static int br_bits(uint32_t* acc, int* nbits, const uint8_t** pp,
+                   const uint8_t* end, int n, int* err) {
+    while (*nbits < n) {
+        if (*pp >= end) { *err = 1; return 0; }
+        *acc |= (uint32_t)*(*pp)++ << *nbits; *nbits += 8;
+    }
     uint32_t v = *acc & ((1u << n) - 1);
     *acc >>= n; *nbits -= n;
-    return v;
+    return (int)v;
 }
 
 /* ---- sequence collector (lz6 callback) ---- */
@@ -962,6 +975,9 @@ static size_t decode_normal(const char* src, size_t srcSize,
 
     int lit_mode = r8(&p);
     int lit_count = rvlq(&p, end);
+    /* literals can never exceed the declared output size; this also keeps
+     * the per-literal allocations bounded on corrupt input */
+    if (lit_count < 0 || lit_count > isize) return 0;
     uint8_t* literals = NULL;
     if (lit_mode == 0) {
         if ((size_t)(end - p) < (size_t)lit_count) return 0;
@@ -1075,16 +1091,10 @@ static size_t decode_normal(const char* src, size_t srcSize,
         {
             /* first pass: we decode sequentially, ctx[i] = prev (already decoded) */
             const uint8_t* sp = lp;
-            if ((size_t)(lpe - lp) < 8) { /* stream needs >= 4 */ }
-            /* use fse_decode_ctx with a ctx array we fill progressively:
-             * decode symbol i using ctx[i] = prev; then prev = symbol. */
-            /* fse_decode_ctx takes the whole ctx array; we build it as we
-             * decode by decoding one at a time is not supported — instead
-             * we decode into lit_dec and track prev ourselves via a custom loop.
-             * Simplest: decode the stream manually here. */
+            if ((size_t)(lpe - lp) < 8) { free(ctxs); free(lit_dec); fse_ctx_table_free(&gtab); for (int k = 0; k < 256; k++) fse_ctx_table_free(&tables[k]); free(literals); return 0; }
             uint32_t stream_len = (uint32_t)sp[0] | ((uint32_t)sp[1] << 8) | ((uint32_t)sp[2] << 16) | ((uint32_t)sp[3] << 24);
             sp += 4;
-            if ((size_t)(lpe - sp) < stream_len) { free(ctxs); free(lit_dec); fse_ctx_table_free(&gtab); for (int k = 0; k < 256; k++) fse_ctx_table_free(&tables[k]); free(literals); return 0; }
+            if (stream_len < 4 || (size_t)(lpe - sp) < stream_len) { free(ctxs); free(lit_dec); fse_ctx_table_free(&gtab); for (int k = 0; k < 256; k++) fse_ctx_table_free(&tables[k]); free(literals); return 0; }
             const uint8_t* sp_end = sp + stream_len;
             uint32_t x = ((uint32_t)sp[0] << 24) | ((uint32_t)sp[1] << 16) | ((uint32_t)sp[2] << 8) | (uint32_t)sp[3];
             sp += 4;
@@ -1121,14 +1131,24 @@ static size_t decode_normal(const char* src, size_t srcSize,
     unsigned* of_syms = (unsigned*)malloc((size_t)sc * sizeof(unsigned));
     if (!ll_syms || !ml_syms || !of_syms) { free(ll_syms); free(ml_syms); free(of_syms); free(literals); return 0; }
 
+    /* per-bucket top8 streams — MUST be NULL-initialized before the first
+     * `goto fail`: the fail cleanup frees resid_top8[b], and an early jump
+     * (e.g. a corrupt FSE stream) would otherwise free stale stack bytes */
+    unsigned* resid_top8[OF_CODES];
+    size_t resid_n[OF_CODES];
+    int b;
+    for (b = 0; b < OF_CODES; b++) { resid_top8[b] = NULL; resid_n[b] = 0; }
+
     /* FSE decode 3 streams */
     unsigned counts[256]; int rmax, rL;
     for (int st = 0; st < 3; st++) {
         size_t hdr = fse_read_table(p, (size_t)(end - p), counts, &rmax, &rL);
         if (hdr == 0) goto fail;
+        if ((size_t)(end - p) < hdr + 4) goto fail;
         uint32_t slen = (uint32_t)(unsigned char)p[hdr] | ((uint32_t)(unsigned char)p[hdr+1] << 8)
                       | ((uint32_t)(unsigned char)p[hdr+2] << 16) | ((uint32_t)(unsigned char)p[hdr+3] << 24);
         size_t total = hdr + 4 + slen;
+        if ((size_t)(end - p) < total) goto fail;
         unsigned* dst_syms = st==0 ? ll_syms : st==1 ? ml_syms : of_syms;
         if (fse_decode(p, total, (size_t)sc, rmax, dst_syms)) goto fail;
         p += total;
@@ -1140,11 +1160,6 @@ static size_t decode_normal(const char* src, size_t srcSize,
     const uint8_t* rep_flags = p;
     p += rep_bytes;
 
-    /* per-bucket top8 streams */
-    unsigned* resid_top8[OF_CODES];
-    size_t resid_n[OF_CODES];
-    int b;
-    for (b = 0; b < OF_CODES; b++) { resid_top8[b] = NULL; resid_n[b] = 0; }
     for (;;) {
         if ((size_t)(end - p) < 5) goto fail;
         int bid = p[0];
@@ -1183,12 +1198,15 @@ static size_t decode_normal(const char* src, size_t srcSize,
     p += 4;
     if ((size_t)(end - p) < low_size) goto fail;
     const uint8_t* low_p = p;
+    const uint8_t* low_end = low_p + low_size;
     p += low_size;
     uint32_t low_acc = 0; int low_nbits = 0;
 
     /* extra bits (ll/ml) */
     const uint8_t* extra_p = p;
+    const uint8_t* extra_end = end;
     uint32_t bit_acc = 0; int bit_nbits = 0;
+    int br_err = 0;
 
     int op = 0, lp = 0;
     int rp[3] = {0, 0, 0};
@@ -1198,13 +1216,15 @@ static size_t decode_normal(const char* src, size_t srcSize,
     for (int i = 0; i < sc; i++) {
         int ll = LL_base[ll_syms[i]];
         int le = LL_extra[ll_syms[i]];
-        if (le > 0) ll += (int)br_bits(&bit_acc, &bit_nbits, &extra_p, le);
+        if (le > 0) ll += br_bits(&bit_acc, &bit_nbits, &extra_p, extra_end, le, &br_err);
+        if (br_err) goto fail;
         int ml = 0;
         if (ml_syms[i] > 0) {
             int real = (int)ml_syms[i] - 1;
             ml = ML_base[real];
             int me = ML_extra[real];
-            if (me > 0) ml += (int)br_bits(&bit_acc, &bit_nbits, &extra_p, me);
+            if (me > 0) ml += br_bits(&bit_acc, &bit_nbits, &extra_p, extra_end, me, &br_err);
+            if (br_err) goto fail;
         }
         int pc = (rep_flags[(size_t)i * 2 / 8] >> ((i * 2) % 8)) & 3;
         int md = 0, is_rep = 0;
@@ -1214,7 +1234,8 @@ static size_t decode_normal(const char* src, size_t srcSize,
             if (resid_pos[bid] >= resid_n[bid]) goto fail;
             unsigned top8 = resid_top8[bid][resid_pos[bid]++];
             int nlow = bid >= 8 ? (bid - 8) : 0;
-            int low = nlow > 0 ? (int)br_bits(&low_acc, &low_nbits, &low_p, nlow) : 0;
+            int low = nlow > 0 ? br_bits(&low_acc, &low_nbits, &low_p, low_end, nlow, &br_err) : 0;
+            if (br_err) goto fail;
             md = OF_base[bid] + ((int)top8 << nlow) + low;
         } else if (ml_syms[i] > 0) {
             int ri = pc - 1;

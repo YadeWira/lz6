@@ -176,6 +176,10 @@ size_t huf_decode(const uint8_t* in, size_t in_len, size_t n, uint8_t* out)
     int k = in[0];
     if (k == 0 || k > HUF_MAX_TABLE_BITS) return 0;
     const uint8_t* len = in + 1;
+    /* code lengths index cnt[17]/off[17] and drive table fills: anything
+     * over HUF_MAX_CODE_BITS is corrupt and would write out of bounds */
+    for (int s = 0; s <= 255; s++)
+        if (len[s] > HUF_MAX_CODE_BITS) return 0;
     uint32_t total = (uint32_t)in[257] | ((uint32_t)in[258] << 8) |
                      ((uint32_t)in[259] << 16) | ((uint32_t)in[260] << 24);
     const uint8_t* stream = in + 261;
@@ -217,7 +221,7 @@ size_t huf_decode(const uint8_t* in, size_t in_len, size_t n, uint8_t* out)
             uint16_t v = (uint16_t)((s << 4) | l);
             uint32_t base = (uint32_t)code[s] << shift;
             for (uint32_t sub = 0; sub < (1u << shift); sub++) {
-                if ((base | sub) >= tsize) { fprintf(stderr, "OOB s=%d l=%d code=%d shift=%d idx=%u tsize=%zu\n", s, l, code[s], shift, base|sub, tsize); free(table); return 0; }
+                if ((base | sub) >= tsize) { free(table); return 0; }
                 table[base | sub] = v;
             }
         } else {

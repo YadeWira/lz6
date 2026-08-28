@@ -221,18 +221,18 @@ static inline uint32_t rans_dec_advance(uint32_t x, unsigned f,
     return f * (x >> L_bits) + (x & M_mask) - cumul;
 }
 
-static inline uint32_t rans_dec_renorm(uint32_t x, int L_bits,
-                                       const uint8_t** pp)
+static inline uint32_t rans_dec_renorm(uint32_t x, const uint8_t** pp,
+                                       const uint8_t* end, int* err)
 {
-    (void)L_bits;
-    /* Decoder refill to RANS_L = 1 << 16 (standard 32-bit-state rANS). */
+    /* Decoder refill to RANS_L = 1 << 16 (standard 32-bit-state rANS).
+     * Bounded: exhausting the stream means corrupt input. */
     unsigned lo = 0x10000u;
 #ifdef FSE_DEBUG
     int refills = 0;
 #endif
     while (x < lo) {
-        unsigned char b = *(*pp)++;
-        x = (x << 8) | b;
+        if (*pp >= end) { *err = 1; return x; }
+        x = (x << 8) | (unsigned char)*(*pp)++;
 #ifdef FSE_DEBUG
         refills++;
 #endif
@@ -411,6 +411,9 @@ int fse_decode(const uint8_t* in, size_t in_len, size_t n, int maxSym,
     size_t hdr = fse_read_table(in, in_len, counts, &rmaxSym, &L_bits);
     if (hdr == 0) return 1;
     if (rmaxSym > maxSym) return 1;
+    /* encoder's pick_L_bits only emits 10..16; anything else is corrupt
+     * and would make M (and every table index) unreliable */
+    if (L_bits < 1 || L_bits > 16) return 1;
     maxSym = rmaxSym;
     unsigned M = 1u << L_bits;
 
@@ -424,15 +427,20 @@ int fse_decode(const uint8_t* in, size_t in_len, size_t n, int maxSym,
         cumul[i] = acc;
         acc += freq_tab[i];
     }
-    /* decode lookup table: slot (0..M-1) -> symbol */
+    /* decode lookup table: slot (0..M-1) -> symbol. The freqs must sum to
+     * exactly M: a corrupt table with inflated freqs must not write past
+     * the M-byte table. */
     uint8_t* dtab = (uint8_t*)malloc(M);
     if (!dtab) return 1;
     unsigned slot = 0;
     for (i = 0; i <= maxSym; i++) {
         unsigned f = freq_tab[i];
-        while (f--) dtab[slot++] = (uint8_t)i;
+        while (f--) {
+            if (slot >= M) { free(dtab); return 1; }
+            dtab[slot++] = (uint8_t)i;
+        }
     }
-    /* slot should now == M */
+    if (slot != M) { free(dtab); return 1; }
 
     /* read 4 LE size field then stream */
     size_t pos = hdr;
@@ -447,14 +455,12 @@ int fse_decode(const uint8_t* in, size_t in_len, size_t n, int maxSym,
     const uint8_t* sp_end = sp + stream_len;
 
     /* read x_state as 4 BE bytes */
-    if (stream_len < 4) {
-        /* degenerate: handle as zero/symbols-from-state */
-        /* fall through: state is whatever 4 BE bytes (maybe zero) */
-    }
+    if (stream_len < 4) { free(dtab); return 1; }
     uint32_t x = ((uint32_t)sp[0] << 24) | ((uint32_t)sp[1] << 16) |
                  ((uint32_t)sp[2] << 8) | (uint32_t)sp[3];
     sp += 4;
 
+    int rerr = 0;
     size_t k;
     for (k = 0; k < n; k++) {
         /* peek symbol. f is never 0 for a symbol present in dtab
@@ -476,8 +482,8 @@ int fse_decode(const uint8_t* in, size_t in_len, size_t n, int maxSym,
         /* advance (must come BEFORE refill: x is initially valid after encoder flush) */
         x = rans_dec_advance(x, f, c, L_bits);
         /* refill now that x may have dropped below M */
-        x = rans_dec_renorm(x, L_bits, &sp);
-        if (sp > sp_end + 4) { free(dtab); return 1; }
+        x = rans_dec_renorm(x, &sp, sp_end, &rerr);
+        if (rerr) { free(dtab); return 1; }
     }
 
     free(dtab);
@@ -564,15 +570,21 @@ size_t fse_ctx_table_write(const fse_ctx_table* t, uint8_t* out, size_t out_cap)
 size_t fse_ctx_table_read(fse_ctx_table* t, const uint8_t* in, size_t in_len) {
     if (in_len < 1 + 512) return 0;
     int L_bits = in[0];
+    /* encoder-side tables share pick_L_bits' 10..16 range; anything else
+     * would make M (and dtab's size) unreliable */
+    if (L_bits < 1 || L_bits > 16) return 0;
     unsigned freqs[256];
     unsigned total = 0;
     for (int i = 0; i < 256; i++) {
         freqs[i] = (unsigned)in[1 + i * 2] | ((unsigned)in[1 + i * 2 + 1] << 8);
         total += freqs[i];
     }
+    unsigned M = 1u << L_bits;
+    /* freqs must sum to exactly M or the dtab fill would run past its end */
+    if (total != M) return 0;
     memset(t, 0, sizeof(*t));
     t->L_bits = L_bits;
-    t->M = 1u << L_bits;
+    t->M = M;
     /* freqs already sum to M — copy as-is */
     for (int i = 0; i < 256; i++) t->freq[i] = freqs[i];
     unsigned acc = 0;
@@ -585,9 +597,11 @@ size_t fse_ctx_table_read(fse_ctx_table* t, const uint8_t* in, size_t in_len) {
     unsigned slot = 0;
     for (int i = 0; i < 256; i++) {
         unsigned f = t->freq[i];
-        while (f--) t->dtab[slot++] = (uint8_t)i;
+        while (f--) {
+            if (slot >= t->M) { free(t->dtab); t->dtab = NULL; return 0; }
+            t->dtab[slot++] = (uint8_t)i;
+        }
     }
-    (void)total;
     return 1 + 512;
 }
 
