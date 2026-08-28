@@ -48,6 +48,40 @@ static int ll_to_code(int v) { for (int c=LL_CODES-1;c>=0;c--) if(v>=LL_base[c])
 static int ml_to_code(int v) { for (int c=ML_CODES-1;c>=0;c--) if(v>=ML_base[c])return c; return 0; }
 static int of_to_code(int v) { for (int c=OF_CODES-1;c>=0;c--) if(v>=OF_base[c])return c; return 0; }
 
+/* Direct-lookup fast paths for the per-sequence symbol coding (these run
+ * 3x per sequence and the linear scans were ~10% of the whole bench).
+ * ll/ml values beyond the table ranges fall back to the linear scan;
+ * of_to_code(v) == floor(log2(v)) for v >= 1, computed with CLZ. */
+#define LL_TAB_MAX 512
+#define ML_TAB_MAX 1024
+static uint8_t ll_tab[LL_TAB_MAX + 1];
+static uint8_t ml_tab[ML_TAB_MAX + 1];
+static int code_tabs_ready = 0;
+
+static void code_tabs_init(void) {
+    for (int v = 0; v <= LL_TAB_MAX; v++) ll_tab[v] = (uint8_t)ll_to_code(v);
+    for (int v = 0; v <= ML_TAB_MAX; v++) ml_tab[v] = (uint8_t)ml_to_code(v);
+    (void)of_to_code;   /* fallback path, unused when CLZ is available */
+    code_tabs_ready = 1;
+}
+
+static inline int ll_code(int v) {
+    if (v <= LL_TAB_MAX) return ll_tab[v];
+    return ll_to_code(v);
+}
+static inline int ml_code(int v) {
+    if (v <= ML_TAB_MAX) return ml_tab[v];
+    return ml_to_code(v);
+}
+static inline int of_code(int v) {
+#if defined(__GNUC__)
+    /* of >= 1 always (match offsets): floor(log2(v)) == 31 - clz(v) */
+    return 31 - __builtin_clz((unsigned)v);
+#else
+    return of_to_code(v);
+#endif
+}
+
 /* ---- glibc random() TYPE_3 (additive, DEG=31) reimplementation ----
  * Used to regenerate pseudo-random benchmark files from their seed
  * (a tiny descriptor instead of the incompressible bytes). Matches
@@ -555,16 +589,16 @@ static size_t compress_normal(const char* src, size_t srcSize,
     int rp[3] = {0, 0, 0};
     if (!resid_top8 || !resid_n || !resid_cap) { /* oom */ }
     for (int i = 0; i < sc_cnt; i++) {
-        ll_syms[i] = (unsigned)ll_to_code(sc.lit_lens[i]);
+        ll_syms[i] = (unsigned)ll_code(sc.lit_lens[i]);
         if (sc.match_lens[i] > 0) {
-            ml_syms[i] = (unsigned)ml_to_code(sc.match_lens[i]) + 1;
+            ml_syms[i] = (unsigned)ml_code(sc.match_lens[i]) + 1;
             int of = sc.offsets[i];
             int pc = 0, ri = -1;
             if (of == rp[0]) { pc = 1; ri = 0; }
             else if (of == rp[1]) { pc = 2; ri = 1; }
             else if (of == rp[2]) { pc = 3; ri = 2; }
             if (pc == 0) {
-                int bid = of_to_code(of);
+                int bid = of_code(of);
                 of_syms[i] = (unsigned)bid;
                 int resid = of - OF_base[bid];
                 int top8 = bid >= 8 ? (resid >> (bid - 8)) : resid;
@@ -867,6 +901,7 @@ static size_t plane_encode(const uint8_t* src, size_t srcSize,
 size_t LZ6_compress_seq(const char* src, size_t srcSize,
                         char* dst, size_t dstCap, int level) {
     if (!src || !dst || dstCap < 64) return 0;
+    if (!code_tabs_ready) code_tabs_init();
     if (level < 1) level = 9;
     if (level > 15) level = 15;
     if (srcSize > (size_t)INT_MAX) return 0;
@@ -981,15 +1016,16 @@ typedef struct {
     fse_dtable ft;
     uint32_t fx;
     const uint8_t *fsp, *fsend;
-    /* LIT_FSE1_6 (prev>>4, 16 tables) */
-    fse_ctx_table t6[16];
+    /* LIT_FSE1_6 (prev>>4): heap array of 16 tables — the struct stays
+     * small, else every block pays a ~530KB memset of the order-1 arrays */
+    fse_ctx_table* t6;
     uint32_t x6;
     const uint8_t *s6p, *s6e;
     int prev6;
-    /* LIT_FSE1_3 (bitmap + per-active tables + fallback) */
+    /* LIT_FSE1_3: heap array of 256 per-active tables + [256] = fallback */
+    fse_ctx_table* t3;
+    fse_ctx_table* gtab3;
     uint8_t active3[256];
-    fse_ctx_table gtab3;
-    fse_ctx_table t3[256];
     uint32_t x3;
     const uint8_t *s3p, *s3e;
     int prev3;
@@ -999,19 +1035,37 @@ static void lit_dec_free(lit_dec_t* L)
 {
     huf_dec_free(&L->huf);
     fse_dtable_free(&L->ft);
-    for (int c = 0; c < 16; c++) fse_ctx_table_free(&L->t6[c]);
-    fse_ctx_table_free(&L->gtab3);
-    for (int c = 0; c < 256; c++) fse_ctx_table_free(&L->t3[c]);
+    if (L->t6) {
+        for (int c = 0; c < 16; c++) fse_ctx_table_free(&L->t6[c]);
+        free(L->t6);
+        L->t6 = NULL;
+    }
+    if (L->t3) {
+        for (int c = 0; c < 256; c++) fse_ctx_table_free(&L->t3[c]);
+        fse_ctx_table_free(L->gtab3);
+        free(L->t3);
+        L->t3 = NULL;
+        L->gtab3 = NULL;
+    }
 }
 
 /* decode the next n literal bytes straight into out (caller guarantees
- * n >= 0 and out has room); returns -1 on corrupt/exhausted stream */
-static int lit_decode_chunk(lit_dec_t* L, uint8_t* out, int n)
+ * n >= 0 and at least `room` writable bytes at out); returns -1 on
+ * corrupt/exhausted stream */
+static int lit_decode_chunk(lit_dec_t* L, uint8_t* out, int n, size_t room)
 {
     switch (L->kind) {
     case LIT_RAW:
         if (n > 0 && (size_t)(L->rend - L->rp) < (size_t)n) return -1;
-        memcpy(out, L->rp, (size_t)n);
+        /* tiny-copy fast path: one fixed 8-byte move beats a libc call for
+         * the 1-4 byte literal runs that dominate text; the padded tail is
+         * overwritten by the following sequences (room >= 8 keeps the
+         * write inside the declared output) */
+        if (n <= 8 && room >= 8 && (size_t)(L->rend - L->rp) >= 8) {
+            memcpy(out, L->rp, 8);
+        } else {
+            memcpy(out, L->rp, (size_t)n);
+        }
         L->rp += n;
         return 0;
     case LIT_HUF:
@@ -1048,7 +1102,7 @@ static int lit_decode_chunk(lit_dec_t* L, uint8_t* out, int n)
         const uint8_t* sp = L->s3p;
         int prev = L->prev3;
         for (int i = 0; i < n; i++) {
-            const fse_ctx_table* t = L->active3[prev] ? &L->t3[prev] : &L->gtab3;
+            const fse_ctx_table* t = L->active3[prev] ? &L->t3[prev] : L->gtab3;
             unsigned s = t->dtab[x & (t->M - 1)];
             unsigned f = t->freq[s];
             if (f == 0) return -1;
@@ -1136,6 +1190,8 @@ static size_t decode_normal(const char* src, size_t srcSize,
         const uint8_t* lp = p;
         const uint8_t* lpe = lp + lit_csize;
         if ((size_t)(lpe - lp) < 1 + 16 * 513) return 0;
+        L.t6 = (fse_ctx_table*)calloc(16, sizeof(fse_ctx_table));
+        if (!L.t6) return 0;
         lp++;  /* L_bits (fixed per stream, same for every table) */
         for (int c = 0; c < 16; c++) {
             size_t rr = fse_ctx_table_read(&L.t6[c], lp, (size_t)(lpe - lp));
@@ -1159,11 +1215,14 @@ static size_t decode_normal(const char* src, size_t srcSize,
         const uint8_t* lp = p;
         const uint8_t* lpe = lp + lit_csize;
         if ((size_t)(lpe - lp) < 33) return 0;
+        L.t3 = (fse_ctx_table*)calloc(257, sizeof(fse_ctx_table));
+        if (!L.t3) return 0;
+        L.gtab3 = &L.t3[256];
         memset(L.active3, 0, sizeof(L.active3));
         for (int c = 0; c < 256; c++) if (lp[c >> 3] & (1 << (c & 7))) L.active3[c] = 1;
         lp += 32;
         lp++;  /* L_bits */
-        size_t rr = fse_ctx_table_read(&L.gtab3, lp, (size_t)(lpe - lp));
+        size_t rr = fse_ctx_table_read(L.gtab3, lp, (size_t)(lpe - lp));
         if (rr == 0) { lit_dec_free(&L); return 0; }
         lp += rr;
         for (int c = 0; c < 256; c++) {
@@ -1373,11 +1432,12 @@ static size_t decode_normal(const char* src, size_t srcSize,
             }
         }
         if (op + ll > isize) goto fail;
-        if (lit_decode_chunk(&L, out + op, ll)) goto fail;
+        if (lit_decode_chunk(&L, out + op, ll, (size_t)(isize - op))) goto fail;
         op += ll;
         if (ml == 0) break;
         if (md < 1 || md > op || op + ml > isize) goto fail;
         if (md == 1) memset(out + op, out[op - 1], (size_t)ml);
+        else if (md >= 8 && ml <= 8 && op + 8 <= isize) memcpy(out + op, out + op - md, 8);   /* padded fast path */
         else if ((size_t)md >= (size_t)ml) memcpy(out + op, out + op - md, (size_t)ml);
         else {
             memcpy(out + op, out + op - md, (size_t)md);
