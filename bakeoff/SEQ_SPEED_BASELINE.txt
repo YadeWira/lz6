@@ -1,10 +1,10 @@
-# SEQ_SPEED_BASELINE  level=2  date=2026-08-28T04:02:26Z  rev=5df834e
-/tmp/ait_train/A    1308765 ->     695516  (53.14%)  enc    122.2 MB/s  dec    208.3 MB/s  rt=OK
-/tmp/ait_train/B    1168767 ->     350281  (29.97%)  enc     86.2 MB/s  dec    223.1 MB/s  rt=OK
-/tmp/ait_train/C    2000000 ->     754394  (37.72%)  enc     80.7 MB/s  dec    175.0 MB/s  rt=OK
-/tmp/ait_train/D    2000000 ->          7  ( 0.00%)  enc    545.2 MB/s  dec    651.1 MB/s  rt=OK
-/tmp/ait_train/E    1012112 ->     807280  (79.76%)  enc    155.3 MB/s  dec    662.5 MB/s  rt=OK
-/tmp/ait_train/F    2097152 ->    1662913  (79.29%)  enc    168.5 MB/s  dec    229.3 MB/s  rt=OK
-/tmp/ait_train/G    2526752 ->     741957  (29.36%)  enc    149.9 MB/s  dec    327.0 MB/s  rt=OK
-/tmp/ait_train/H    1022760 ->     588516  (57.54%)  enc     89.0 MB/s  dec    179.3 MB/s  rt=OK
-TOTAL     13136308 ->    5600864  (42.64%)  dec(weighted)    262.1 MB/s  score      614.7
+# SEQ_SPEED_BASELINE  level=2  date=2026-08-28T18:16:46Z  rev=8c68687
+/tmp/ait_train/A    1308765 ->     695581  (53.15%)  enc    105.2 MB/s  dec    205.7 MB/s  rt=OK
+/tmp/ait_train/B    1168767 ->     348988  (29.86%)  enc     81.9 MB/s  dec    253.3 MB/s  rt=OK
+/tmp/ait_train/C    2000000 ->     754344  (37.72%)  enc     76.4 MB/s  dec    178.0 MB/s  rt=OK
+/tmp/ait_train/D    2000000 ->          7  ( 0.00%)  enc    533.9 MB/s  dec    635.7 MB/s  rt=OK
+/tmp/ait_train/E    1012112 ->     807280  (79.76%)  enc    140.7 MB/s  dec    651.1 MB/s  rt=OK
+/tmp/ait_train/F    2097152 ->    1662985  (79.30%)  enc    164.7 MB/s  dec    188.5 MB/s  rt=OK
+/tmp/ait_train/G    2526752 ->     740774  (29.32%)  enc    135.8 MB/s  dec    319.5 MB/s  rt=OK
+/tmp/ait_train/H    1022760 ->     587167  (57.41%)  enc     84.2 MB/s  dec    198.2 MB/s  rt=OK
+TOTAL     13136308 ->    5597126  (42.61%)  dec(weighted)    257.0 MB/s  score      603.2

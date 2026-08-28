@@ -172,14 +172,28 @@ size_t huf_encode_stream(const uint8_t* hdr, const unsigned* syms, size_t n,
 
 size_t huf_decode(const uint8_t* in, size_t in_len, size_t n, uint8_t* out)
 {
+    huf_dstate s;
+    size_t consumed = huf_dec_init(&s, in, in_len);
+    if (consumed == 0) return 0;
+    if (huf_dec_n(&s, out, n)) { huf_dec_free(&s); return 0; }
+    huf_dec_free(&s);
+    return consumed;
+}
+
+/* Streaming decode API: parse the header + build the lookup table once,
+ * then decode literal chunks on demand (inline into the sequence loop).
+ * huf_dec_init returns the consumed header+stream length, 0 on error. */
+size_t huf_dec_init(huf_dstate* s, const uint8_t* in, size_t in_len)
+{
+    memset(s, 0, sizeof(*s));
     if (in_len < 261) return 0;
     int k = in[0];
     if (k == 0 || k > HUF_MAX_TABLE_BITS) return 0;
     const uint8_t* len = in + 1;
     /* code lengths index cnt[17]/off[17] and drive table fills: anything
      * over HUF_MAX_CODE_BITS is corrupt and would write out of bounds */
-    for (int s = 0; s <= 255; s++)
-        if (len[s] > HUF_MAX_CODE_BITS) return 0;
+    for (int s2 = 0; s2 <= 255; s2++)
+        if (len[s2] > HUF_MAX_CODE_BITS) return 0;
     uint32_t total = (uint32_t)in[257] | ((uint32_t)in[258] << 8) |
                      ((uint32_t)in[259] << 16) | ((uint32_t)in[260] << 24);
     const uint8_t* stream = in + 261;
@@ -187,13 +201,13 @@ size_t huf_decode(const uint8_t* in, size_t in_len, size_t n, uint8_t* out)
     if (in_len < 261 + nbytes) return 0;
 
     /* canonical table for the walk (codes longer than k) */
-    int cnt[17];
-    uint8_t sorted[256];
-    int off[17];
-    int first_code[17];
+    int* cnt = s->cnt;
+    uint8_t* sorted = s->sorted;
+    int* off = s->off;
+    int* first_code = s->first_code;
     {
         for (int l = 0; l <= 16; l++) cnt[l] = 0;
-        for (int s = 0; s <= 255; s++) cnt[len[s]]++;
+        for (int s2 = 0; s2 <= 255; s2++) cnt[len[s2]]++;
         first_code[16] = 0;
         for (int l = 15; l >= 1; l--)
             first_code[l] = (first_code[l + 1] + cnt[l + 1]) >> 1;
@@ -201,8 +215,8 @@ size_t huf_decode(const uint8_t* in, size_t in_len, size_t n, uint8_t* out)
         for (int l = 1; l <= 16; l++) { off[l] = acc; acc += cnt[l]; }
         int pos[17];
         memcpy(pos, off, sizeof(pos));
-        for (int s = 0; s <= 255; s++)
-            if (len[s] > 0) sorted[pos[len[s]]++] = (uint8_t)s;
+        for (int s2 = 0; s2 <= 255; s2++)
+            if (len[s2] > 0) sorted[pos[len[s2]]++] = (uint8_t)s2;
     }
 
     uint16_t code[256];
@@ -213,40 +227,52 @@ size_t huf_decode(const uint8_t* in, size_t in_len, size_t n, uint8_t* out)
     uint16_t* table = (uint16_t*)malloc(tsize * sizeof(uint16_t));
     if (!table) return 0;
     for (size_t i = 0; i < tsize; i++) table[i] = 0xFFFF;
-    for (int s = 0; s <= 255; s++) {
-        int l = len[s];
+    for (int s2 = 0; s2 <= 255; s2++) {
+        int l = len[s2];
         if (l == 0) continue;
         if (l <= k) {
             int shift = k - l;
-            uint16_t v = (uint16_t)((s << 4) | l);
-            uint32_t base = (uint32_t)code[s] << shift;
+            uint16_t v = (uint16_t)((s2 << 4) | l);
+            uint32_t base = (uint32_t)code[s2] << shift;
             for (uint32_t sub = 0; sub < (1u << shift); sub++) {
                 if ((base | sub) >= tsize) { free(table); return 0; }
                 table[base | sub] = v;
             }
         } else {
             /* prefix of the long code fills exactly one slot */
-            table[(uint32_t)code[s] >> (l - k)] = 0xFFFF;
+            table[(uint32_t)code[s2] >> (l - k)] = 0xFFFF;
         }
     }
 
-    /* fast table-only path: when every code length <= k (the caller's
-     * encode gate guarantees this for k=hk), the 0xFFFF long-code slot is
-     * never hit and the decode is a tight branch-predictable loop with a
-     * 64-bit accumulator (refill 1 byte when below 24 bits). */
-    uint64_t acc = 0;
-    int nbits = 0;
-    const uint8_t* p = stream;
-    const uint8_t* pend = stream + nbytes;
-    const uint32_t kmask = (1u << k) - 1;
-    while (nbits < 32 && p < pend) { acc = (acc << 8) | *p++; nbits += 8; }
-    size_t i = 0;
-    for (; i < n; i++) {
+    s->k = k;
+    s->table = table;
+    s->acc = 0;
+    s->nbits = 0;
+    s->p = stream;
+    s->pend = stream + nbytes;
+    while (s->nbits < 32 && s->p < s->pend) { s->acc = (s->acc << 8) | *s->p++; s->nbits += 8; }
+    return 261 + nbytes;
+}
+
+int huf_dec_n(huf_dstate* s, uint8_t* out, size_t n)
+{
+    const uint32_t kmask = (1u << s->k) - 1;
+    uint64_t acc = s->acc;
+    int nbits = s->nbits;
+    const uint8_t* p = s->p;
+    const uint8_t* pend = s->pend;
+    const uint16_t* table = s->table;
+    const int* cnt = s->cnt;
+    const uint8_t* sorted = s->sorted;
+    const int* off = s->off;
+    const int* first_code = s->first_code;
+
+    for (size_t i = 0; i < n; i++) {
         while (nbits < 24) { acc = (acc << 8) | (p < pend ? *p++ : 0); nbits += 8; }
-        int shift = nbits - k;
+        int shift = nbits - s->k;
         uint16_t v = table[(unsigned)((acc >> shift) & kmask)];
         int l = v & 15;
-        if (l != 0 && l <= k) {
+        if (l != 0 && l <= s->k) {
             out[i] = (uint8_t)(v >> 4);
             nbits -= l;
         } else {
@@ -266,9 +292,15 @@ size_t huf_decode(const uint8_t* in, size_t in_len, size_t n, uint8_t* out)
                     break;
                 }
             }
-            if (l2 > HUF_MAX_CODE_BITS) { free(table); return 0; }
+            if (l2 > HUF_MAX_CODE_BITS) return -1;
         }
     }
-    free(table);
-    return 261 + nbytes;
+    s->acc = acc; s->nbits = nbits; s->p = p;
+    return 0;
+}
+
+void huf_dec_free(huf_dstate* s)
+{
+    free(s->table);
+    s->table = NULL;
 }

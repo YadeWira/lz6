@@ -633,12 +633,18 @@ static size_t compress_normal(const char* src, size_t srcSize,
     memcpy(p, rep_flags, (size_t)rep_bytes);
     p += rep_bytes;
 
-    /* per-bucket FSE streams of resid top8 + low bits */
+    /* per-bucket FSE streams of resid top8 + low bits.
+     * Uniform layout: [bid][size:4][cnt:4][data] where size has bit31 set
+     * for raw buckets (data = rn verbatim bytes, cnt = rn) and is the FSE
+     * stream size otherwise (data = stream, cnt = symbol count). The
+     * explicit count frees the decoder from scanning all sequences. */
     for (int b = 0; b < OF_CODES; b++) {
         if (resid_n[b] == 0) continue;
         w8(&p, (uint8_t)b);
         uint8_t* szp = p;
-        p += 4;
+        p += 4;   /* size word */
+        uint8_t* cntp = p;
+        p += 4;   /* count word */
         size_t r8_csz = fse_encode(resid_top8[b], resid_n[b], 255, p, blk_cap - (size_t)(p-blk), NULL, 0, &ts);
         if (r8_csz == 0) goto oom;
         /* small buckets: FSE header (~40B) costs more than raw symbols —
@@ -651,6 +657,8 @@ static size_t compress_normal(const char* src, size_t srcSize,
         }
         szp[0] = (uint8_t)szword; szp[1] = (uint8_t)(szword >> 8);
         szp[2] = (uint8_t)(szword >> 16); szp[3] = (uint8_t)(szword >> 24);
+        cntp[0] = (uint8_t)resid_n[b]; cntp[1] = (uint8_t)(resid_n[b] >> 8);
+        cntp[2] = (uint8_t)(resid_n[b] >> 16); cntp[3] = (uint8_t)(resid_n[b] >> 24);
         p += r8_csz;
     }
     w8(&p, 0);
@@ -956,6 +964,109 @@ size_t LZ6_compress_seq(const char* src, size_t srcSize,
 /* ================= DECODER ================= */
 
 /* core block decode: flags (bit0=raw) | isize | ... */
+/* ---- literals streaming decoder: decode literal chunks on demand ---- */
+#define LIT_RAW     0
+#define LIT_FSE0    1
+#define LIT_HUF     5
+#define LIT_FSE1_6  6
+#define LIT_FSE1_3  3
+
+typedef struct {
+    int kind;
+    /* LIT_RAW */
+    const uint8_t *rp, *rend;
+    /* LIT_HUF */
+    huf_dstate huf;
+    /* LIT_FSE0 */
+    fse_dtable ft;
+    uint32_t fx;
+    const uint8_t *fsp, *fsend;
+    /* LIT_FSE1_6 (prev>>4, 16 tables) */
+    fse_ctx_table t6[16];
+    uint32_t x6;
+    const uint8_t *s6p, *s6e;
+    int prev6;
+    /* LIT_FSE1_3 (bitmap + per-active tables + fallback) */
+    uint8_t active3[256];
+    fse_ctx_table gtab3;
+    fse_ctx_table t3[256];
+    uint32_t x3;
+    const uint8_t *s3p, *s3e;
+    int prev3;
+} lit_dec_t;
+
+static void lit_dec_free(lit_dec_t* L)
+{
+    huf_dec_free(&L->huf);
+    fse_dtable_free(&L->ft);
+    for (int c = 0; c < 16; c++) fse_ctx_table_free(&L->t6[c]);
+    fse_ctx_table_free(&L->gtab3);
+    for (int c = 0; c < 256; c++) fse_ctx_table_free(&L->t3[c]);
+}
+
+/* decode the next n literal bytes straight into out (caller guarantees
+ * n >= 0 and out has room); returns -1 on corrupt/exhausted stream */
+static int lit_decode_chunk(lit_dec_t* L, uint8_t* out, int n)
+{
+    switch (L->kind) {
+    case LIT_RAW:
+        if (n > 0 && (size_t)(L->rend - L->rp) < (size_t)n) return -1;
+        memcpy(out, L->rp, (size_t)n);
+        L->rp += n;
+        return 0;
+    case LIT_HUF:
+        return huf_dec_n(&L->huf, out, (size_t)n);
+    case LIT_FSE0:
+        for (int i = 0; i < n; i++) {
+            uint8_t s;
+            if (seq_dec_sym(&L->ft, &L->fx, &L->fsp, L->fsend, &s)) return -1;
+            out[i] = s;
+        }
+        return 0;
+    case LIT_FSE1_6: {
+        uint32_t x = L->x6;
+        const uint8_t* sp = L->s6p;
+        int prev = L->prev6;
+        for (int i = 0; i < n; i++) {
+            const fse_ctx_table* t = &L->t6[prev >> 4];
+            unsigned s = t->dtab[x & (t->M - 1)];
+            unsigned f = t->freq[s];
+            if (f == 0) return -1;
+            out[i] = (uint8_t)s;
+            x = f * (x >> t->L_bits) + (x & (t->M - 1)) - t->cumul[s];
+            while (x < 0x10000u) {
+                if (sp >= L->s6e) return -1;
+                x = (x << 8) | *sp++;
+            }
+            prev = (int)s;
+        }
+        L->x6 = x; L->s6p = sp; L->prev6 = prev;
+        return 0;
+    }
+    case LIT_FSE1_3: {
+        uint32_t x = L->x3;
+        const uint8_t* sp = L->s3p;
+        int prev = L->prev3;
+        for (int i = 0; i < n; i++) {
+            const fse_ctx_table* t = L->active3[prev] ? &L->t3[prev] : &L->gtab3;
+            unsigned s = t->dtab[x & (t->M - 1)];
+            unsigned f = t->freq[s];
+            if (f == 0) return -1;
+            out[i] = (uint8_t)s;
+            x = f * (x >> t->L_bits) + (x & (t->M - 1)) - t->cumul[s];
+            while (x < 0x10000u) {
+                if (sp >= L->s3e) return -1;
+                x = (x << 8) | *sp++;
+            }
+            prev = (int)s;
+        }
+        L->x3 = x; L->s3p = sp; L->prev3 = prev;
+        return 0;
+    }
+    }
+    return -1;
+}
+
 static size_t decode_normal(const char* src, size_t srcSize,
                             char* dst, size_t dstCap) {
     const uint8_t* p = (const uint8_t*)src;
@@ -987,165 +1098,96 @@ static size_t decode_normal(const char* src, size_t srcSize,
         return (size_t)isize;
     }
 
+    /* ---- literals: build the streaming decoder state (no buffer) ---- */
+    lit_dec_t L;
+    memset(&L, 0, sizeof(L));
     int lit_mode = r8(&p);
     int lit_count = rvlq(&p, end);
     /* literals can never exceed the declared output size; this also keeps
      * the per-literal allocations bounded on corrupt input */
     if (lit_count < 0 || lit_count > isize) return 0;
-    uint8_t* literals = NULL;
-    if (lit_mode == 0) {
+    L.kind = lit_mode;
+    if (lit_mode == LIT_RAW) {
         if ((size_t)(end - p) < (size_t)lit_count) return 0;
-        literals = (uint8_t*)malloc((size_t)lit_count + 16);
-        if (!literals) return 0;
-        memcpy(literals, p, (size_t)lit_count);
+        L.rp = p;
+        L.rend = p + lit_count;
         p += lit_count;
-    } else if (lit_mode == 1) {
+    } else if (lit_mode == LIT_FSE0) {
         int lit_csize = rvlq(&p, end);
-        if ((size_t)(end - p) < (size_t)lit_csize) return 0;
-        literals = (uint8_t*)malloc((size_t)lit_count + 16);
-        if (!literals) return 0;
-        unsigned* lit_dec = (unsigned*)malloc((size_t)lit_count * sizeof(unsigned));
-        if (!lit_dec) { free(literals); return 0; }
-        if (fse_decode(p, (size_t)lit_csize, (size_t)lit_count, 255, lit_dec)) {
-            free(lit_dec); free(literals); return 0;
-        }
-        for (int i = 0; i < lit_count; i++) literals[i] = (uint8_t)lit_dec[i];
-        free(lit_dec);
+        if (lit_csize < 0 || (size_t)(end - p) < (size_t)lit_csize) return 0;
+        size_t hdr = fse_dtable_prepare(&L.ft, p, (size_t)lit_csize, 255);
+        if (hdr == 0 || (size_t)lit_csize < hdr + 8) { lit_dec_free(&L); return 0; }
+        uint32_t slen = (uint32_t)p[hdr] | ((uint32_t)p[hdr+1] << 8) | ((uint32_t)p[hdr+2] << 16) | ((uint32_t)p[hdr+3] << 24);
+        if (slen < 4 || (size_t)lit_csize < hdr + 4 + slen) { lit_dec_free(&L); return 0; }
+        L.fsp = p + hdr + 4;
+        L.fsend = L.fsp + slen;
+        L.fx = ((uint32_t)L.fsp[0] << 24) | ((uint32_t)L.fsp[1] << 16) | ((uint32_t)L.fsp[2] << 8) | L.fsp[3];
+        L.fsp += 4;
         p += lit_csize;
-    } else if (lit_mode == 5) {
-        /* Huffman: 257-byte header + bitstream (fast table decode) */
+    } else if (lit_mode == LIT_HUF) {
         int lit_csize = rvlq(&p, end);
-        if ((size_t)(end - p) < (size_t)lit_csize) return 0;
-        literals = (uint8_t*)malloc((size_t)lit_count + 16);
-        if (!literals) return 0;
-        if (huf_decode(p, (size_t)lit_csize, (size_t)lit_count, literals) == 0) {
-            free(literals); return 0;
-        }
+        if (lit_csize < 0 || (size_t)(end - p) < (size_t)lit_csize) return 0;
+        if (huf_dec_init(&L.huf, p, (size_t)lit_csize) == 0) return 0;
         p += lit_csize;
-    } else if (lit_mode == 6) {
-        /* FSE order-1, 16 contexts (prev>>4): [L_bits:1][16 tables][stream] */
+    } else if (lit_mode == LIT_FSE1_6) {
+        /* [L_bits:1][16 tables][4B slen][x:4][stream] */
         int lit_csize = rvlq(&p, end);
-        if ((size_t)(end - p) < (size_t)lit_csize) return 0;
+        if (lit_csize < 0 || (size_t)(end - p) < (size_t)lit_csize) return 0;
         const uint8_t* lp = p;
         const uint8_t* lpe = lp + lit_csize;
-        if (lpe - lp < 1 + 16 * 513) return 0;
-        (void)*lp++;  /* L_bits */
-        fse_ctx_table tables6[16];
-        memset(tables6, 0, sizeof(tables6));
+        if ((size_t)(lpe - lp) < 1 + 16 * 513) return 0;
+        lp++;  /* L_bits (fixed per stream, same for every table) */
         for (int c = 0; c < 16; c++) {
-            size_t rr = fse_ctx_table_read(&tables6[c], lp, (size_t)(lpe - lp));
-            if (rr == 0) { for (int k = 0; k < 16; k++) fse_ctx_table_free(&tables6[k]); return 0; }
+            size_t rr = fse_ctx_table_read(&L.t6[c], lp, (size_t)(lpe - lp));
+            if (rr == 0) { lit_dec_free(&L); return 0; }
             lp += rr;
         }
-        literals = (uint8_t*)malloc((size_t)lit_count + 16);
-        if (!literals) { for (int k = 0; k < 16; k++) fse_ctx_table_free(&tables6[k]); return 0; }
-        {
-            if ((size_t)(lpe - lp) < 8) { for (int k = 0; k < 16; k++) fse_ctx_table_free(&tables6[k]); free(literals); return 0; }
-            uint32_t stream_len = (uint32_t)lp[0] | ((uint32_t)lp[1] << 8) | ((uint32_t)lp[2] << 16) | ((uint32_t)lp[3] << 24);
-            lp += 4;
-            if ((size_t)(lpe - lp) < stream_len || stream_len < 4) { for (int k = 0; k < 16; k++) fse_ctx_table_free(&tables6[k]); free(literals); return 0; }
-            const uint8_t* sp = lp;
-            const uint8_t* sp_end = sp + stream_len;
-            uint32_t x = ((uint32_t)sp[0] << 24) | ((uint32_t)sp[1] << 16) | ((uint32_t)sp[2] << 8) | (uint32_t)sp[3];
-            sp += 4;
-            int prev = 0;
-            for (int i = 0; i < lit_count; i++) {
-                const fse_ctx_table* t = &tables6[prev >> 4];
-                unsigned slot_idx = x & (t->M - 1);
-                unsigned s = t->dtab[slot_idx];
-                unsigned f = t->freq[s];
-                if (f == 0) { for (int k = 0; k < 16; k++) fse_ctx_table_free(&tables6[k]); free(literals); return 0; }
-                literals[i] = (uint8_t)s;
-                x = f * (x >> t->L_bits) + (x & (t->M - 1)) - t->cumul[s];
-                while (x < 0x10000u) {
-                    if (sp >= sp_end) { for (int k = 0; k < 16; k++) fse_ctx_table_free(&tables6[k]); free(literals); return 0; }
-                    x = (x << 8) | *sp++;
-                }
-                prev = (int)s;
-            }
-        }
-        for (int k = 0; k < 16; k++) fse_ctx_table_free(&tables6[k]);
+        if ((size_t)(lpe - lp) < 8) { lit_dec_free(&L); return 0; }
+        uint32_t slen = (uint32_t)lp[0] | ((uint32_t)lp[1] << 8) | ((uint32_t)lp[2] << 16) | ((uint32_t)lp[3] << 24);
+        lp += 4;
+        if (slen < 4 || (size_t)(lpe - lp) < slen) { lit_dec_free(&L); return 0; }
+        L.s6p = lp;
+        L.s6e = L.s6p + slen;
+        L.x6 = ((uint32_t)L.s6p[0] << 24) | ((uint32_t)L.s6p[1] << 16) | ((uint32_t)L.s6p[2] << 8) | L.s6p[3];
+        L.s6p += 4;
+        L.prev6 = 0;
         p += lit_csize;
-    } else if (lit_mode == 3) {
-        /* FSE order-1: 32B bitmap + 1B L_bits + order-0 table + per-active tables + stream */
+    } else if (lit_mode == LIT_FSE1_3) {
+        /* [32B bitmap][L_bits:1][order-0 table][per-active tables][4B slen][x:4][stream] */
         int lit_csize = rvlq(&p, end);
-        if ((size_t)(end - p) < (size_t)lit_csize) return 0;
+        if (lit_csize < 0 || (size_t)(end - p) < (size_t)lit_csize) return 0;
         const uint8_t* lp = p;
         const uint8_t* lpe = lp + lit_csize;
-        if (lpe - lp < 33) return 0;
-        uint8_t active[256];
-        memset(active, 0, sizeof(active));
-        for (int c = 0; c < 256; c++) if (lp[c >> 3] & (1 << (c & 7))) active[c] = 1;
+        if ((size_t)(lpe - lp) < 33) return 0;
+        memset(L.active3, 0, sizeof(L.active3));
+        for (int c = 0; c < 256; c++) if (lp[c >> 3] & (1 << (c & 7))) L.active3[c] = 1;
         lp += 32;
-        (void)*lp++;  /* L_bits: fixed per-block, same value for every table */
-        fse_ctx_table tables[256];
-        memset(tables, 0, sizeof(tables));
-        /* order-0 fallback table (ctx 256) */
-        fse_ctx_table gtab;
-        memset(&gtab, 0, sizeof(gtab));
-        size_t rr = fse_ctx_table_read(&gtab, lp, (size_t)(lpe - lp));
-        if (rr == 0) { free(literals); return 0; }
+        lp++;  /* L_bits */
+        size_t rr = fse_ctx_table_read(&L.gtab3, lp, (size_t)(lpe - lp));
+        if (rr == 0) { lit_dec_free(&L); return 0; }
         lp += rr;
         for (int c = 0; c < 256; c++) {
-            if (!active[c]) continue;
-            rr = fse_ctx_table_read(&tables[c], lp, (size_t)(lpe - lp));
-            if (rr == 0) { fse_ctx_table_free(&gtab); for (int k = 0; k < 256; k++) fse_ctx_table_free(&tables[k]); free(literals); return 0; }
+            if (!L.active3[c]) continue;
+            rr = fse_ctx_table_read(&L.t3[c], lp, (size_t)(lpe - lp));
+            if (rr == 0) { lit_dec_free(&L); return 0; }
             lp += rr;
         }
-        literals = (uint8_t*)malloc((size_t)lit_count + 16);
-        if (!literals) { fse_ctx_table_free(&gtab); for (int k = 0; k < 256; k++) fse_ctx_table_free(&tables[k]); return 0; }
-        /* ctx array: prev literal byte, or 256 for inactive (order-0) */
-        unsigned* ctxs = (unsigned*)malloc((size_t)lit_count * sizeof(unsigned));
-        unsigned* lit_dec = (unsigned*)malloc((size_t)lit_count * sizeof(unsigned));
-        if (!ctxs || !lit_dec) { free(ctxs); free(lit_dec); fse_ctx_table_free(&gtab); for (int k = 0; k < 256; k++) fse_ctx_table_free(&tables[k]); free(literals); return 0; }
-        /* rebuild ctx array on the fly while decoding (prev = decoded byte) */
-        int prev = 0;
-        /* we need ctx[i] before decoding i; build it incrementally in the loop */
-        /* decode with a temp ctx that we fill as we go */
-        {
-            /* first pass: we decode sequentially, ctx[i] = prev (already decoded) */
-            const uint8_t* sp = lp;
-            if ((size_t)(lpe - lp) < 8) { free(ctxs); free(lit_dec); fse_ctx_table_free(&gtab); for (int k = 0; k < 256; k++) fse_ctx_table_free(&tables[k]); free(literals); return 0; }
-            uint32_t stream_len = (uint32_t)sp[0] | ((uint32_t)sp[1] << 8) | ((uint32_t)sp[2] << 16) | ((uint32_t)sp[3] << 24);
-            sp += 4;
-            if (stream_len < 4 || (size_t)(lpe - sp) < stream_len) { free(ctxs); free(lit_dec); fse_ctx_table_free(&gtab); for (int k = 0; k < 256; k++) fse_ctx_table_free(&tables[k]); free(literals); return 0; }
-            const uint8_t* sp_end = sp + stream_len;
-            uint32_t x = ((uint32_t)sp[0] << 24) | ((uint32_t)sp[1] << 16) | ((uint32_t)sp[2] << 8) | (uint32_t)sp[3];
-            sp += 4;
-            for (int i = 0; i < lit_count; i++) {
-                const fse_ctx_table* t = active[prev] ? &tables[prev] : &gtab;
-                unsigned slot_idx = x & (t->M - 1);
-                unsigned s = t->dtab[slot_idx];
-                unsigned f = t->freq[s];
-                if (f == 0) { free(ctxs); free(lit_dec); fse_ctx_table_free(&gtab); for (int k = 0; k < 256; k++) fse_ctx_table_free(&tables[k]); free(literals); return 0; }
-                lit_dec[i] = s;
-                x = f * (x >> t->L_bits) + (x & (t->M - 1)) - t->cumul[s];
-                while (x < 0x10000u) {
-                    if (sp >= sp_end) { free(ctxs); free(lit_dec); fse_ctx_table_free(&gtab); for (int k = 0; k < 256; k++) fse_ctx_table_free(&tables[k]); free(literals); return 0; }
-                    x = (x << 8) | *sp++;
-                }
-                literals[i] = (uint8_t)s;
-                prev = (int)s;
-            }
-        }
-        free(ctxs);
-        free(lit_dec);
-        fse_ctx_table_free(&gtab);
-        for (int k = 0; k < 256; k++) fse_ctx_table_free(&tables[k]);
+        if ((size_t)(lpe - lp) < 8) { lit_dec_free(&L); return 0; }
+        uint32_t slen = (uint32_t)lp[0] | ((uint32_t)lp[1] << 8) | ((uint32_t)lp[2] << 16) | ((uint32_t)lp[3] << 24);
+        lp += 4;
+        if (slen < 4 || (size_t)(lpe - lp) < slen) { lit_dec_free(&L); return 0; }
+        L.s3p = lp;
+        L.s3e = L.s3p + slen;
+        L.x3 = ((uint32_t)L.s3p[0] << 24) | ((uint32_t)L.s3p[1] << 16) | ((uint32_t)L.s3p[2] << 8) | L.s3p[3];
+        L.s3p += 4;
+        L.prev3 = 0;
         p += lit_csize;
     } else {
         return 0;
     }
 
     int sc = (int)r32le(&p);
-    if (sc < 0 || sc > (1 << 24)) { free(literals); return 0; }
-
-    /* symbol codes fit a byte (ll<=35, ml<=36, of<=24): uint8 keeps the
-     * arrays at 1B/seq instead of 4 and trims main-loop read traffic */
-    uint8_t* ll_syms = (uint8_t*)malloc((size_t)sc);
-    uint8_t* ml_syms = (uint8_t*)malloc((size_t)sc);
-    uint8_t* of_syms = (uint8_t*)malloc((size_t)sc);
-    if (!ll_syms || !ml_syms || !of_syms) { free(ll_syms); free(ml_syms); free(of_syms); free(literals); return 0; }
+    if (sc < 0 || sc > (1 << 24)) { lit_dec_free(&L); return 0; }
 
     /* per-bucket top8 streams — MUST be NULL-initialized before the first
      * `goto fail`: the fail cleanup frees resid_top8[b], and an early jump
@@ -1155,16 +1197,19 @@ static size_t decode_normal(const char* src, size_t srcSize,
     int b;
     for (b = 0; b < OF_CODES; b++) { resid_top8[b] = NULL; resid_n[b] = 0; }
 
-    /* FSE decode 3 streams, interleaved: three independent rANS chains
-     * keep the OOO window busy where sequential decode would stall on
-     * each state's renorm dependency. True encoder alphabets:
-     * ll codes 0..35, ml codes 0..36, of codes 0..24 (reps 0..2 or bucket). */
+    /* 3 symbol streams: tables prepared once, then all symbols decoded in
+     * one interleaved pass into byte arrays. Measured faster than decoding
+     * them inline in the application loop (which serializes the rANS
+     * dependency chains against the copies on sequence-dense data).
+     * True encoder alphabets: ll<=35, ml<=36, of<=24. */
+    static const int smax[3] = { 35, 36, 24 };
+    fse_dtable dt[3];
+    uint32_t xs[3];
+    const uint8_t *sp3[3], *se3[3];
+    uint8_t* symarr[3];
+    size_t dhdr[3], off = 0;
+    memset(dt, 0, sizeof(dt));
     {
-        static const int smax[3] = { 35, 36, 24 };
-        fse_dtable dt[3];
-        uint32_t xs[3];
-        const uint8_t *sp3[3], *se3[3];
-        size_t dhdr[3], off = 0;
         int ok = 1, st;
         for (st = 0; st < 3 && ok; st++) {
             if ((size_t)(end - p) < off + 2) { ok = 0; break; }
@@ -1184,16 +1229,23 @@ static size_t decode_normal(const char* src, size_t srcSize,
             sp3[st] += 4;
             off += slen;
         }
+        symarr[0] = ok ? (uint8_t*)malloc((size_t)sc) : NULL;
+        symarr[1] = ok ? (uint8_t*)malloc((size_t)sc) : NULL;
+        symarr[2] = ok ? (uint8_t*)malloc((size_t)sc) : NULL;
+        if (!symarr[0] || !symarr[1] || !symarr[2]) ok = 0;
         if (ok) {
-            p += off;
             for (int i = 0; i < sc && ok; i++) {
-                if (seq_dec_sym(&dt[0], &xs[0], &sp3[0], se3[0], &ll_syms[i])) ok = 0;
-                else if (seq_dec_sym(&dt[1], &xs[1], &sp3[1], se3[1], &ml_syms[i])) ok = 0;
-                else if (seq_dec_sym(&dt[2], &xs[2], &sp3[2], se3[2], &of_syms[i])) ok = 0;
+                if (seq_dec_sym(&dt[0], &xs[0], &sp3[0], se3[0], &symarr[0][i])) ok = 0;
+                else if (seq_dec_sym(&dt[1], &xs[1], &sp3[1], se3[1], &symarr[1][i])) ok = 0;
+                else if (seq_dec_sym(&dt[2], &xs[2], &sp3[2], se3[2], &symarr[2][i])) ok = 0;
             }
         }
-        for (st = 0; st < 3; st++) fse_dtable_free(&dt[st]);
-        if (!ok) goto fail;
+        if (!ok) {
+            for (st = 0; st < 3; st++) fse_dtable_free(&dt[st]);
+            free(symarr[0]); free(symarr[1]); free(symarr[2]);
+            lit_dec_free(&L); return 0;
+        }
+        p += off;
     }
 
     /* rep flags */
@@ -1202,16 +1254,25 @@ static size_t decode_normal(const char* src, size_t srcSize,
     const uint8_t* rep_flags = p;
     p += rep_bytes;
 
+    /* per-bucket top8 streams, uniform layout:
+     * [bid][size:4][cnt:4][data] — size bit31 = raw (data = rn bytes,
+     * cnt == rn), otherwise size = FSE stream size (data = stream).
+     * The explicit count frees the decoder from the O(OF_CODES*sc) scan.
+     * [bid=0][0:4] terminates. */
     for (;;) {
         if ((size_t)(end - p) < 5) goto fail;
         int bid = p[0];
-        uint32_t rsz = (uint32_t)p[1] | ((uint32_t)p[2]<<8) | ((uint32_t)p[3]<<16) | ((uint32_t)p[4]<<24);
+        uint32_t w = (uint32_t)p[1] | ((uint32_t)p[2]<<8) | ((uint32_t)p[3]<<16) | ((uint32_t)p[4]<<24);
         p += 5;
-        if (rsz == 0) break;
-        if (rsz & 0x80000000u) {
+        if (w == 0) break;
+        if (w & 0x80000000u) {
             /* raw bucket (bit31 set): symbols stored verbatim */
-            uint32_t rn = rsz & 0x7FFFFFFFu;
-            if (bid < 0 || bid >= OF_CODES || (size_t)(end - p) < rn) goto fail;
+            uint32_t rn = w & 0x7FFFFFFFu;
+            if (bid < 0 || bid >= OF_CODES || (size_t)(end - p) < 4 + rn) goto fail;
+            uint32_t cnt = (uint32_t)p[0] | ((uint32_t)p[1]<<8) | ((uint32_t)p[2]<<16) | ((uint32_t)p[3]<<24);
+            if (cnt != rn) goto fail;
+            p += 4;
+            if (resid_top8[bid]) { goto fail; }   /* duplicate bucket: corrupt */
             unsigned* top8 = (unsigned*)malloc((size_t)rn * sizeof(unsigned));
             if (!top8) goto fail;
             for (uint32_t i = 0; i < rn; i++) top8[i] = p[i];
@@ -1220,14 +1281,14 @@ static size_t decode_normal(const char* src, size_t srcSize,
             p += rn;
             continue;
         }
-        if (bid < 0 || bid >= OF_CODES || (size_t)(end - p) < rsz) goto fail;
-        unsigned cnt = 0;
-        for (int j = 0; j < sc; j++) {
-            int pcj = (rep_flags[(size_t)j * 2 / 8] >> ((j * 2) % 8)) & 3;
-            if (pcj == 0 && ml_syms[j] > 0 && (int)of_syms[j] == bid) cnt++;
-        }
-        if (cnt == 0) { p += rsz; continue; }
-        unsigned* top8 = (unsigned*)malloc(cnt * sizeof(unsigned));
+        /* FSE bucket: w = stream size, cnt = exact symbol count */
+        uint32_t rsz = w;
+        if (bid < 0 || bid >= OF_CODES || rsz == 0 || (size_t)(end - p) < 4) goto fail;
+        uint32_t cnt = (uint32_t)p[0] | ((uint32_t)p[1]<<8) | ((uint32_t)p[2]<<16) | ((uint32_t)p[3]<<24);
+        p += 4;
+        if (cnt == 0 || cnt > (unsigned)sc || rsz == 0 || (size_t)(end - p) < rsz) goto fail;
+        if (resid_top8[bid]) { goto fail; }   /* duplicate bucket: corrupt */
+        unsigned* top8 = (unsigned*)malloc((size_t)cnt * sizeof(unsigned));
         if (!top8) goto fail;
         if (fse_decode(p, rsz, cnt, 255, top8)) { free(top8); goto fail; }
         resid_top8[bid] = top8;
@@ -1250,28 +1311,38 @@ static size_t decode_normal(const char* src, size_t srcSize,
     uint32_t bit_acc = 0; int bit_nbits = 0;
     int br_err = 0;
 
-    int op = 0, lp = 0;
+    int op = 0;
     int rp[3] = {0, 0, 0};
     size_t resid_pos[OF_CODES];
     for (b = 0; b < OF_CODES; b++) resid_pos[b] = 0;
     uint8_t* out = (uint8_t*)dst;
+    /* rolling 2-bit rep flag reader */
+    const uint8_t* rfl = rep_flags;
+    const uint8_t* rfl_end = rep_flags + rep_bytes;
+    uint32_t rfa = 0; int rfn = 0;
     for (int i = 0; i < sc; i++) {
-        int ll = LL_base[ll_syms[i]];
-        int le = LL_extra[ll_syms[i]];
+        int ll = LL_base[symarr[0][i]];
+        int le = LL_extra[symarr[0][i]];
         if (le > 0) ll += br_bits(&bit_acc, &bit_nbits, &extra_p, extra_end, le, &br_err);
         if (br_err) goto fail;
         int ml = 0;
-        if (ml_syms[i] > 0) {
-            int real = (int)ml_syms[i] - 1;
+        if (symarr[1][i] > 0) {
+            int real = (int)symarr[1][i] - 1;
             ml = ML_base[real];
             int me = ML_extra[real];
             if (me > 0) ml += br_bits(&bit_acc, &bit_nbits, &extra_p, extra_end, me, &br_err);
             if (br_err) goto fail;
         }
-        int pc = (rep_flags[(size_t)i * 2 / 8] >> ((i * 2) % 8)) & 3;
+        /* rep flag: refill 8 bits when fewer than 2 remain */
+        if (rfn < 2) {
+            if (rfl < rfl_end) { rfa |= (uint32_t)*rfl++ << rfn; rfn += 8; }
+            else if (rfn == 0) { goto fail; }
+        }
+        int pc = (int)(rfa & 3);
+        rfa >>= 2; rfn -= 2;
         int md = 0, is_rep = 0;
-        if (ml_syms[i] > 0 && pc == 0) {
-            int bid = (int)of_syms[i];
+        if (symarr[1][i] > 0 && pc == 0) {
+            int bid = (int)symarr[2][i];
             if (bid < 0 || bid >= OF_CODES) goto fail;
             if (resid_pos[bid] >= resid_n[bid]) goto fail;
             unsigned top8 = resid_top8[bid][resid_pos[bid]++];
@@ -1279,7 +1350,7 @@ static size_t decode_normal(const char* src, size_t srcSize,
             int low = nlow > 0 ? br_bits(&low_acc, &low_nbits, &low_p, low_end, nlow, &br_err) : 0;
             if (br_err) goto fail;
             md = OF_base[bid] + ((int)top8 << nlow) + low;
-        } else if (ml_syms[i] > 0) {
+        } else if (symarr[1][i] > 0) {
             int ri = pc - 1;
             md = rp[ri];
             is_rep = 1;
@@ -1289,9 +1360,9 @@ static size_t decode_normal(const char* src, size_t srcSize,
                 rp[0] = t;
             }
         }
-        if (lp + ll > lit_count || op + ll > isize) goto fail;
-        memcpy(out + op, literals + lp, (size_t)ll);
-        op += ll; lp += ll;
+        if (op + ll > isize) goto fail;
+        if (lit_decode_chunk(&L, out + op, ll)) goto fail;
+        op += ll;
         if (ml == 0) break;
         if (md < 1 || md > op || op + ml > isize) goto fail;
         if (md == 1) memset(out + op, out[op - 1], (size_t)ml);
@@ -1310,12 +1381,16 @@ static size_t decode_normal(const char* src, size_t srcSize,
     }
 
     for (b = 0; b < OF_CODES; b++) free(resid_top8[b]);
-    free(ll_syms); free(ml_syms); free(of_syms); free(literals);
+    for (b = 0; b < 3; b++) fse_dtable_free(&dt[b]);
+    free(symarr[0]); free(symarr[1]); free(symarr[2]);
+    lit_dec_free(&L);
     return (size_t)op;
 
 fail:
     for (b = 0; b < OF_CODES; b++) free(resid_top8[b]);
-    free(ll_syms); free(ml_syms); free(of_syms); free(literals);
+    for (b = 0; b < 3; b++) fse_dtable_free(&dt[b]);
+    free(symarr[0]); free(symarr[1]); free(symarr[2]);
+    lit_dec_free(&L);
     return 0;
 }
 

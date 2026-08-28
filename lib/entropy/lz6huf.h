@@ -45,6 +45,24 @@ size_t huf_encode_stream(const uint8_t* hdr, const unsigned* syms, size_t n,
 size_t huf_decode(const uint8_t* in, size_t in_len, size_t n,
                   uint8_t* out);
 
+/* Streaming decode: init once, decode chunks on demand (literals are
+ * decoded inline into the sequence loop). */
+typedef struct {
+    int k;                    /* lookup table bits */
+    uint16_t* table;          /* 2^k entries: (sym << 4) | len, 0xFFFF = long code */
+    int cnt[17];              /* codes per length (canonical walk) */
+    uint8_t sorted[256];
+    int off[17];
+    int first_code[17];
+    uint64_t acc;             /* bitstream state */
+    int nbits;
+    const uint8_t *p, *pend;
+} huf_dstate;
+
+size_t huf_dec_init(huf_dstate* s, const uint8_t* in, size_t in_len);
+int huf_dec_n(huf_dstate* s, uint8_t* out, size_t n);   /* 0 ok, -1 error */
+void huf_dec_free(huf_dstate* s);
+
 #ifdef __cplusplus
 }
 #endif
