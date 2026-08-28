@@ -1,0 +1,21 @@
+# lz4 vs lz5 vs lz6 - AIT A-H (13,136,308 bytes), 2026-08-28T15:46:01Z, rev=8896e64
+# frame codecs: each tool's own -b (mem-to-mem, XXH-verified, -i3), single-thread (lz4 -T1)
+# lz4 v1.10.0 | lz5 v1.5.0 (baseline commit a8a4ac0) | lz6 8896e64
+# seq codec: bakeoff/bench_seq.c mem-to-mem, output-size-corrected
+# NOTE: -15 aggregates are dominated by file D (PRNG): all-3-4-byte-match streams decode ~3 MB/s in both lz5 and lz6 (verified via CLI).
+== lz4 default (fast, -T1)
+orig=13136308 csize=9938605 (75.66%) enc=774.2 MB/s dec=4903.1 MB/s
+== lz4 -12 (HC, -T1)
+orig=13136308 csize=8831820 (67.23%) enc=8.7 MB/s dec=3761.3 MB/s
+== lz5 v1.5 default
+files=8 orig=13136308 csize=9469498 (72.09%) enc=327.3 MB/s dec=1101.1 MB/s
+== lz5 v1.5 -15
+files=8 orig=13136308 csize=8603507 (65.49%) enc=2.2 MB/s dec=14.2 MB/s
+== lz6 frame default
+files=8 orig=13136308 csize=9469498 (72.09%) enc=295.3 MB/s dec=1345.0 MB/s
+== lz6 frame -15
+files=8 orig=13136308 csize=8588303 (65.38%) enc=5.8 MB/s dec=98.7 MB/s
+== lz6 --seq L2 (bench_seq)
+TOTAL     13136308 ->    5596570  (42.60%)  dec(weighted)    261.7 MB/s  score      614.2
+== lz6 --seq L15 (bench_seq)
+TOTAL     13136308 ->    5361732  (40.82%)  dec(weighted)    221.6 MB/s  score      542.8
