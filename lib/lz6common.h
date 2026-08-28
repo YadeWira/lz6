@@ -270,6 +270,12 @@ struct LZ6HC_Data_s
     U32   nextToUpdate;     /* index from which to continue dictionary update */
     U32   compressionLevel;
     U32   last_off;
+    /* MTF rep stack positions 1..2 (rep_off mirrors last_off == position 0).
+     * Maintained only on the emitSeq (sequence-extraction) path, mirroring
+     * the entropy encoder's repcache, so the parser can prefer offsets that
+     * code as cheap 2-bit rep flags. */
+    U32   rep_off2;
+    U32   rep_off3;
     LZ6HC_parameters params;
     /* Sequence-emit hook (Paso 1 of the lz6→ozip pipeline). When emitSeq is
        non-NULL, the encoder skips writing the literal+match codeword and

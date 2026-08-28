@@ -165,6 +165,8 @@ static void LZ6HC_init (LZ6HC_Data_Structure* ctx, const BYTE* start)
     ctx->dictLimit = (U32)((size_t)1 << ctx->params.windowLog);
     ctx->lowLimit = (U32)((size_t)1 << ctx->params.windowLog);
     ctx->last_off = 1;
+    ctx->rep_off2 = 0;
+    ctx->rep_off3 = 0;
     ctx->emitSeq    = NULL;   /* default: write codeword; LZ6HC_compress_sequences wires this */
     ctx->emitOpaque = NULL;
 }
@@ -1034,7 +1036,25 @@ FORCE_INLINE int LZ6HC_encodeSequence (
         size_t emit_offset = isRep ? (size_t)ctx->last_off : offset;
         int rc = ctx->emitSeq(ctx->emitOpaque, lit_len, (size_t)matchLength, emit_offset);
         if (rc) return 1;
-        if (!isRep) ctx->last_off = (U32)offset;
+        /* maintain the MTF rep stack exactly like the entropy encoder's
+         * repcache, so the parser's rep preference sees the same state */
+        if (!isRep) {
+            U32 off = (U32)offset;
+            if (off == ctx->rep_off2) {
+                U32 t = ctx->rep_off2;
+                ctx->rep_off2 = ctx->last_off;
+                ctx->last_off = t;
+            } else if (off == ctx->rep_off3) {
+                U32 t = ctx->rep_off3;
+                ctx->rep_off3 = ctx->rep_off2;
+                ctx->rep_off2 = ctx->last_off;
+                ctx->last_off = t;
+            } else {
+                ctx->rep_off3 = ctx->rep_off2;
+                ctx->rep_off2 = ctx->last_off;
+                ctx->last_off = off;
+            }
+        }
         *ip += matchLength;
         *anchor = *ip;
         return 0;
@@ -1847,6 +1867,23 @@ static int LZ6HC_compress_fast (
 			ip += back;
 			ref += back;
 		}
+
+        /* Rep-stack preference (seq codec): an offset sitting in the MTF
+         * repcache codes as a 2-bit rep flag instead of bucket+residual+low
+         * bits (~1.5B saved per sequence), so a rep candidate within 2 bytes
+         * of the chain match wins. Gated on emitSeq: the frame codec's parse
+         * (and its baselines) stay byte-identical. */
+        if (ctx->emitSeq && (ctx->rep_off2 || ctx->rep_off3))
+        {
+            const U32 repcands[2] = { ctx->rep_off2, ctx->rep_off3 };
+            for (int ri = 0; ri < 2; ri++) {
+                U32 r = repcands[ri];
+                if (r == 0 || r == ctx->last_off || r > (U32)(ip - lowPrefixPtr)) continue;
+                const BYTE* rref = ip - r;
+                int rml = (int)MEM_count(ip, rref, matchlimit);
+                if (rml >= MINMATCH && rml + 2 >= ml) { ref = rref; ml = rml; break; }
+            }
+        }
 
         /* Lazy match (seq codec benefit): if the next position has a
          * match at least 2 bytes longer, emit this position as a
