@@ -81,6 +81,11 @@ typedef struct LZ6HC_Data_s LZ6HC_Data_Structure;
 
 int LZ6_alloc_mem_HC(LZ6HC_Data_Structure* statePtr, int compressionLevel);
 int LZ6_alloc_mem_HC_sized(LZ6HC_Data_Structure* statePtr, int compressionLevel, size_t maxSrcSize);
+
+/* Seq-codec allocation: like LZ6_alloc_mem_HC_sized but the window may
+ * grow to 32MB (MAXD_LOG+1), unlocking offset bucket 24 for inputs that
+ * large. Chain table costs up to 128-256MB at that window. */
+int LZ6_alloc_mem_HC_seq(LZ6HC_Data_Structure* statePtr, int compressionLevel, size_t maxSrcSize);
 void LZ6_free_mem_HC(LZ6HC_Data_Structure* statePtr);
 void LZ6HC_reset_mem(LZ6HC_Data_Structure* statePtr);
 

@@ -90,13 +90,22 @@ static void LZ6HC_capParamsToSize(LZ6HC_parameters* p, size_t maxSrcSize)
     }
 }
 
-int LZ6_alloc_mem_HC_sized(LZ6HC_Data_Structure* ctx, int compressionLevel, size_t maxSrcSize)
+static int LZ6_alloc_mem_HC_wl(LZ6HC_Data_Structure* ctx, int compressionLevel,
+                               size_t maxSrcSize, int maxWindowLog)
 {
     ctx->compressionLevel = compressionLevel;
     if (compressionLevel > g_maxCompressionLevel) ctx->compressionLevel = g_maxCompressionLevel;
     if (compressionLevel < 1) ctx->compressionLevel = LZ6HC_compressionLevel_default;
 
     ctx->params = LZ6HC_defaultParameters[ctx->compressionLevel];
+    /* seq codec: the format carries offsets up to 2^25-1 (bucket 24), so a
+     * bigger window is allowed there without touching the frame codec */
+    if (maxWindowLog > (int)ctx->params.windowLog)
+    {
+        U32 delta = ctx->params.contentLog - ctx->params.windowLog;
+        ctx->params.windowLog  = (U32)maxWindowLog;
+        ctx->params.contentLog = (U32)maxWindowLog + delta;
+    }
     LZ6HC_capParamsToSize(&ctx->params, maxSrcSize);
 
     ctx->hashTable = (U32*) malloc(sizeof(U32)*(((size_t)1 << ctx->params.hashLog3)+((size_t)1 << ctx->params.hashLog)));
@@ -114,6 +123,19 @@ int LZ6_alloc_mem_HC_sized(LZ6HC_Data_Structure* ctx, int compressionLevel, size
     }
 
     return 1;
+}
+
+int LZ6_alloc_mem_HC_sized(LZ6HC_Data_Structure* ctx, int compressionLevel, size_t maxSrcSize)
+{
+    return LZ6_alloc_mem_HC_wl(ctx, compressionLevel, maxSrcSize, MAXD_LOG);
+}
+
+/* Seq-codec entry: permits a 32MB window (2^25-1 offsets) when the input
+ * is large enough to need it; capParamsToSize still shrinks it back down
+ * to ceil-log2(srcSize) for smaller inputs. */
+int LZ6_alloc_mem_HC_seq(LZ6HC_Data_Structure* ctx, int compressionLevel, size_t maxSrcSize)
+{
+    return LZ6_alloc_mem_HC_wl(ctx, compressionLevel, maxSrcSize, MAXD_LOG + 1);
 }
 
 /* Back-compat entry: allocate with the full MAXD_LOG window (no size cap). */

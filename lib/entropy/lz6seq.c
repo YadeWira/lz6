@@ -231,7 +231,7 @@ static size_t compress_normal(const char* src, size_t srcSize,
     void* hc = malloc(state_sz);
     if (!hc) return 0;
     memset(hc, 0, state_sz);
-    if (!LZ6_alloc_mem_HC_sized((LZ6HC_Data_Structure*)hc, level, srcSize)) {
+    if (!LZ6_alloc_mem_HC_seq((LZ6HC_Data_Structure*)hc, level, srcSize)) {
         free(hc); return 0;   /* alloc returns 1 on success */
     }
     /* The alloc leaves the hash/chain tables uninitialized (LZ6HC_init only
