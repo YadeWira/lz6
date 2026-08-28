@@ -1730,7 +1730,7 @@ static int LZ6HC_compress_price_fast (
         if (!ml) { ip++; continue; }
 
         if ((U32)(ip - ref) == ctx->last_off) { ml2=0; goto _Encode; }
-        
+
         {
         int back = 0;
         while ((ip+back>anchor) && (ref+back > lowPrefixPtr) && (ip[back-1] == ref[back-1])) back--;
@@ -1738,7 +1738,22 @@ static int LZ6HC_compress_price_fast (
         ip += back;
         ref += back;
         }
-        
+
+        /* Rep-stack preference (seq codec): same rationale as the fast
+         * strategy — a rep offset within 2 bytes of the chain match saves
+         * the whole offset coding. Gated on emitSeq. */
+        if (ctx->emitSeq && (ctx->rep_off2 || ctx->rep_off3))
+        {
+            const U32 repcands[2] = { ctx->rep_off2, ctx->rep_off3 };
+            for (int ri = 0; ri < 2; ri++) {
+                U32 r = repcands[ri];
+                if (r == 0 || r == ctx->last_off || r > (U32)(ip - lowPrefixPtr)) continue;
+                const BYTE* rref = ip - r;
+                int rml = (int)MEM_count(ip, rref, matchlimit);
+                if (rml >= MINMATCH && rml + 2 >= ml) { ref = rref; ml = rml; break; }
+            }
+        }
+
 _Search:
         if (ip+ml >= mflimit) goto _Encode;
 
