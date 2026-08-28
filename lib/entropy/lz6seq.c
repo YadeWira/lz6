@@ -131,9 +131,9 @@ static void w8(uint8_t** p, int v) { *(*p)++ = (uint8_t)v; }
 /* one rANS symbol from a prepared table; returns 1 when the stream is
  * exhausted mid-renorm (corrupt input) */
 static int seq_dec_sym(const fse_dtable* t, uint32_t* x, const uint8_t** sp,
-                       const uint8_t* send, unsigned* out) {
+                       const uint8_t* send, uint8_t* out) {
     unsigned s = t->dtab[*x & (t->M - 1)];
-    *out = s;
+    *out = (uint8_t)s;
     uint32_t v = t->freq_tab[s] * (*x >> t->L_bits) + (*x & (t->M - 1)) - t->cumul[s];
     while (v < 0x10000u) {
         if (*sp >= send) return 1;
@@ -1140,9 +1140,11 @@ static size_t decode_normal(const char* src, size_t srcSize,
     int sc = (int)r32le(&p);
     if (sc < 0 || sc > (1 << 24)) { free(literals); return 0; }
 
-    unsigned* ll_syms = (unsigned*)malloc((size_t)sc * sizeof(unsigned));
-    unsigned* ml_syms = (unsigned*)malloc((size_t)sc * sizeof(unsigned));
-    unsigned* of_syms = (unsigned*)malloc((size_t)sc * sizeof(unsigned));
+    /* symbol codes fit a byte (ll<=35, ml<=36, of<=24): uint8 keeps the
+     * arrays at 1B/seq instead of 4 and trims main-loop read traffic */
+    uint8_t* ll_syms = (uint8_t*)malloc((size_t)sc);
+    uint8_t* ml_syms = (uint8_t*)malloc((size_t)sc);
+    uint8_t* of_syms = (uint8_t*)malloc((size_t)sc);
     if (!ll_syms || !ml_syms || !of_syms) { free(ll_syms); free(ml_syms); free(of_syms); free(literals); return 0; }
 
     /* per-bucket top8 streams — MUST be NULL-initialized before the first
