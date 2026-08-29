@@ -17,6 +17,7 @@
 #include <string.h>
 #include <time.h>
 #include "lib/entropy/lz6seq.h"
+#include "lib/lz6frame.h"
 
 #define TARGET_WINDOW 2.0   /* seconds of measurement per direction */
 #define KB *(1u << 10)
@@ -122,23 +123,19 @@ static unsigned int rnd(void) {
     return (unsigned int)(rng_state >> 32);
 }
 
-static int fuzz_mode(unsigned long nstreams, const char* seed_path) {
-    unsigned char *seed = NULL, *stream, *dst;
-    size_t seed_sz = 0;
-    unsigned long i, decoded = 0;
-    size_t cbuf_cap = 4 MB;
-    unsigned char* cbuf = xmalloc(cbuf_cap);
-
-    /* compressible seed material: first file arg, else synthetic text */
+/* compressible seed material: first file arg, else synthetic text */
+static unsigned char* load_seed(const char* seed_path, size_t* seed_sz_out, size_t cap) {
+    unsigned char* seed = NULL;
+    *seed_sz_out = 0;
     if (seed_path) {
         FILE* f = fopen(seed_path, "rb");
         if (f) {
             fseek(f, 0, SEEK_END);
             long s = ftell(f);
             fseek(f, 0, SEEK_SET);
-            if (s > 0 && s < (long)cbuf_cap) {
+            if (s > 0 && s < (long)cap) {
                 seed = xmalloc((size_t)s);
-                if (fread(seed, 1, (size_t)s, f) == (size_t)s) seed_sz = (size_t)s;
+                if (fread(seed, 1, (size_t)s, f) == (size_t)s) *seed_sz_out = (size_t)s;
                 else { free(seed); seed = NULL; }
             }
             fclose(f);
@@ -146,11 +143,23 @@ static int fuzz_mode(unsigned long nstreams, const char* seed_path) {
     }
     if (!seed) {
         static const char* txt = "the quick brown fox jumps over the lazy dog. ";
-        size_t tlen = strlen(txt);
-        seed_sz = 256 KB;
-        seed = xmalloc(seed_sz);
-        for (i = 0; i < seed_sz; i += tlen) memcpy(seed + i, txt, seed_sz - i < tlen ? seed_sz - i : tlen);
+        size_t tlen = strlen(txt), i;
+        size_t sz = 256 KB;
+        seed = xmalloc(sz);
+        for (i = 0; i < sz; i += tlen) memcpy(seed + i, txt, sz - i < tlen ? sz - i : tlen);
+        *seed_sz_out = sz;
     }
+    return seed;
+}
+
+static int fuzz_mode(unsigned long nstreams, const char* seed_path) {
+    unsigned char *seed = NULL, *stream, *dst;
+    size_t seed_sz = 0;
+    unsigned long i, decoded = 0;
+    size_t cbuf_cap = 4 MB;
+    unsigned char* cbuf = xmalloc(cbuf_cap);
+
+    seed = load_seed(seed_path, &seed_sz, cbuf_cap);
 
     for (i = 0; i < nstreams; i++) {
         size_t slen = 0, csz = 0, cap;
@@ -209,23 +218,81 @@ static int fuzz_mode(unsigned long nstreams, const char* seed_path) {
     return 0;
 }
 
+/* frame-level fuzz: build ONE valid seq frame over the seed, then mutate
+ * envelope bytes (frame header, block headers incl. the bit31 escape,
+ * payload, truncations) and push them through LZ6F_decompress — the gate
+ * for the frame layer the raw-stream fuzz cannot reach. */
+static int frame_fuzz_mode(unsigned long nstreams, const char* seed_path) {
+    size_t seed_sz = 0;
+    unsigned char* seed = load_seed(seed_path, &seed_sz, 4 MB);
+    unsigned long i;
+
+    LZ6F_preferences_t p;
+    memset(&p, 0, sizeof(p));
+    p.frameInfo.blockSizeID = LZ6F_max1MB;   /* multi-block: block headers in scope */
+    p.frameInfo.blockCodec = LZ6F_blockCodec_seq;
+    p.frameInfo.contentChecksumFlag = LZ6F_contentChecksumEnabled;
+    p.compressionLevel = g_level;
+    p.autoFlush = 1;
+    size_t fbound = LZ6F_compressFrameBound(seed_sz, &p) + 64;
+    unsigned char* frame = xmalloc(fbound);
+    size_t fsz = LZ6F_compressFrame(frame, fbound, seed, seed_sz, &p);
+    if (LZ6F_isError(fsz)) { fprintf(stderr, "ffuzz: frame compress failed\n"); return 1; }
+
+    unsigned char* stream = xmalloc(fsz);
+    unsigned char* dst = xmalloc(seed_sz);
+    unsigned long decoded = 0;
+
+    for (i = 0; i < nstreams; i++) {
+        size_t len = fsz;
+        memcpy(stream, frame, fsz);
+        unsigned int nmut = 1 + rnd() % 24;
+        for (unsigned int j = 0; j < nmut; j++) {
+            size_t pos = rnd() % len;
+            stream[pos] ^= (unsigned char)(1u << (rnd() % 8));
+        }
+        if (rnd() % 8 == 0) len = 1 + rnd() % fsz;   /* truncation */
+
+        LZ6F_decompressionContext_t dctx;
+        if (LZ6F_isError(LZ6F_createDecompressionContext(&dctx, LZ6F_VERSION))) return 1;
+        size_t pos = 0, done = 0;
+        while (pos < len) {
+            size_t din = len - pos;
+            size_t dout = seed_sz - done;
+            size_t r = LZ6F_decompress(dctx, dst + done, &dout, stream + pos, &din, NULL);
+            if (LZ6F_isError(r)) break;
+            pos += din;
+            done += dout;
+            if (din == 0 && dout == 0) break;
+        }
+        LZ6F_freeDecompressionContext(dctx);
+        if (done == seed_sz) decoded++;
+    }
+
+    printf("ffuzz: %lu frames (%lu decoded clean), no crash\n", nstreams, decoded);
+    free(stream); free(dst); free(frame); free(seed);
+    return 0;
+}
+
 int main(int argc, char** argv) {
     int i, argi, rc = 0;
-    unsigned long fuzz_n = 0;
+    unsigned long fuzz_n = 0, ffuzz_n = 0;
     const char* fuzz_seed = NULL;
     int file_arg_start = argc;
 
     for (argi = 1; argi < argc; argi++) {
         if (!strcmp(argv[argi], "--level") && argi + 1 < argc) { g_level = atoi(argv[++argi]); if (g_level < 1) g_level = 1; if (g_level > 15) g_level = 15; }
         else if (!strcmp(argv[argi], "--fuzz") && argi + 1 < argc) { fuzz_n = (unsigned long)atol(argv[++argi]); }
+        else if (!strcmp(argv[argi], "--ffuzz") && argi + 1 < argc) { ffuzz_n = (unsigned long)atol(argv[++argi]); }
         else if (!strcmp(argv[argi], "--fuzz-seed") && argi + 1 < argc) { fuzz_seed = argv[++argi]; }
         else if (argv[argi][0] != '-') { file_arg_start = argi; break; }
     }
 
     if (fuzz_n) return fuzz_mode(fuzz_n, fuzz_seed ? fuzz_seed : (file_arg_start < argc ? argv[file_arg_start] : NULL));
+    if (ffuzz_n) return frame_fuzz_mode(ffuzz_n, fuzz_seed ? fuzz_seed : (file_arg_start < argc ? argv[file_arg_start] : NULL));
 
     if (file_arg_start >= argc) {
-        fprintf(stderr, "usage: bench_seq [--level N] file...\n       bench_seq --fuzz N [seedfile]\n");
+        fprintf(stderr, "usage: bench_seq [--level N] file...\n       bench_seq --fuzz N [seedfile]   (raw seq streams)\n       bench_seq --ffuzz N [seedfile]  (seq frames through LZ6F_decompress)\n");
         return 1;
     }
 

@@ -7,7 +7,7 @@ total=0
 for f in A B C D E F G H; do
     [ -f "$DIR/$f" ] || continue
     out=$(./programs/lz6 -v "-$LEVEL" -f "$DIR/$f" "/tmp/$f.seq" 2>&1)
-    sz=$(echo "$out" | grep -oE '[0-9]+ bytes' | head -1 | tr -d ' bytes')
+    sz=$(echo "$out" | grep -oE 'into [0-9]+ bytes' | head -1 | grep -oE '[0-9]+')
     [ -n "$sz" ] && [ "$sz" -gt 0 ] 2>/dev/null || { echo "$f: FAIL"; continue; }
     ./programs/lz6 -d -f "/tmp/$f.seq" "/tmp/$f.orig" >/dev/null 2>&1
     if cmp -s "$DIR/$f" "/tmp/$f.orig"; then

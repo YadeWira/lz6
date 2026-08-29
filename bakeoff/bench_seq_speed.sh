@@ -1,8 +1,10 @@
 #!/bin/sh
 # bench_seq_speed.sh - build bakeoff/bench_seq.c and run it over the AIT training set.
-# Usage: bench_seq_speed.sh [--level N] [--fuzz N] [--asan] [--save FILE] [dir]
+# Usage: bench_seq_speed.sh [--level N] [--fuzz N] [--ffuzz N] [--asan] [--save FILE] [dir]
 #
-# Baseline/delta workflow:
+# Corpus: AIT A-H. Defaults to /tmp/ait_train; falls back to the secured
+# copy in bakeoff/corpora/ (restored to /tmp by setup_competitors.sh or by
+# hand). Baseline/delta workflow:
 #   ./bakeoff/bench_seq_speed.sh --save bakeoff/SEQ_SPEED_BASELINE.txt   (once)
 #   ./bakeoff/bench_seq_speed.sh                                         (after changes)
 set -e
@@ -10,6 +12,7 @@ cd "$(dirname "$0")/.."
 
 LEVEL=2
 FUZZ=0
+FFUZZ=0
 ASAN=""
 SAVE=""
 DIR=/tmp/ait_train
@@ -17,11 +20,16 @@ while [ $# -gt 0 ]; do
     case "$1" in
         --level) LEVEL=$2; shift 2 ;;
         --fuzz)  FUZZ=$2; shift 2 ;;
+        --ffuzz) FFUZZ=$2; shift 2 ;;
         --asan)  ASAN="-fsanitize=address -g"; shift ;;
         --save)  SAVE=$2; shift 2 ;;
         *)       DIR=$1; shift ;;
     esac
 done
+
+if [ ! -f "$DIR/A" ] && [ -f bakeoff/corpora/A ]; then
+    DIR=bakeoff/corpora
+fi
 
 # lib objects at -O2 (the seq codec miscompiles under -O3; see programs/Makefile)
 make -C programs lz6 >/dev/null 2>&1
@@ -29,7 +37,7 @@ make -C programs lz6 >/dev/null 2>&1
 BIN=/tmp/lz6_bench_seq.$$
 trap 'rm -f "$BIN"' EXIT
 cc -O2 -std=c99 -Wall -I. $ASAN bakeoff/bench_seq.c \
-    lib/lz6.o lib/lz6hc.o lib/entropy/lz6fse.o lib/entropy/lz6rc.o \
+    lib/lz6.o lib/lz6hc.o lib/lz6frame.o lib/xxhash.o lib/entropy/lz6fse.o lib/entropy/lz6rc.o \
     lib/entropy/lz6seq.o lib/entropy/lz6huf.o -lm -o "$BIN"
 
 FILES=""
@@ -44,6 +52,9 @@ trap 'rm -f "$BIN" "$OUT"' EXIT
 if [ "$FUZZ" -gt 0 ]; then
     # shellcheck disable=SC2086
     "$BIN" --fuzz "$FUZZ" $FILES | tee "$OUT"
+elif [ "$FFUZZ" -gt 0 ]; then
+    # shellcheck disable=SC2086
+    "$BIN" --ffuzz "$FFUZZ" $FILES | tee "$OUT"
 else
     # shellcheck disable=SC2086
     "$BIN" --level "$LEVEL" $FILES | tee "$OUT"

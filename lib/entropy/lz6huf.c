@@ -268,7 +268,21 @@ int huf_dec_n(huf_dstate* s, uint8_t* out, size_t n)
     const int* first_code = s->first_code;
 
     for (size_t i = 0; i < n; i++) {
-        while (nbits < 24) { acc = (acc << 8) | (p < pend ? *p++ : 0); nbits += 8; }
+        /* refill: 4 bytes at a time while the MSB-first stream allows
+         * (nbits stays < 64; the lookup only touches the low nbits+k
+         * bits, garbage above is masked by kmask) */
+        while (nbits < 24) {
+            if (pend - p >= 4) {
+                uint32_t w;
+                memcpy(&w, p, 4);
+                acc = (acc << 32) | __builtin_bswap32(w);
+                p += 4;
+                nbits += 32;
+            } else {
+                acc = (acc << 8) | (p < pend ? *p++ : 0);
+                nbits += 8;
+            }
+        }
         int shift = nbits - s->k;
         uint16_t v = table[(unsigned)((acc >> shift) & kmask)];
         int l = v & 15;
