@@ -163,15 +163,30 @@ static int detect_glibc_prng(const uint8_t* src, size_t n, int* shift_out) {
 /* ---- byte helpers ---- */
 static void w8(uint8_t** p, int v) { *(*p)++ = (uint8_t)v; }
 /* one rANS symbol from a prepared table; returns 1 when the stream is
- * exhausted mid-renorm (corrupt input) */
+ * exhausted mid-renorm (corrupt input).
+ * Dual layout: combined entry (one load) when the table has dcomp, else
+ * the compact 1-byte table + freq/cumul (literal o0, M > 4096).
+ * The rANS invariant (x >= 0x10000 before advance, f >= 1) bounds the
+ * renorm at 2 bytes, so a 2-byte slack fast path runs unguarded. */
 static int seq_dec_sym(const fse_dtable* t, uint32_t* x, const uint8_t** sp,
                        const uint8_t* send, uint8_t* out) {
-    unsigned s = t->dtab[*x & (t->M - 1)];
-    *out = (uint8_t)s;
-    uint32_t v = t->freq_tab[s] * (*x >> t->L_bits) + (*x & (t->M - 1)) - t->cumul[s];
-    while (v < 0x10000u) {
-        if (*sp >= send) return 1;
-        v = (v << 8) | (unsigned char)*(*sp)++;
+    uint32_t v;
+    if (t->dcomp) {
+        const fse_dentry* e = &t->dcomp[*x & (t->M - 1)];
+        *out = e->s;
+        v = e->f * (*x >> t->L_bits) + (uint32_t)e->off;
+    } else {
+        unsigned s = t->dtab1[*x & (t->M - 1)];
+        *out = (uint8_t)s;
+        v = t->freq_tab[s] * (*x >> t->L_bits) + (*x & (t->M - 1)) - t->cumul[s];
+    }
+    if (send - *sp >= 2) {
+        while (v < 0x10000u) v = (v << 8) | (unsigned char)*(*sp)++;
+    } else {
+        while (v < 0x10000u) {
+            if (*sp >= send) return 1;
+            v = (v << 8) | (unsigned char)*(*sp)++;
+        }
     }
     *x = v;
     return 0;
@@ -1255,9 +1270,6 @@ static size_t decode_normal(const char* src, size_t srcSize,
     size_t resid_n[OF_CODES];
     int b;
     for (b = 0; b < OF_CODES; b++) { resid_top8[b] = NULL; resid_n[b] = 0; }
-    /* scratch for bucket lookup tables (M <= 2^16): decoded sequentially,
-     * so one buffer serves every bucket — no malloc/free churn */
-    uint8_t dtab_scratch[1 << 16];
 
     /* 3 symbol streams: tables prepared once, then all symbols decoded in
      * one interleaved pass into byte arrays. Measured faster than decoding
@@ -1344,8 +1356,9 @@ static size_t decode_normal(const char* src, size_t srcSize,
             continue;
         }
         /* FSE bucket: w = stream size, cnt = exact symbol count.
-         * The lookup table lives in a stack scratch buffer (buckets are
-         * short-lived and decoded sequentially): no malloc/free churn. */
+         * fse_decode builds its own plain 1-byte table — a combined-entry
+         * table (12B/slot, up to 768KB) would cost more to fill than the
+         * decode saves on bucket-sized streams. */
         uint32_t rsz = w;
         if (bid < 0 || bid >= OF_CODES || rsz == 0 || (size_t)(end - p) < 4) goto fail;
         uint32_t cnt = (uint32_t)p[0] | ((uint32_t)p[1]<<8) | ((uint32_t)p[2]<<16) | ((uint32_t)p[3]<<24);
@@ -1354,14 +1367,7 @@ static size_t decode_normal(const char* src, size_t srcSize,
         if (resid_top8[bid]) { goto fail; }   /* duplicate bucket: corrupt */
         unsigned* top8 = (unsigned*)malloc((size_t)cnt * sizeof(unsigned));
         if (!top8) goto fail;
-        fse_dtable bt;
-        size_t bhdr = fse_dtable_prepare_scratch(&bt, p, rsz, 255, dtab_scratch, sizeof(dtab_scratch));
-        if (bhdr == 0 || fse_decode_prepared(&bt, p + bhdr, rsz - bhdr, cnt, top8)) {
-            fse_dtable_free(&bt);
-            free(top8);
-            goto fail;
-        }
-        fse_dtable_free(&bt);
+        if (fse_decode(p, rsz, cnt, 255, top8)) { free(top8); goto fail; }
         resid_top8[bid] = top8;
         resid_n[bid] = cnt;
         p += rsz;

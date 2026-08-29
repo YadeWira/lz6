@@ -53,32 +53,40 @@ int    fse_decode(const uint8_t* in, size_t in_len,
                    unsigned* out);
 
 /* Prepared decode table: parse + build once, decode many (or interleave
- * several tables from one loop for ILP). */
+ * several tables from one loop for ILP).
+ * The per-slot entry packs everything the hot loop needs: symbol,
+ * normalized frequency, and (slot - cumul[s]) so the rANS advance is
+ * one multiply + one add without secondary loads. */
+typedef struct {
+    uint8_t  s;             /* decoded symbol */
+    uint8_t  pad[3];
+    uint32_t f;             /* normalized frequency of s */
+    int32_t  off;           /* slot - cumul[s] */
+} fse_dentry;
+
 typedef struct {
     int L_bits;
     unsigned M;
+    /* dual layout, chosen by size:
+     *  - M <= 4096: dcomp[] holds combined 12B entries (single load per
+     *    symbol, cache-resident) — the hot ll/ml/of streams
+     *  - M > 4096 (literal o0, L=16): dcomp stays NULL and the decode
+     *    walks dtab1[] + freq_tab/cumul (a 768KB combined table would
+     *    thrash L2/TLB and lose more than it saves) */
+    uint8_t* dtab1;         /* M symbols (always built) */
+    fse_dentry* dcomp;      /* M combined entries, or NULL */
     unsigned freq_tab[256];
     unsigned cumul[256];
-    uint8_t* dtab;          /* M entries; NULL until prepared */
-    unsigned owned;         /* 1 = dtab malloc'd (freed by fse_dtable_free);
-                               0 = dtab points at caller scratch memory */
+    unsigned owned;         /* bit0 = dtab1 malloc'd, bit1 = dcomp malloc'd */
 } fse_dtable;
 
 /* Parse the table header at `in` (as written by fse_write_table) and build
- * the flat decode table. `maxSym` caps the alphabet (corrupt headers with
+ * the combined decode table. `maxSym` caps the alphabet (corrupt headers with
  * larger symbols are rejected). On success returns the header size in
  * bytes; on error returns 0 with t->dtab == NULL (safe for
  * fse_dtable_free). */
 size_t fse_dtable_prepare(fse_dtable* t, const uint8_t* in, size_t in_len,
                           int maxSym);
-
-/* Same as fse_dtable_prepare but the M-byte lookup table lives in the
- * caller's scratch buffer (must be >= 2^16 bytes, the max M) instead of a
- * per-call malloc — for short-lived tables decoded sequentially (bucket
- * streams). The table is only valid until the next prepare_scratch call on
- * the same scratch buffer. */
-size_t fse_dtable_prepare_scratch(fse_dtable* t, const uint8_t* in, size_t in_len,
-                                  int maxSym, uint8_t* scratch, size_t scratch_cap);
 
 void fse_dtable_free(fse_dtable* t);
 

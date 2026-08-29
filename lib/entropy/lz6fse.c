@@ -421,68 +421,45 @@ size_t fse_dtable_prepare(fse_dtable* t, const uint8_t* in, size_t in_len,
     t->M = M;
     for (int i = 0; i < 256; i++) t->freq_tab[i] = counts[i];
     unsigned acc = 0;
-    for (int i = 0; i <= rmaxSym; i++) {
-        t->cumul[i] = acc;
-        acc += t->freq_tab[i];
-    }
-    /* decode lookup table: slot (0..M-1) -> symbol. The freqs must sum to
-     * exactly M: a corrupt table with inflated freqs must not write past
-     * the M-byte table. */
-    t->dtab = (uint8_t*)malloc(M);
-    if (!t->dtab) return 0;
-    t->owned = 1;
+    for (int i = 0; i <= rmaxSym; i++) { t->cumul[i] = acc; acc += counts[i]; }
+
+    /* plain 1-byte symbol table (always built) */
+    t->dtab1 = (uint8_t*)malloc(M);
+    if (!t->dtab1) return 0;
+    t->owned |= 1;
     unsigned slot = 0;
     for (int i = 0; i <= rmaxSym; i++) {
-        unsigned f = t->freq_tab[i];
+        unsigned f = counts[i];
         while (f--) {
             if (slot >= M) { fse_dtable_free(t); return 0; }
-            t->dtab[slot++] = (uint8_t)i;
+            t->dtab1[slot++] = (uint8_t)i;
         }
     }
     if (slot != M) { fse_dtable_free(t); return 0; }
-    return hdr;
-}
 
-size_t fse_dtable_prepare_scratch(fse_dtable* t, const uint8_t* in, size_t in_len,
-                                  int maxSym, uint8_t* scratch, size_t scratch_cap)
-{
-    /* identical validation, but the lookup table lives in the caller's
-     * scratch buffer (t->owned = 0: fse_dtable_free must not free it) */
-    memset(t, 0, sizeof(*t));
-    unsigned counts[256];
-    int rmaxSym, L_bits;
-    size_t hdr = fse_read_table(in, in_len, counts, &rmaxSym, &L_bits);
-    if (hdr == 0) return 0;
-    if (rmaxSym > maxSym) return 0;
-    if (L_bits < 1 || L_bits > 16) return 0;
-    unsigned M = 1u << L_bits;
-    if (scratch_cap < M) return 0;
-
-    t->L_bits = L_bits;
-    t->M = M;
-    for (int i = 0; i < 256; i++) t->freq_tab[i] = counts[i];
-    unsigned acc = 0;
-    for (int i = 0; i <= rmaxSym; i++) {
-        t->cumul[i] = acc;
-        acc += t->freq_tab[i];
-    }
-    t->dtab = scratch;
-    t->owned = 0;
-    unsigned slot = 0;
-    for (int i = 0; i <= rmaxSym; i++) {
-        unsigned f = t->freq_tab[i];
-        while (f--) {
-            if (slot >= M) { t->dtab = NULL; return 0; }
-            t->dtab[slot++] = (uint8_t)i;
+    /* combined 12B entries only when the table stays cache-resident
+     * (M <= 4096): for M = 65536 the 768KB combined table thrashes L2/TLB
+     * and decodes slower than the compact layout */
+    if (M <= 4096) {
+        t->dcomp = (fse_dentry*)malloc((size_t)M * sizeof(fse_dentry));
+        if (!t->dcomp) { fse_dtable_free(t); return 0; }
+        t->owned |= 2;
+        for (unsigned s2 = 0; s2 < M; s2++) {
+            fse_dentry* e = &t->dcomp[s2];
+            unsigned s = t->dtab1[s2];
+            e->s = (uint8_t)s;
+            e->f = t->freq_tab[s];
+            e->off = (int32_t)s2 - (int32_t)t->cumul[s];
         }
     }
-    if (slot != M) { t->dtab = NULL; return 0; }
     return hdr;
 }
 
 void fse_dtable_free(fse_dtable* t) {
-    if (t->owned) free(t->dtab);
-    t->dtab = NULL;
+    if (t->owned & 1) free(t->dtab1);
+    if (t->owned & 2) free(t->dcomp);
+    t->dtab1 = NULL;
+    t->dcomp = NULL;
     t->owned = 0;
 }
 
@@ -507,24 +484,49 @@ static int fse_decode_syms(const fse_dtable* t, const uint8_t* in, size_t in_len
                  ((uint32_t)sp[2] << 8) | (uint32_t)sp[3];
     sp += 4;
 
+    const unsigned Mmask = t->M - 1;
+    const int L_bits = t->L_bits;
     int rerr = 0;
     size_t k;
-    for (k = 0; k < n; k++) {
-        /* peek symbol. f is never 0 for a symbol present in dtab
-         * (the encoder only codes symbols with freq > 0), so the
-         * per-symbol f==0 check is skipped in the hot path; a corrupt
-         * stream can at worst produce garbage, and the sp bounds check
-         * below still catches overreads. */
-        unsigned slot_idx = rans_dec_slot(x, t->L_bits);
-        unsigned s = t->dtab[slot_idx];
-        unsigned f = t->freq_tab[s];
-        unsigned c = t->cumul[s];
-        syms[k] = s;
-        /* advance (must come BEFORE refill: x is initially valid after encoder flush) */
-        x = rans_dec_advance(x, f, c, t->L_bits);
-        /* refill now that x may have dropped below M */
-        x = rans_dec_renorm(x, &sp, sp_end, &rerr);
-        if (rerr) return 1;
+
+    if (t->dcomp) {
+        /* combined-entry loop: one load per symbol (M <= 4096 tables) */
+        const fse_dentry* dtab = t->dcomp;
+        for (k = 0; k < n; k++) {
+            /* combined entry: symbol + freq + (slot - cumul[s]) in one load.
+             * f >= 1 for every slot (freqs sum to exactly M), so the rANS
+             * invariant holds and the renorm below needs at most 2 bytes. */
+            const fse_dentry* e = &dtab[x & Mmask];
+            unsigned f = e->f;
+            syms[k] = e->s;
+            /* advance (must come BEFORE refill: x is initially valid after encoder flush) */
+            x = f * (x >> L_bits) + (uint32_t)e->off;
+            /* refill with slack fast path: at most 2 bytes ever needed */
+            if (sp_end - sp >= 2) {
+                while (x < 0x10000u) x = (x << 8) | *sp++;
+            } else {
+                while (x < 0x10000u) {
+                    if (sp >= sp_end) { return 1; }
+                    x = (x << 8) | *sp++;
+                }
+            }
+        }
+        return 0;
+    }
+
+    /* compact layout (M > 4096, e.g. literal o0): symbol via 1-byte table,
+     * then freq/cumul — a combined table would thrash L2/TLB here */
+    {
+        const uint8_t* dtab1 = t->dtab1;
+        const unsigned* freq_tab = t->freq_tab;
+        const unsigned* cumul = t->cumul;
+        for (k = 0; k < n; k++) {
+            unsigned s = dtab1[x & Mmask];
+            syms[k] = s;
+            x = freq_tab[s] * (x >> L_bits) + (x & Mmask) - cumul[s];
+            x = rans_dec_renorm(x, &sp, sp_end, &rerr);
+            if (rerr) return 1;
+        }
     }
     return 0;
 }
@@ -538,13 +540,53 @@ int fse_decode_prepared(const fse_dtable* t, const uint8_t* in, size_t in_len,
 int fse_decode(const uint8_t* in, size_t in_len, size_t n, int maxSym,
                unsigned* syms)
 {
-    fse_dtable t;
-    size_t hdr = fse_dtable_prepare(&t, in, in_len, maxSym);
+    /* self-contained variant with a plain 1-byte lookup table: the bucket
+     * streams call this with small n, where building a combined 12B-entry
+     * table (up to 768KB) would cost far more than it saves */
+    unsigned counts[256];
+    int rmaxSym, L_bits;
+    size_t hdr = fse_read_table(in, in_len, counts, &rmaxSym, &L_bits);
     if (hdr == 0) return 1;
-    /* the stream follows the table header */
-    int rc = fse_decode_syms(&t, in + hdr, in_len - hdr, n, syms);
-    fse_dtable_free(&t);
-    return rc;
+    if (rmaxSym > maxSym) return 1;
+    if (L_bits < 1 || L_bits > 16) return 1;
+    unsigned M = 1u << L_bits;
+
+    unsigned cumul[256];
+    unsigned acc = 0;
+    for (int i = 0; i <= rmaxSym; i++) { cumul[i] = acc; acc += counts[i]; }
+
+    uint8_t* dtab = (uint8_t*)malloc(M);
+    if (!dtab) return 1;
+    unsigned slot = 0;
+    for (int i = 0; i <= rmaxSym; i++) {
+        unsigned f = counts[i];
+        while (f--) {
+            if (slot >= M) { free(dtab); return 1; }
+            dtab[slot++] = (uint8_t)i;
+        }
+    }
+    if (slot != M) { free(dtab); return 1; }
+
+    if (hdr + 8 > in_len) { free(dtab); return 1; }
+    uint32_t stream_len = (uint32_t)in[hdr] | ((uint32_t)in[hdr+1] << 8)
+                        | ((uint32_t)in[hdr+2] << 16) | ((uint32_t)in[hdr+3] << 24);
+    if (stream_len < 4 || hdr + 4 + stream_len > in_len) { free(dtab); return 1; }
+    const uint8_t* sp = in + hdr + 4;
+    const uint8_t* sp_end = sp + stream_len;
+    uint32_t x = ((uint32_t)sp[0] << 24) | ((uint32_t)sp[1] << 16)
+               | ((uint32_t)sp[2] << 8) | (uint32_t)sp[3];
+    sp += 4;
+
+    int rerr = 0;
+    for (size_t k = 0; k < n; k++) {
+        unsigned s = dtab[x & (M - 1)];
+        syms[k] = s;
+        x = counts[s] * (x >> L_bits) + (x & (M - 1)) - cumul[s];
+        x = rans_dec_renorm(x, &sp, sp_end, &rerr);
+        if (rerr) { free(dtab); return 1; }
+    }
+    free(dtab);
+    return 0;
 }
 
 /* ================================================================== */
