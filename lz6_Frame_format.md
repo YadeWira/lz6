@@ -72,13 +72,26 @@ __Magic Number__
 4 Bytes, Little endian format.
 Value : 0x184D2206 (it was 0x184D2205 for LZ5, 0x184D2204 for LZ4)
 
-A second magic value, 0x184D2207, selects the same frame structure with
-every data block coded by the seq entropy coder (LZ match finding +
-FSE/rANS; see `lib/entropy/lz6seq.h`) instead of the classic LZ/HC match
-coders. The frame descriptor, block headers, EndMark and content
-checksum are identical; blocks remain self-describing and independently
-decodable. `LZ6_decompress_seq` replaces the LZ block decoder; the
-block-header "uncompressed" flag works the same way for either codec.
+__Block codec flag (LZ6S2)__
+
+Blocks may be coded by either engine within the same frame:
+
+| Block header bits | Meaning |
+|---|---|
+| bit 31 | block stored uncompressed (payload = raw bytes) |
+| bit 30 | block coded by the seq entropy coder (LZ match finding + FSE/rANS, see `lib/entropy/lz6seq.h`) |
+| bits 29-0 | payload size in bytes (max block 256MB fits) |
+
+- bit31 set: payload is raw input bytes; bits 30-0 all belong to the size.
+- bit31 clear, bit30 set: payload is a `LZ6_compress_seq` block
+  (self-describing: flags + isize). Decoded by `LZ6_decompress_seq`.
+- bit31 clear, bit30 clear: payload is a classic LZ/HC-coded block,
+  decoded by the LZ block decoder.
+
+The frame descriptor, EndMark and content checksum are unchanged; blocks
+remain independently decodable. The encoder picks the codec per block:
+weak seq results (gain < 25%) fall back to the fast LZ codec, whose
+blocks decode at memcpy speed.
 
 __Frame Descriptor__
 

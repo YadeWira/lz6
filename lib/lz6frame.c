@@ -101,8 +101,8 @@ typedef unsigned long long  U64;
 
 #define LZ6F_MAGIC_SKIPPABLE_START 0x184D2A50U
 #define LZ6F_MAGICNUMBER 0x184D2206U
-#define LZ6F_MAGICNUMBER_SEQ 0x184D2207U    /* blocks coded by the seq entropy coder */
 #define LZ6F_BLOCKUNCOMPRESSED_FLAG 0x80000000U
+#define LZ6F_BLOCKSEQ_FLAG 0x40000000U      /* block coded by the seq engine */
 #define LZ6F_BLOCKSIZEID_DEFAULT LZ6F_max64KB
 #define LZ6F_DICT_SIZE (1 << 22)
 
@@ -129,7 +129,8 @@ typedef struct LZ6F_cctx_s
     U64    totalInSize;
     XXH32_state_t xxh;
     void*  lz6CtxPtr;
-    U32    lz6CtxLevel;     /* 0: unallocated;  1: LZ6_stream_t;  3: LZ6_streamHC_t */
+    U32    lz6CtxLevel;     /* 0: none;  1: LZ6_stream_t;  2: LZ6_streamHC_t;  3: seq engine */
+    void*  lightStream;     /* LZ6_stream_t for the light-LZ fallback on seq frames */
 } LZ6F_cctx_t;
 
 typedef struct LZ6F_dctx_s
@@ -152,6 +153,7 @@ typedef struct LZ6F_dctx_s
     size_t tmpOutStart;
     XXH32_state_t xxh;
     BYTE   header[16];
+    unsigned curBlockSeq;   /* current compressed block is seq-coded (bit30) */
 } LZ6F_dctx_t;
 
 
@@ -266,6 +268,10 @@ void LZ6F_freeStream(LZ6F_cctx_t* cctxPtr)
         LZ6_freeStream((LZ6_stream_t*)cctxPtr->lz6CtxPtr);
     else if (cctxPtr->lz6CtxLevel == 2)
         LZ6_freeStreamHC((LZ6_streamHC_t*)cctxPtr->lz6CtxPtr);
+    if (cctxPtr->lightStream) {
+        LZ6_freeStream((LZ6_stream_t*)cctxPtr->lightStream);
+        cctxPtr->lightStream = NULL;
+    }
     cctxPtr->lz6CtxLevel = 0;
 }
 
@@ -427,10 +433,15 @@ size_t LZ6F_compressBegin(LZ6F_compressionContext_t compressionContext, void* ds
         {
             /* seq engine: one-shot per block, no cross-block stream. The
              * seq wrapper reads the level from the cctx, so lz6CtxPtr
-             * points back at it (never freed — freeStream only owns 1/2). */
+             * points back at it (never freed — freeStream only owns 1/2).
+             * A light LZ stream is kept alive for the weak-seq fallback:
+             * blocks where seq gains < 25% code with the fast LZ codec
+             * instead and decode at memcpy speed. */
             LZ6F_freeStream(cctxPtr);
             cctxPtr->lz6CtxLevel = LZ6F_CCTX_SEQ;
             cctxPtr->lz6CtxPtr = cctxPtr;
+            if (!cctxPtr->lightStream)
+                cctxPtr->lightStream = (void*)LZ6_createStream();
         }
         else
         {
@@ -472,9 +483,9 @@ size_t LZ6F_compressBegin(LZ6F_compressionContext_t compressionContext, void* ds
     else if (cctxPtr->lz6CtxLevel == 2)
         LZ6_resetStreamHC((LZ6_streamHC_t*)(cctxPtr->lz6CtxPtr));
 
-    /* Magic Number */
-    LZ6F_writeLE32(dstPtr, cctxPtr->prefs.frameInfo.blockCodec == LZ6F_blockCodec_seq
-                           ? LZ6F_MAGICNUMBER_SEQ : LZ6F_MAGICNUMBER);
+    /* Magic Number — single magic: the block codec rides on per-block
+     * header flags (bit30 = seq), so frames may mix block types */
+    LZ6F_writeLE32(dstPtr, LZ6F_MAGICNUMBER);
     dstPtr += 4;
     headerStart = dstPtr;
 
@@ -537,12 +548,47 @@ static int LZ6F_localLZ6_decompress_seq(const char* src, char* dst, int compress
     return dSize ? (int)dSize : -1;
 }
 
-static size_t LZ6F_compressBlock(void* dst, const void* src, size_t srcSize, compressFunc_t compress, void* lz6ctx)
+/* LZ6S2: per-block codec dispatch.
+ *  - seq frames (prefs.blockCodec == seq): each block is seq-coded; when the
+ *    seq result gains < 25% over the raw input, the same block is retried
+ *    with the fast LZ codec and the smaller output wins — those blocks
+ *    decode at memcpy speed (bit30 clear).
+ *  - LZ/HC frames: unchanged (bit30 never set).
+ * Block header: bit31 = uncompressed escape, bit30 = seq-coded,
+ * bits 29-0 = payload size (max block 256MB fits easily). */
+static size_t LZ6F_compressBlock(void* dst, const void* src, size_t srcSize,
+                                 compressFunc_t compress, LZ6F_cctx_t* cctxPtr)
 {
-    /* compress one block */
     BYTE* cSizePtr = (BYTE*)dst;
     U32 cSize;
-    cSize = (U32)compress(lz6ctx, (const char*)src, (char*)(cSizePtr+4), (int)(srcSize), (int)(srcSize-1));
+
+    if (cctxPtr->prefs.frameInfo.blockCodec == LZ6F_blockCodec_seq)
+    {
+        size_t r = LZ6_compress_seq((const char*)src, srcSize, (char*)(cSizePtr+4),
+                                    (size_t)(srcSize-1), cctxPtr->prefs.compressionLevel);
+        if (r)
+        {
+            if (r > srcSize - srcSize/4)   /* weak seq result: try light LZ */
+            {
+                U32 lz = (U32)LZ6_compress_limitedOutput_withState(
+                    (LZ6_stream_t*)cctxPtr->lightStream, (const char*)src,
+                    (char*)(cSizePtr+4), (int)srcSize, (int)(srcSize-1));
+                if (lz && lz < (U32)r)
+                {
+                    LZ6F_writeLE32(cSizePtr, lz);   /* bit30 clear: light block */
+                    return lz + 4;
+                }
+            }
+            LZ6F_writeLE32(cSizePtr, (U32)r | LZ6F_BLOCKSEQ_FLAG);
+            return r + 4;
+        }
+        /* seq declined (incompressible/tiny): uncompressed escape */
+        LZ6F_writeLE32(cSizePtr, (U32)srcSize + LZ6F_BLOCKUNCOMPRESSED_FLAG);
+        memcpy(cSizePtr+4, src, srcSize);
+        return srcSize + 4;
+    }
+
+    cSize = (U32)compress(cctxPtr->lz6CtxPtr, (const char*)src, (char*)(cSizePtr+4), (int)(srcSize), (int)(srcSize-1));
     LZ6F_writeLE32(cSizePtr, cSize);
     if (cSize == 0)   /* compression failed */
     {
@@ -653,7 +699,7 @@ size_t LZ6F_compressUpdate(LZ6F_compressionContext_t compressionContext, void* d
             memcpy(cctxPtr->tmpIn + cctxPtr->tmpInSize, srcBuffer, sizeToCopy);
             srcPtr += sizeToCopy;
 
-            dstPtr += LZ6F_compressBlock(dstPtr, cctxPtr->tmpIn, blockSize, compress, cctxPtr->lz6CtxPtr);
+            dstPtr += LZ6F_compressBlock(dstPtr, cctxPtr->tmpIn, blockSize, compress, cctxPtr);
 
             if (cctxPtr->prefs.frameInfo.blockMode==LZ6F_blockLinked) cctxPtr->tmpIn += blockSize;
             cctxPtr->tmpInSize = 0;
@@ -664,7 +710,7 @@ size_t LZ6F_compressUpdate(LZ6F_compressionContext_t compressionContext, void* d
     {
         /* compress full block */
         lastBlockCompressed = fromSrcBuffer;
-        dstPtr += LZ6F_compressBlock(dstPtr, srcPtr, blockSize, compress, cctxPtr->lz6CtxPtr);
+        dstPtr += LZ6F_compressBlock(dstPtr, srcPtr, blockSize, compress, cctxPtr);
         srcPtr += blockSize;
     }
 
@@ -672,7 +718,7 @@ size_t LZ6F_compressUpdate(LZ6F_compressionContext_t compressionContext, void* d
     {
         /* compress remaining input < blockSize */
         lastBlockCompressed = fromSrcBuffer;
-        dstPtr += LZ6F_compressBlock(dstPtr, srcPtr, srcEnd - srcPtr, compress, cctxPtr->lz6CtxPtr);
+        dstPtr += LZ6F_compressBlock(dstPtr, srcPtr, srcEnd - srcPtr, compress, cctxPtr);
         srcPtr  = srcEnd;
     }
 
@@ -741,7 +787,7 @@ size_t LZ6F_flush(LZ6F_compressionContext_t compressionContext, void* dstBuffer,
     compress = LZ6F_selectCompression(cctxPtr->prefs.frameInfo.blockMode, cctxPtr->prefs.compressionLevel, cctxPtr->prefs.frameInfo.blockCodec);
 
     /* compress tmp buffer */
-    dstPtr += LZ6F_compressBlock(dstPtr, cctxPtr->tmpIn, cctxPtr->tmpInSize, compress, cctxPtr->lz6CtxPtr);
+    dstPtr += LZ6F_compressBlock(dstPtr, cctxPtr->tmpIn, cctxPtr->tmpInSize, compress, cctxPtr);
     if (cctxPtr->prefs.frameInfo.blockMode==LZ6F_blockLinked) cctxPtr->tmpIn += cctxPtr->tmpInSize;
     cctxPtr->tmpInSize = 0;
 
@@ -891,13 +937,11 @@ static size_t LZ6F_decodeHeader(LZ6F_dctx_t* dctxPtr, const void* srcVoidPtr, si
         }
     }
 
-    /* control magic number */
-    if (LZ6F_readLE32(srcPtr) == LZ6F_MAGICNUMBER_SEQ)
-        dctxPtr->frameInfo.blockCodec = LZ6F_blockCodec_seq;
-    else if (LZ6F_readLE32(srcPtr) == LZ6F_MAGICNUMBER)
-        dctxPtr->frameInfo.blockCodec = LZ6F_blockCodec_lz;
-    else return (size_t)-LZ6F_ERROR_frameType_unknown;
+    /* control magic number — single magic: the block codec rides on the
+     * per-block header flag (bit30), so frames may mix block types */
+    if (LZ6F_readLE32(srcPtr) != LZ6F_MAGICNUMBER) return (size_t)-LZ6F_ERROR_frameType_unknown;
     dctxPtr->frameInfo.frameType = LZ6F_frame;
+    dctxPtr->curBlockSeq = 0;
 
     /* Flags */
     FLG = srcPtr[4];
@@ -1205,15 +1249,27 @@ size_t LZ6F_decompress(LZ6F_decompressionContext_t decompressionContext,
 
         /* case dstage_decodeCBlockSize: */   /* no more direct access, to prevent scan-build warning */
             {
-                size_t nextCBlockSize = LZ6F_readLE32(selectedIn) & 0x7FFFFFFFU;
-                if (nextCBlockSize==0)   /* frameEnd signal, no more CBlock */
+                U32 const bh = LZ6F_readLE32(selectedIn);
+                size_t nextCBlockSize;
+                if (bh==0)   /* frameEnd signal, no more CBlock */
                 {
                     dctxPtr->dStage = dstage_getSuffix;
                     break;
                 }
+                if (bh & LZ6F_BLOCKUNCOMPRESSED_FLAG)
+                {
+                    nextCBlockSize = bh & 0x7FFFFFFFU;   /* raw: bits 30-0 are size */
+                    dctxPtr->curBlockSeq = 0;
+                }
+                else
+                {
+                    nextCBlockSize = bh & 0x3FFFFFFFU;   /* compressed: bit30 = seq flag */
+                    dctxPtr->curBlockSeq = (bh & LZ6F_BLOCKSEQ_FLAG) ? 1 : 0;
+                }
+                if (nextCBlockSize==0) return (size_t)-LZ6F_ERROR_GENERIC;   /* invalid cBlockSize */
                 if (nextCBlockSize > dctxPtr->maxBlockSize) return (size_t)-LZ6F_ERROR_GENERIC; /* invalid cBlockSize */
                 dctxPtr->tmpInTarget = nextCBlockSize;
-                if (LZ6F_readLE32(selectedIn) & LZ6F_BLOCKUNCOMPRESSED_FLAG)
+                if (bh & LZ6F_BLOCKUNCOMPRESSED_FLAG)
                 {
                     dctxPtr->dStage = dstage_copyDirect;
                     break;
@@ -1299,7 +1355,7 @@ size_t LZ6F_decompress(LZ6F_decompressionContext_t decompressionContext,
                 int (*decoder)(const char*, char*, int, int, const char*, int);
                 int decodedSize;
 
-                if (dctxPtr->frameInfo.blockCodec == LZ6F_blockCodec_seq)
+                if (dctxPtr->curBlockSeq)
                     decoder = LZ6F_localLZ6_decompress_seq;
                 else if (dctxPtr->frameInfo.blockMode == LZ6F_blockLinked)
                     decoder = LZ6_decompress_safe_usingDict;
@@ -1326,7 +1382,7 @@ size_t LZ6F_decompress(LZ6F_decompressionContext_t decompressionContext,
                 int (*decoder)(const char*, char*, int, int, const char*, int);
                 int decodedSize;
 
-                if (dctxPtr->frameInfo.blockCodec == LZ6F_blockCodec_seq)
+                if (dctxPtr->curBlockSeq)
                     decoder = LZ6F_localLZ6_decompress_seq;
                 else if (dctxPtr->frameInfo.blockMode == LZ6F_blockLinked)
                     decoder = LZ6_decompress_safe_usingDict;
