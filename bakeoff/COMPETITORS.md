@@ -108,3 +108,62 @@ es su clase; nuestro seq lo bate por 33 pts de ratio con 7x menos decode.
 - misa77 0.6.0 (13 commits, v0.x): formato inestable, sin safe-decoder para
   su nivel 4. Riesgo de adopción alto para terceros, pero la ingeniería de
   decode es real y su presencia en lzbench/TurboBench le da visibilidad.
+
+
+---
+
+## Round 2 (post LZ6S2): Silesia.tar — el espejo que revela el sesgo AIT
+
+Corpus: Silesia.tar (211,957,760 bytes, 12 archivos heterogéneos). Misma
+metodología; gzip -6 como ancla (25 enc / ~174 dec MB/s).
+
+| codec | csize | ratio | enc MB/s | dec MB/s |
+|---|---:|---:|---:|---:|
+| zstd -9 | 59,071,826 | 27.87% | 53 | 656 |
+| **lz6 seq L15** | **62,437,010** | **29.46%** | **2.2** | **141** |
+| lizard -45 | 66,676,865 | 31.46% | 18.8 | 1,078 |
+| zstd -3 | 66,133,605 | 31.20% | 158 | 702 |
+| **lz6 --hc -15 (frame)** | **65,237,073** | **30.78%** | **2.7** | **994** |
+| gzip -6 (ancla) | 68,235,411 | 32.19% | 25 | ~174 |
+| zstd -1 | 73,193,861 | 34.53% | 348 | 1,135 |
+| misa77 -4 | 75,259,843 | 35.51% | 6.6 | 1,028 |
+| **lz6 seq L2** | **90,730,094** | **42.81%** | **99** | **272** |
+| misa77 -1 | 90,386,470 | 42.64% | 49.3 | 4,131 |
+| lz4 | 100,881,076 | 47.59% | 512 | 3,244 |
+| lizard -10 | 103,401,614 | 48.78% | 433 | 2,984 |
+
+### Hallazgos que cambian el roadmap
+
+1. **La corona de ratio es específica de AIT.** En AIT nuestro L2 (42.61%)
+   aplasta a zstd -1 (59.91%); en Silesia zstd -1 (34.53%) nos pasa por
+   arriba con 8 puntos y decodifica 4x más rápido. La brecha se concentra
+   en los binarios grandes (mozilla 51MB, nci): literal coding y match
+   strategy genéricas de zstd vs nuestra dependencia de transforms
+   específicas (plane/PRNG) que no cubren estos datos.
+
+2. **Saturación de hash table a escala.** Con 100MB+ de input y 8M buckets
+   (L2), las cadenas se saturan y la búsqueda shallow (searchNum=2) agarra
+   candidatos recientes de baja calidad. Medido: en el slice de 100MB,
+   bloques de 16MB (cadenas cortas) comprimen 4.5 pts MEJOR que bloques de
+   64/100MB con la misma ventana de 32MB. En mozilla-type data el efecto
+   domina.
+
+3. **El default B6 del CLI era el peor punto para seq en Silesia** (48.58%
+   vs 42.81% de B7 — 12MB de diferencia por dead zones de frontera con la
+   ventana de 32MB). El default seq ahora es B7 (bloque único hasta 256MB,
+   ~3.5GB RAM); AIT sin cambios (bloque único igual).
+
+4. **El HC frame (L15) es competitivo en Silesia** (30.78% @ 994 MB/s dec —
+   7x nuestro seq L15 con 1.3 pts peor ratio): el decoder LZ del frame con
+   wildcopy sigue siendo la máquina de decode rápido del proyecto.
+
+### Roadmap revisado (por evidencia)
+
+1. **Literal coding para binarios** — el gap de Silesia vive en mozilla/nci:
+   FSE literals con contexts binarios (zstd-style offsets/extended contexts)
+   o el modo order-1 generalizado con lazyness de tablas.
+2. **Matcher a escala** — searchNum adaptativo a la saturación de cadenas o
+   hash más ancho en niveles bajos: recupera ratio en archivos grandes sin
+   tocar encode speed en los chicos.
+3. **Weissman del challenge**: re-corrida AIT con la build final dio L2
+   5,597,278 / L15 5,362,556 — sin cambios vs lo registrado.

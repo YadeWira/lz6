@@ -445,19 +445,20 @@ int main(int argc, char** argv)
        explicitly, and this is a single-file compression of a real
        (non-stdin) input. Blocks compress independently (no cross-block
        back-references; see LZ6IO's default block-independence mode), so an
-       input spanning multiple blocks pays a per-boundary ratio cost. Once
-       the input no longer fits in one default-size (B5, 16MB) block, bump
-       to B6 (64MB): measured ~0.9-1% smaller output on multi-block inputs
-       for a memory/time cost that is only paid on inputs large enough to
-       matter. Deliberately capped at B6 -- B7 was not measured for this
-       policy. Multi-file (-m) and benchmark runs are left at the fixed
-       default since one blockSizeID is shared across all their inputs. */
+       input spanning multiple blocks pays a per-boundary ratio cost — and
+       with seq blocks the 32MB match window makes wide-boundary dead zones
+       expensive on self-similar data (measured on Silesia: seq @ B6
+       48.58% vs B7 42.81% on the full tar). Seq levels therefore default
+       to B7 (single block up to 256MB, ~3.5GB peak RAM); the HC frame
+       codec keeps the measured B6 bump. Multi-file (-m) and benchmark
+       runs are left at the fixed default since one blockSizeID is shared
+       across all their inputs. */
     if (!decode && !multiple_inputs && !blockSizeIdUserSet
         && input_filename && strcmp(input_filename, stdinmark) != 0)
     {
         unsigned long long const knownSize = LZ6IO_GetFileSize(input_filename);
         if (knownSize > (unsigned long long)blockSize)
-            blockSize = LZ6IO_setBlockSizeID(6);
+            blockSize = LZ6IO_setBlockSizeID(forceHC ? 6 : 7);
     }
 
     if (!decode) DISPLAYLEVEL(4, "Blocks size : %i KB\n", blockSize>>10);
