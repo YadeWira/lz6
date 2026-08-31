@@ -15,6 +15,7 @@
 #include <string.h>
 #include <limits.h>
 #include <math.h>
+#include <stdio.h>
 
 /* ---- symbol tables (match ozip's ozf3.c) ---- */
 #define LL_CODES 36
@@ -402,6 +403,9 @@ static size_t compress_normal(const char* src, size_t srcSize,
             }
             /* order-1 pays off when it cuts entropy > 10% (text corpora
              * measure 0.79-0.86 H1/H0; binary stays ~1.0) */
+            if (getenv("LZ6_SEQ_VERBOSE"))
+                fprintf(stderr, "seq: lit gate h0=%.3f h1=%.3f ratio=%.3f lit_count=%d\n",
+                        h0, h1, h0 ? h1 / h0 : 1.0, lit_count);
             if (h1 < h0 * 0.90) {
                 /* 16-context version (lit_mode=6): context = prev>>4.
                  * Header is 16*513 = 8KB vs 65KB for the 256-ctx mode,
@@ -541,6 +545,9 @@ static size_t compress_normal(const char* src, size_t srcSize,
                 }
             }
         }
+        if (getenv("LZ6_SEQ_VERBOSE"))
+            fprintf(stderr, "seq: lit compete hsz=%zu lit_sz=%zu ctx_sz=%zu (mode16=%d) lit_count=%d\n",
+                    hsz, lit_sz, ctx_sz, ctx_mode16, lit_count);
         if (hsz > 0 && (ctx_sz == 0 || hsz <= ctx_sz) &&
             (lit_sz == 0 || (size_t)hsz <= lit_sz + (size_t)lit_sz / 50)) {
             /* Huffman wins ties and near-ties (within 2%): its table
@@ -996,12 +1003,17 @@ size_t LZ6_compress_seq(const char* src, size_t srcSize,
      * normal pass and keep the smaller. */
     if (plane_len > 0 && plane_len <= dstCap && plane_decisive &&
         plane_len * 5 <= srcSize * 4) {
+        if (getenv("LZ6_SEQ_VERBOSE"))
+            fprintf(stderr, "seq: PLANE-DECISIVE len=%zu (src=%zu)\n", plane_len, (size_t)srcSize);
         memcpy(dst, plane_buf, plane_len);
         free(plane_buf);
         return plane_len;
     }
 
     size_t normal_len = compress_normal(src, srcSize, dst, dstCap, level);
+    if (getenv("LZ6_SEQ_VERBOSE"))
+        fprintf(stderr, "seq: plane=%zu normal=%zu -> %s\n", plane_len, normal_len,
+                (plane_len && plane_len < normal_len) ? "PLANE" : "NORMAL");
     if (plane_len > 0 && plane_len <= dstCap &&
         (normal_len == 0 || plane_len < normal_len)) {
         memcpy(dst, plane_buf, plane_len);

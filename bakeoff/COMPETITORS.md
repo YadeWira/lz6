@@ -167,3 +167,31 @@ metodología; gzip -6 como ancla (25 enc / ~174 dec MB/s).
    tocar encode speed en los chicos.
 3. **Weissman del challenge**: re-corrida AIT con la build final dio L2
    5,597,278 / L15 5,362,556 — sin cambios vs lo registrado.
+
+### Round 3: el bug del plane gate en texto (2cb604a)
+
+El gate "decisivo" del plane comparaba contra 80% del input en vez de
+contra el bloque normal y SALTEABA el normal pass. El gate de skew
+(min lane < 5 b/B) pasa en TEXTO (lanes stride-2 de una novela: 4-4.5
+b/B — sintonizado solo para los floats E/F/G). Resultado: dickens/
+reymont/mozilla comprimían por plane con lanes a L1 hardcodeado y el
+order-1 literal coding nunca corría (L2 = L15 byte-idéntico).
+
+Fix: el salteo solo con skew extremo (min lane <= 2 b/B — planos de
+exponentes float); el resto corre el normal pass y compara.
+
+Per-file CLI post-fix: L15 agregado 29.46% -> 27.91% (empate con
+zstd -9, 0.04 pts atrás), L2 37.05% (zstd -1: 34.53%). dickens
+57.16 -> 32.95, reymont 52.03 -> 24.20 (gana a zstd -9), mozilla
+53.52 -> 33.83. Floats (mr/sao/x-ray) intactos.
+
+### Pendiente de investigación: single-block vs per-file (~5%)
+
+El tar como UN bloque L15 = 62.4M vs la suma por archivo = 59.1M.
+Instrumentación (LZ6_SEQ_VERBOSE=1): en el tar el plane se rechaza
+(lanes mixtos >= 5 b/B) y un solo modo de literales (o1-256, que ganó
+a huffman 16.79 vs 16.94 MB) sirve a 17M literales mezclados; por
+archivo, cada uno adapta (o1 en texto, plane en sao ~0.75M, huf donde
+gana). La solución natural es segmentación por contenido (LZ6S3):
+detectar transiciones de entropía y trozar el bloque interno por
+región, con modo de literales propio por segmento.
