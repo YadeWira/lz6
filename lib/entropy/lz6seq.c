@@ -987,13 +987,14 @@ size_t LZ6_compress_seq(const char* src, size_t srcSize,
             if (plane_len == 0) { free(plane_buf); plane_buf = NULL; }
         }
     }
-    /* A plane block at <=80% of the input wins against the normal block
-     * on every observed file (E: 0.80, F: 0.80, G: 0.30); the plane gate
-     * (lane entropy < 5 b/B) already excludes text/binary files with
-     * weak lane skew. Lanes are compressed internally at level 1, so the
-     * outer level is irrelevant for these files — skip the normal pass
-     * regardless of level. */
-    if (plane_len > 0 && plane_len <= dstCap &&
+    /* A plane block wins without running the normal pass ONLY when the
+     * lane skew is extreme (min lane <= 2 b/B: float exponent planes —
+     * E/G, where the normal pass cannot compete). The old "plane <= 80%
+     * of input" gate also fired on TEXT (stride-2 lanes of a novel sit at
+     * 4-4.5 b/B), nuking a normal pass that would have compressed 15+
+     * points better with order-1 literals. Everything else: run the
+     * normal pass and keep the smaller. */
+    if (plane_len > 0 && plane_len <= dstCap && plane_decisive &&
         plane_len * 5 <= srcSize * 4) {
         memcpy(dst, plane_buf, plane_len);
         free(plane_buf);
