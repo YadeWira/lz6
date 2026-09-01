@@ -1453,6 +1453,15 @@ static size_t decode_normal(const char* src, size_t srcSize,
         if (md < 1 || md > op || op + ml > isize) goto fail;
         if (md == 1) memset(out + op, out[op - 1], (size_t)ml);
         else if (md >= 8 && ml <= 8 && op + 8 <= isize) memcpy(out + op, out + op - md, 8);   /* padded fast path */
+        else if ((size_t)md >= 16 && ml >= 16 && (size_t)md >= (size_t)ml) {
+            /* non-overlapping mid-size copy: inlined 16B moves beat the
+             * libc call (no overlap: md >= 16 keeps the source 16 bytes
+             * behind the write cursor) */
+            size_t k = 0;
+            for (; k + 16 <= (size_t)ml; k += 16)
+                memcpy(out + op + k, out + op - md + k, 16);
+            if (k < (size_t)ml) memcpy(out + op + k, out + op - md + k, (size_t)ml - k);
+        }
         else if ((size_t)md >= (size_t)ml) memcpy(out + op, out + op - md, (size_t)ml);
         else {
             memcpy(out + op, out + op - md, (size_t)md);
