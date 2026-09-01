@@ -78,6 +78,9 @@ lz6seq_test: $(LZ6DIR)/lz6.o $(LZ6DIR)/lz6hc.o $(LZ6DIR)/entropy/lz6fse.o $(LZ6D
 seqframetest: $(LZ6DIR)/lz6.o $(LZ6DIR)/lz6hc.o $(LZ6DIR)/lz6frame.o $(LZ6DIR)/xxhash.o $(LZ6DIR)/entropy/lz6fse.o $(LZ6DIR)/entropy/lz6rc.o $(LZ6DIR)/entropy/lz6seq.o $(LZ6DIR)/entropy/lz6huf.o seqframetest.o
 	$(CC) $(FLAGS) $^ -o $@$(EXT) -lm
 
+blockwalk: $(LZ6DIR)/lz6.o $(LZ6DIR)/lz6hc.o $(LZ6DIR)/xxhash.o $(LZ6DIR)/entropy/lz6fse.o $(LZ6DIR)/entropy/lz6rc.o $(LZ6DIR)/entropy/lz6seq.o $(LZ6DIR)/entropy/lz6huf.o blockwalk.o
+	$(CC) $(FLAGS) $^ -o $@$(EXT) -lm
+
 lz6_32: $(LZ6DIR)/lz6.c $(LZ6DIR)/lz6hc.c $(LZ6DIR)/lz6frame.c $(LZ6DIR)/xxhash.c bench.c lz6io.c lz6cli.c
 	$(CC) -m32 $(FLAGS) $^ -o $@$(EXT)
 

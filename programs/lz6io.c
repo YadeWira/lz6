@@ -466,7 +466,8 @@ static int LZ6IO_compressFilename_extRess(cRess_t ress, const char* srcFileName,
             /* content-segmented: windows of windowSize bytes; a block is
              * closed when a window's byte-entropy diverges from the open
              * segment's profile (or the max block size is reached) */
-            size_t const minSeg = (size_t)4 MB < (size_t)blockSize ? (size_t)4 MB : blockSize;
+            size_t minSeg = (size_t)4 MB < (size_t)blockSize ? (size_t)4 MB : blockSize;
+            if (getenv("LZ6_SEG_MINSEG")) minSeg = (size_t)(atof(getenv("LZ6_SEG_MINSEG")) * 1048576.0);
             unsigned char* const segBuf = (unsigned char*)srcBuffer;
             double threshold = 1.0;    /* H0 cut: |wH0 - sH0|. An H1
                                           (order-1) signal was tried and
