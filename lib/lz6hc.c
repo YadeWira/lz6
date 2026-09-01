@@ -108,6 +108,22 @@ static int LZ6_alloc_mem_HC_wl(LZ6HC_Data_Structure* ctx, int compressionLevel,
     }
     LZ6HC_capParamsToSize(&ctx->params, maxSrcSize);
 
+    /* density-aware hash widening (seq only, chain strategies only):
+     * shallow searches (fast/price_fast/lowest_price) pick the first few
+     * chain candidates, so they degrade when hash buckets saturate on
+     * large inputs — L2's hashLog 13 leaves ~12k positions per bucket at
+     * 100MB (widening 13->23+ recovers 2.4MB / 2.3pts on a 100MB Silesia
+     * slice). Scale the main hash with the input size (density <= ~2),
+     * capped at 2^26 (256MB table). The BT strategies (L11-15) search
+     * deeper and measured WORSE with a widened table; the frame codec
+     * (maxWindowLog 24) stays byte-identical. */
+    if (maxWindowLog >= 25 &&
+        ctx->params.strategy <= LZ6HC_lowest_price) {
+        U32 sizeLog = LZ6HC_ceilLog2(maxSrcSize);
+        U32 widened = sizeLog > 26 ? 26 : sizeLog;
+        if (widened > ctx->params.hashLog) ctx->params.hashLog = widened;
+    }
+
     ctx->hashTable = (U32*) malloc(sizeof(U32)*(((size_t)1 << ctx->params.hashLog3)+((size_t)1 << ctx->params.hashLog)));
     if (!ctx->hashTable)
         return 0;
