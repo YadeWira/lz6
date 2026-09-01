@@ -114,11 +114,19 @@ size_t fse_read_table(const uint8_t* in, size_t in_len,
 
 /* Pre-built per-context table (freq normalized to shared M = 2^L_bits). */
 typedef struct {
+    uint8_t  s;             /* decoded symbol */
+    uint8_t  pad;
+    uint16_t f;             /* freq of s (M <= 4096 for o1 tables) */
+    int16_t  off;           /* slot - cumul[s] (always >= 0) */
+} fse_o1entry;
+
+typedef struct {
     int L_bits;
     unsigned M;
     unsigned freq[256];
     unsigned cumul[256];
     uint8_t* dtab;        /* decode lookup, M entries; NULL until built */
+    fse_o1entry* dcomp;   /* combined per-slot entries (decode side); NULL until read */
 } fse_ctx_table;
 
 /* Build a table from counts, normalized to the given L_bits.

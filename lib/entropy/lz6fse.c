@@ -662,6 +662,8 @@ int fse_ctx_table_build(fse_ctx_table* t, const unsigned counts[256],
 void fse_ctx_table_free(fse_ctx_table* t) {
     free(t->dtab);
     t->dtab = NULL;
+    free(t->dcomp);
+    t->dcomp = NULL;
 }
 
 size_t fse_ctx_table_write(const fse_ctx_table* t, uint8_t* out, size_t out_cap) {
@@ -707,6 +709,22 @@ size_t fse_ctx_table_read(fse_ctx_table* t, const uint8_t* in, size_t in_len) {
         while (f--) {
             if (slot >= t->M) { free(t->dtab); t->dtab = NULL; return 0; }
             t->dtab[slot++] = (uint8_t)i;
+        }
+    }
+    /* combined per-slot entries: {s, f, slot - cumul[s]} — one load per
+     * symbol in the o1 decode loops (freqs sum to exactly M, so every
+     * slot carries a symbol with f > 0) */
+    t->dcomp = (fse_o1entry*)malloc((size_t)t->M * sizeof(fse_o1entry));
+    if (!t->dcomp) { free(t->dtab); t->dtab = NULL; return 0; }
+    slot = 0;
+    for (int i = 0; i < 256; i++) {
+        unsigned f = t->freq[i];
+        while (f--) {
+            fse_o1entry* e = &t->dcomp[slot];
+            e->s = (uint8_t)i;
+            e->f = (uint16_t)t->freq[i];
+            e->off = (int16_t)((int)slot - (int)t->cumul[i]);
+            slot++;
         }
     }
     return 1 + 512;

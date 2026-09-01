@@ -1111,16 +1111,14 @@ static int lit_decode_chunk(lit_dec_t* L, uint8_t* out, int n, size_t room)
         int prev = L->prev6;
         for (int i = 0; i < n; i++) {
             const fse_ctx_table* t = &L->t6[prev >> 4];
-            unsigned s = t->dtab[x & (t->M - 1)];
-            unsigned f = t->freq[s];
-            if (f == 0) return -1;
-            out[i] = (uint8_t)s;
-            x = f * (x >> t->L_bits) + (x & (t->M - 1)) - t->cumul[s];
+            const fse_o1entry* e = &t->dcomp[x & (t->M - 1)];
+            out[i] = e->s;
+            x = e->f * (x >> t->L_bits) + (uint32_t)e->off;
             while (x < 0x10000u) {
                 if (sp >= L->s6e) return -1;
                 x = (x << 8) | *sp++;
             }
-            prev = (int)s;
+            prev = (int)e->s;
         }
         L->x6 = x; L->s6p = sp; L->prev6 = prev;
         return 0;
@@ -1131,16 +1129,14 @@ static int lit_decode_chunk(lit_dec_t* L, uint8_t* out, int n, size_t room)
         int prev = L->prev3;
         for (int i = 0; i < n; i++) {
             const fse_ctx_table* t = L->active3[prev] ? &L->t3[prev] : L->gtab3;
-            unsigned s = t->dtab[x & (t->M - 1)];
-            unsigned f = t->freq[s];
-            if (f == 0) return -1;
-            out[i] = (uint8_t)s;
-            x = f * (x >> t->L_bits) + (x & (t->M - 1)) - t->cumul[s];
+            const fse_o1entry* e = &t->dcomp[x & (t->M - 1)];
+            out[i] = e->s;
+            x = e->f * (x >> t->L_bits) + (uint32_t)e->off;
             while (x < 0x10000u) {
                 if (sp >= L->s3e) return -1;
                 x = (x << 8) | *sp++;
             }
-            prev = (int)s;
+            prev = (int)e->s;
         }
         L->x3 = x; L->s3p = sp; L->prev3 = prev;
         return 0;
