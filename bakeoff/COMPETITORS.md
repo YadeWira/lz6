@@ -185,6 +185,25 @@ zstd -9, 0.04 pts atrás), L2 37.05% (zstd -1: 34.53%). dickens
 57.16 -> 32.95, reymont 52.03 -> 24.20 (gana a zstd -9), mozilla
 53.52 -> 33.83. Floats (mr/sao/x-ray) intactos.
 
+### LZ6S3 implementado (segmentación por contenido)
+
+El loop de compresión del CLI lee ventanas de 256KB y corta un bloque
+cuando la entropía H0 de la ventana diverge >= 1.0 b/B del perfil del
+segmento abierto (segmento mínimo 4MB). Cada bloque = un
+LZ6_compress_seq completo con su propio modo de literales y
+transformación — la adaptación per-file dentro de un frame.
+
+Resultados Silesia.tar CLI: L2 42.81% -> 36.87%, L15 29.46% -> 28.34%
+(la suma per-file, 27.91%, es el techo: el detector no corta todas las
+fronteras). AIT byte-idéntico. Los umbrales son insensibles en 0.6-1.5.
+
+**Resultado negativo documentado**: un detector dual con H1 (order-1)
+por ventana fue probado y RECHAZADO — el H1 por ventana varía dentro de
+mozilla tanto como entre fronteras de archivo, así que los cortes
+espúrios cuestan más de lo que detectan (L2 +30KB, L15 +153KB).
+
+### Pendiente de investigación: single-block vs per-file (~5%)
+
 ### Pendiente de investigación: single-block vs per-file (~5%)
 
 El tar como UN bloque L15 = 62.4M vs la suma por archivo = 59.1M.

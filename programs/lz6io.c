@@ -468,7 +468,12 @@ static int LZ6IO_compressFilename_extRess(cRess_t ress, const char* srcFileName,
              * segment's profile (or the max block size is reached) */
             size_t const minSeg = (size_t)4 MB < (size_t)blockSize ? (size_t)4 MB : blockSize;
             unsigned char* const segBuf = (unsigned char*)srcBuffer;
-            double threshold = 1.0;
+            double threshold = 1.0;    /* H0 cut: |wH0 - sH0|. An H1
+                                          (order-1) signal was tried and
+                                          REJECTED: per-window H1 varies
+                                          within mozilla as much as across
+                                          file boundaries, so the spurious
+                                          cuts cost more than the catches */
             if (getenv("LZ6_SEG_THRESHOLD")) threshold = atof(getenv("LZ6_SEG_THRESHOLD"));
             unsigned s_hist[256] = {0}, w_hist[256];
             double s_H = 0.0; int s_has = 0;
@@ -482,7 +487,7 @@ static int LZ6IO_compressFilename_extRess(cRess_t ress, const char* srcFileName,
                     _H -= pr * log2(pr); } \
                 outH = _H; } while (0)
 
-            /* open segment = the first window */
+            /* profile the open segment (the first window) */
             {
                 unsigned hh[256] = {0};
                 for (size_t i = 0; i < segLen; i++) hh[segBuf[i]]++;
@@ -506,7 +511,6 @@ static int LZ6IO_compressFilename_extRess(cRess_t ress, const char* srcFileName,
                     for (size_t i = 0; i < readSize; i++) w_hist[segBuf[segLen + i]]++;
                     double w_H;
                     SEG_ENTROPY(w_hist, readSize, w_H);
-
                     int cut = 0;
                     if (s_has && segLen >= minSeg && fabs(w_H - s_H) >= threshold) cut = 1;
 
