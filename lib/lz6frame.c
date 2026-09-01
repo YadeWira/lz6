@@ -570,13 +570,23 @@ static size_t LZ6F_compressBlock(void* dst, const void* src, size_t srcSize,
         {
             if (r > srcSize - srcSize/4)   /* weak seq result: try light LZ */
             {
-                U32 lz = (U32)LZ6_compress_limitedOutput_withState(
-                    (LZ6_stream_t*)cctxPtr->lightStream, (const char*)src,
-                    (char*)(cSizePtr+4), (int)srcSize, (int)(srcSize-1));
-                if (lz && lz < (U32)r)
+                /* the light attempt goes to a scratch buffer: clobbering
+                 * the seq payload would leave the header promising a seq
+                 * block over LZ bytes when the light result loses */
+                BYTE* tmp = (BYTE*)malloc(srcSize);
+                if (tmp)
                 {
-                    LZ6F_writeLE32(cSizePtr, lz);   /* bit30 clear: light block */
-                    return lz + 4;
+                    U32 lz = (U32)LZ6_compress_limitedOutput_withState(
+                        (LZ6_stream_t*)cctxPtr->lightStream, (const char*)src,
+                        (char*)tmp, (int)srcSize, (int)(srcSize-1));
+                    if (lz && lz < (U32)r)
+                    {
+                        memcpy(cSizePtr+4, tmp, lz);
+                        LZ6F_writeLE32(cSizePtr, lz);   /* bit30 clear: light block */
+                        free(tmp);
+                        return lz + 4;
+                    }
+                    free(tmp);
                 }
             }
             LZ6F_writeLE32(cSizePtr, (U32)r | LZ6F_BLOCKSEQ_FLAG);

@@ -73,6 +73,7 @@
 #include <time.h>      /* clock */
 #include <sys/types.h> /* stat64 */
 #include <sys/stat.h>  /* stat64 */
+#include <math.h>       /* log2 */
 #include "lz6io.h"
 #include "lz6.h"       /* still required for legacy format */
 #include "lz6hc.h"     /* still required for legacy format */
@@ -425,12 +426,16 @@ static int LZ6IO_compressFilename_extRess(cRess_t ress, const char* srcFileName,
           DISPLAYLEVEL(3, "Warning : cannot determine uncompressed frame content size \n");
     }
 
-    /* read first block */
-    readSize  = fread(srcBuffer, (size_t)1, blockSize, srcFile);
+    /* LZ6S3 seq frames: content-segmented blocks. Read small windows,
+     * track the byte-entropy profile, and close a block (compressUpdate)
+     * whenever the profile shifts — each segment then gets its own
+     * literal mode / transform, like per-file coding inside one frame. */
+    size_t const windowSize = (g_blockCodec == 1 && blockSize > 256 KB) ? 256 KB : blockSize;
+    readSize  = fread(srcBuffer, (size_t)1, windowSize, srcFile);
     filesize += readSize;
 
-    /* single-block file */
-    if (readSize < blockSize)
+    /* single-block file (LZ/HC frames only; seq always segments) */
+    if (g_blockCodec != 1 && readSize < blockSize)
     {
         /* Compress in single pass */
         size_t cSize = LZ6F_compressFrame(dstBuffer, dstBufferSize, srcBuffer, readSize, &prefs);
@@ -456,6 +461,102 @@ static int LZ6IO_compressFilename_extRess(cRess_t ress, const char* srcFileName,
         compressedfilesize += headerSize;
 
         /* Main Loop */
+        if (g_blockCodec == 1)
+        {
+            /* content-segmented: windows of windowSize bytes; a block is
+             * closed when a window's byte-entropy diverges from the open
+             * segment's profile (or the max block size is reached) */
+            size_t const minSeg = (size_t)4 MB < (size_t)blockSize ? (size_t)4 MB : blockSize;
+            unsigned char* const segBuf = (unsigned char*)srcBuffer;
+            double threshold = 1.0;
+            if (getenv("LZ6_SEG_THRESHOLD")) threshold = atof(getenv("LZ6_SEG_THRESHOLD"));
+            unsigned s_hist[256] = {0}, w_hist[256];
+            double s_H = 0.0; int s_has = 0;
+            size_t segLen = readSize, outSize;
+
+            #define SEG_ENTROPY(hist, cnt, outH) do { \
+                unsigned _h[256]; memcpy(_h, hist, sizeof(_h)); \
+                double _H = 0; for (int b = 0; b < 256; b++) { \
+                    if (!_h[b]) continue; \
+                    double pr = (double)_h[b] / (double)(cnt); \
+                    _H -= pr * log2(pr); } \
+                outH = _H; } while (0)
+
+            /* open segment = the first window */
+            {
+                unsigned hh[256] = {0};
+                for (size_t i = 0; i < segLen; i++) hh[segBuf[i]]++;
+                memcpy(s_hist, hh, sizeof(s_hist));
+                SEG_ENTROPY(s_hist, segLen, s_H);
+                s_has = 1;
+            }
+
+            while (segLen > 0)
+            {
+                /* read one more window into the open segment */
+                size_t room = blockSize - segLen < windowSize ? blockSize - segLen : windowSize;
+                if (room == 0) room = windowSize;   /* blockSize boundary handled below */
+                if (room > 0) {
+                    readSize = fread(segBuf + segLen, (size_t)1, room, srcFile);
+                    filesize += readSize;
+                } else readSize = 0;
+
+                if (readSize > 0) {
+                    memset(w_hist, 0, sizeof(w_hist));
+                    for (size_t i = 0; i < readSize; i++) w_hist[segBuf[segLen + i]]++;
+                    double w_H;
+                    SEG_ENTROPY(w_hist, readSize, w_H);
+
+                    int cut = 0;
+                    if (s_has && segLen >= minSeg && fabs(w_H - s_H) >= threshold) cut = 1;
+
+                    if (cut) {
+                        /* close the open segment */
+                        outSize = LZ6F_compressUpdate(ctx, dstBuffer, dstBufferSize, srcBuffer, segLen, NULL);
+                        if (LZ6F_isError(outSize)) EXM_THROW(34, "Compression failed : %s", LZ6F_getErrorName(outSize));
+                        compressedfilesize += outSize;
+                        DISPLAYUPDATE(2, "\rRead : %u MB   ==> %.2f%%   ", (unsigned)(filesize>>20), (double)compressedfilesize/(filesize+!filesize)*100);
+                        sizeCheck = fwrite(dstBuffer, 1, outSize, dstFile);
+                        if (sizeCheck!=outSize) EXM_THROW(35, "Write error : cannot write compressed block");
+                        /* reopen with the just-read window */
+                        memmove(segBuf, segBuf + segLen, readSize);
+                        memcpy(s_hist, w_hist, sizeof(s_hist));
+                        s_H = w_H;
+                        segLen = readSize;
+                        s_has = 1;
+                    } else {
+                        /* merge the window into the open segment */
+                        for (int b = 0; b < 256; b++) s_hist[b] += w_hist[b];
+                        segLen += readSize;
+                        SEG_ENTROPY(s_hist, segLen, s_H);
+                    }
+                    if (segLen >= blockSize) {
+                        outSize = LZ6F_compressUpdate(ctx, dstBuffer, dstBufferSize, srcBuffer, segLen, NULL);
+                        if (LZ6F_isError(outSize)) EXM_THROW(34, "Compression failed : %s", LZ6F_getErrorName(outSize));
+                        compressedfilesize += outSize;
+                        sizeCheck = fwrite(dstBuffer, 1, outSize, dstFile);
+                        if (sizeCheck!=outSize) EXM_THROW(35, "Write error : cannot write compressed block");
+                        segLen = 0;
+                        memset(s_hist, 0, sizeof(s_hist));
+                        s_H = 0.0; s_has = 0;
+                    }
+                }
+
+                if (readSize == 0 && feof(srcFile)) {
+                    /* EOF: flush the open segment as the final block */
+                    if (segLen > 0) {
+                        outSize = LZ6F_compressUpdate(ctx, dstBuffer, dstBufferSize, srcBuffer, segLen, NULL);
+                        if (LZ6F_isError(outSize)) EXM_THROW(34, "Compression failed : %s", LZ6F_getErrorName(outSize));
+                        compressedfilesize += outSize;
+                        sizeCheck = fwrite(dstBuffer, 1, outSize, dstFile);
+                        if (sizeCheck!=outSize) EXM_THROW(35, "Write error : cannot write compressed block");
+                        segLen = 0;
+                    }
+                    break;
+                }
+            }
+        }
+        else
         while (readSize>0)
         {
             size_t outSize;
