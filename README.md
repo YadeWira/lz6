@@ -1,91 +1,54 @@
-Introduction
--------------------------
+# lz6
 
-LZ6 is a modification of [LZ4] which gives a better ratio at cost of slower compression and decompression speed. 
-**In my experiments there is no open-source bytewise compressor that gives better ratio than lz6hc.**
-The improvement in compression ratio is caused mainly because of:
-- 22-bit dictionary instead of 16-bit in LZ4
-- using 4 new parsers (including an optimal parser) optimized for a bigger dictionary
-- support for 3-byte long matches (MINMATCH = 3)
-- a special 1-byte codeword for the last occured offset
+**lz6** is an experimental lossless compressor: maximum compression with fast decompression.
 
-|Branch      |Status   |
-|------------|---------|
-|master      | [![Build Status][travisMasterBadge]][travisLink] [![Build status][AppveyorMasterBadge]][AppveyorLink]  |
-|dev         | [![Build Status][travisDevBadge]][travisLink]    [![Build status][AppveyorDevBadge]][AppveyorLink]     |
+It started as a fork of [LZ5 v1.5] (itself a LZ4 derivative) and grew into its own codec family:
 
-[travisMasterBadge]: https://travis-ci.org/inikep/lz6.svg?branch=master "Continuous Integration test suite"
-[travisDevBadge]: https://travis-ci.org/inikep/lz6.svg?branch=dev "Continuous Integration test suite"
-[travisLink]: https://travis-ci.org/inikep/lz6
-[AppveyorMasterBadge]: https://ci.appveyor.com/api/projects/status/o0ib75nwokjiui36/branch/master?svg=true "Visual test suite"
-[AppveyorDevBadge]: https://ci.appveyor.com/api/projects/status/o0ib75nwokjiui36/branch/dev?svg=true "Visual test suite"
-[AppveyorLink]: https://ci.appveyor.com/project/inikep/lz6
-[LZ4]: https://github.com/Cyan4973/lz4
+- **Frame LZ/HC codec** — the classic LZ5-style byte-wise matcher, hardened and tuned.
+- **seq engine** — an LZ match finder feeding an FSE/rANS entropy stage, with per-data-type transforms (byte-plane for interleaved floats, PRNG regeneration for pseudo-random data, order-0/order-1/huffman literal coding).
+- **LZ6S2** — per-block codec dispatch: every block inside one frame picks its own engine (seq / light-LZ / raw escape).
+- **LZ6S3** — content segmentation: the compressor tracks the byte-entropy profile while reading and cuts blocks at content shifts, so each region gets its own literal mode and transform.
 
+## Usage
 
-Benchmarks
--------------------------
+```
+lz6 -2 file              # compress (seq engine, best ratio/speed trade)
+lz6 -15 file             # maximum compression
+lz6 --hc -9 file         # classic LZ6-HC frame codec
+lz6 -d file.lz6          # decompress (codec-agnostic, per-block dispatch)
+lz6 -2 -c file | lz6 -d -c     # pipes
+lz6 -m file1 file2       # multiple inputs
+```
 
-In our experiments decompression speed of LZ6 is from 600-1600 MB/s. It's slower than LZ4 but much faster than zstd and brotli.
-With the compresion ratio is opposite: LZ6 is better than LZ4 but worse than zstd and brotli.
+Levels 1-15 select the seq engine; the default level uses the fast LZ frame codec. Blocks up to 256MB, match windows up to 32MB. Frames are self-describing and independently decodable per block.
 
-| Compressor name             | Compression| Decompress.| Compr. size | Ratio |
-| ---------------             | -----------| -----------| ----------- | ----- |
-| memcpy                      |  8533 MB/s |  8533 MB/s |   104857600 |100.00 |
-| lz4 r131                    |   480 MB/s |  2275 MB/s |    64872315 | 61.87 |
-| lz4hc r131 -1               |    82 MB/s |  1896 MB/s |    59448496 | 56.69 |
-| lz4hc r131 -3               |    54 MB/s |  1932 MB/s |    56343753 | 53.73 |
-| lz4hc r131 -5               |    41 MB/s |  1969 MB/s |    55271312 | 52.71 |
-| lz4hc r131 -7               |    31 MB/s |  1969 MB/s |    54889301 | 52.35 |
-| lz4hc r131 -9               |    24 MB/s |  1969 MB/s |    54773517 | 52.24 |
-| lz4hc r131 -11              |    20 MB/s |  1969 MB/s |    54751363 | 52.21 |
-| lz4hc r131 -13              |    17 MB/s |  1969 MB/s |    54744790 | 52.21 |
-| lz4hc r131 -15              |    14 MB/s |  2007 MB/s |    54741827 | 52.21 |
-| lz6 v1.4                    |   191 MB/s |   892 MB/s |    56183327 | 53.58 |
-| lz6hc v1.4 level 1          |   468 MB/s |  1682 MB/s |    68770655 | 65.58 |
-| lz6hc v1.4 level 2          |   337 MB/s |  1574 MB/s |    65201626 | 62.18 |
-| lz6hc v1.4 level 3          |   232 MB/s |  1330 MB/s |    61423270 | 58.58 |
-| lz6hc v1.4 level 4          |   129 MB/s |   894 MB/s |    55011906 | 52.46 |
-| lz6hc v1.4 level 5          |    99 MB/s |   840 MB/s |    52790905 | 50.35 |
-| lz6hc v1.4 level 6          |    41 MB/s |   894 MB/s |    52561673 | 50.13 |
-| lz6hc v1.4 level 7          |    35 MB/s |   875 MB/s |    50947061 | 48.59 |
-| lz6hc v1.4 level 8          |    23 MB/s |   812 MB/s |    50049555 | 47.73 |
-| lz6hc v1.4 level 9          |    17 MB/s |   727 MB/s |    48718531 | 46.46 |
-| lz6hc v1.4 level 10         |    13 MB/s |   728 MB/s |    48109030 | 45.88 |
-| lz6hc v1.4 level 11         |  9.18 MB/s |   719 MB/s |    47438817 | 45.24 |
-| lz6hc v1.4 level 12         |  7.96 MB/s |   752 MB/s |    47063261 | 44.88 |
-| lz6hc v1.4 level 13         |  5.38 MB/s |   710 MB/s |    46383307 | 44.23 |
-| lz6hc v1.4 level 14         |  4.12 MB/s |   669 MB/s |    45843096 | 43.72 |
-| lz6hc v1.4 level 15         |  2.16 MB/s |   619 MB/s |    45767126 | 43.65 |
-| zstd v0.5.0 level 1         |   249 MB/s |   569 MB/s |    51121791 | 48.75 |
-| zstd v0.5.0 level 2         |   177 MB/s |   523 MB/s |    49692088 | 47.39 |
-| zstd v0.5.0 level 5         |    72 MB/s |   491 MB/s |    46373509 | 44.23 |
-| zstd v0.5.0 level 9         |    17 MB/s |   523 MB/s |    43876466 | 41.84 |
-| zstd v0.5.0 level 13        |    10 MB/s |   524 MB/s |    42305338 | 40.35 |
-| zstd v0.5.0 level 17        |  3.21 MB/s |   524 MB/s |    41990713 | 40.05 |
-| zstd v0.5.0 level 20        |  2.76 MB/s |   495 MB/s |    41862877 | 39.92 |
-| brotli 2015-10-29 -1        |    86 MB/s |   208 MB/s |    47882059 | 45.66 |
-| brotli 2015-10-29 -3        |    60 MB/s |   214 MB/s |    47451223 | 45.25 |
-| brotli 2015-10-29 -5        |    17 MB/s |   217 MB/s |    43363897 | 41.36 |
-| brotli 2015-10-29 -7        |  4.80 MB/s |   227 MB/s |    41222719 | 39.31 |
-| brotli 2015-10-29 -9        |  2.23 MB/s |   222 MB/s |    40839209 | 38.95 |
+## Build
 
-The above results are obtained with [lzbench] using 1 core of Intel Core i5-4300U, Windows 10 64-bit (MinGW-w64 compilation under gcc 4.8.3) with 3 iterations. 
-The ["win81"] input file (100 MB) is a concatanation of carefully selected files from installed version of Windows 8.1 64-bit. 
+Linux/macOS (gcc or clang, C99):
 
-[lzbench]: https://github.com/inikep/lzbench
-["win81"]: https://docs.google.com/uc?id=0BwX7dtyRLxThRzBwT0xkUy1TMFE&export=download
+```
+make -C programs lz6
+```
 
+Windows (mingw-w64 cross-compile from Linux, or MSVC):
 
-Documentation
--------------------------
+```
+./build_windows.sh      # win64 + win32, static, Win7 SP1+
+```
 
-The raw LZ6 block compression format is detailed within [lz6_Block_format].
+## Benchmarks
 
-To compress an arbitrarily long file or data stream, multiple blocks are required.
-Organizing these blocks and providing a common header format to handle their content
-is the purpose of the Frame format, defined into [lz6_Frame_format].
-Interoperable versions of LZ6 must respect this frame format.
+Coming soon — the benchmark suite will be published once the testing hardware upgrade is complete. Measurement scripts and corpora tooling live in [bakeoff/](bakeoff/).
 
-[lz6_Block_format]: lz6_Block_format.md
-[lz6_Frame_format]: lz6_Frame_format.md
+## Documentation
+
+- [lz6_Block_format.md](lz6_Block_format.md) — raw block format
+- [lz6_Frame_format.md](lz6_Frame_format.md) — frame format (block codec flags, per-block dispatch)
+- [bakeoff/COMPETITORS.md](bakeoff/COMPETITORS.md) — competitive analysis vs zstd, lizard, misa77
+- `lib/entropy/lz6seq.h` — the seq codec API
+
+## Status
+
+Experimental, format may change. The seq codec and the frame layer are fuzz-tested (corrupt raw streams + corrupted frames through the full `LZ6F_decompress` path); binaries are VM-tested on Windows 7 SP1 x64 and Windows 10.
+
+[LZ5 v1.5]: https://github.com/inikep/lz5
