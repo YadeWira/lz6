@@ -47,14 +47,14 @@
 *  OS-specific Includes
 ******************************/
 #if defined(MSDOS) || defined(OS2) || defined(WIN32) || defined(_WIN32)
-#  if defined(_POSIX_C_SOURCE) || defined(_POSIX_SOURCE) || defined(_MSC_VER)
+#  if defined(_POSIX_C_SOURCE) || defined(_POSIX_SOURCE) || defined(_MSC_VER) || defined(__MINGW32__)
 #    include <fcntl.h>   /* _O_BINARY */
 #    include <io.h>      /* _setmode, _fileno, _get_osfhandle */
 #    include <windows.h> /* DeviceIoControl, HANDLE, FSCTL_SET_SPARSE */
 #    define SET_BINARY_MODE(file) { int unused=_setmode(_fileno(file), _O_BINARY); (void)unused; }
 #    define SET_SPARSE_FILE_MODE(file) { DWORD dw; DeviceIoControl((HANDLE) _get_osfhandle(_fileno(file)), FSCTL_SET_SPARSE, 0, 0, 0, 0, &dw, 0); }
 #  else
-#    define _POSIX_SOURCE 1          /* enable %llu with MinGW on Windows */ 
+#    define _POSIX_SOURCE 1          /* enable %llu with MinGW on Windows */
 #    define SET_BINARY_MODE(file)
 #    define SET_SPARSE_FILE_MODE(file)
 #  endif

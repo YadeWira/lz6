@@ -150,10 +150,12 @@ static inline uint32_t rans_enc_renorm(uint32_t x, int L_bits, unsigned f, uint8
  * hot path below still uses `x / f`, relying on GCC to lower it to
  * libdivide on x86-64. The Lemire routine documents the shape so
  * a future patch can swap it in. */
+#if defined(__SIZEOF_INT128__)
 static inline uint32_t lemire_q(uint32_t x, uint64_t M, int l) {
     __uint128_t p = (__uint128_t)x * M;
     return (uint32_t)(p >> (32 + l));
 }
+#endif
 static inline uint32_t lemire_compute_M(unsigned f, int* l_out) {
     int l = 0; while ((f >> l) > 1) l++;
     uint64_t M = ((1ULL << (32 + l)) - 1) / f + 1;
@@ -354,10 +356,13 @@ size_t fse_encode(const unsigned* syms, size_t n, int maxSym,
              * M computed once above (per call) from freq_tab so the M
              * for each symbol matches exactly the divisor used here.
              * Lemire's off-by-±1 estimate resolves via two cheap
-             * 64-bit adjusts. Total cost: 128-bit multiply (one
-             * instruction on x86-64) + two cmp/sub pairs, ~7 cycles
-             * vs ~30 for the `div` instruction we used to rely on. */
+              * 64-bit adjusts. Total cost: 128-bit multiply (one
+              * instruction on x86-64) + two cmp/sub pairs, ~7 cycles
+              * vs ~30 for the `div` instruction we used to rely on.
+              * 32-bit targets (no __uint128_t) fall back to plain div —
+              * same output, slower encode. */
             {
+            #if defined(__SIZEOF_INT128__)
                 uint64_t M_s = inv_arr[s];
                 uint32_t q = (uint32_t)((__uint128_t)x * M_s >> (32 + use_l));
                 uint64_t q_d = (uint64_t)q * f;
@@ -365,6 +370,9 @@ size_t fse_encode(const unsigned* syms, size_t n, int maxSym,
                 uint32_t r = (uint32_t)(x - q_d);
                 if (r >= f) { q++; r -= f; }         /* q was 1 too low */
                 x = q * M + c + r;
+            #else
+                x = (x / f) * M + c + (x % f);
+            #endif
             }
 #ifdef FSE_DEBUG
             if (n - 1 - j < 40 || refilled) {
