@@ -38,7 +38,19 @@ Windows (mingw-w64 cross-compile from Linux, or MSVC):
 
 ## Benchmarks
 
-Coming soon — the benchmark suite will be published once the testing hardware upgrade is complete. Measurement scripts and corpora tooling live in [bakeoff/](bakeoff/).
+Reference numbers (mem-to-mem, 2x Xeon E5-2697A v4; full matrix + scripts in [bakeoff/](bakeoff/)):
+
+| corpus | mode | ratio | enc MB/s | dec MB/s |
+|---|---|---:|---:|---:|
+| Silesia.tar | seq L2 | 36.21% | ~99 | ~270 |
+| Silesia.tar | seq L15 | 28.34% | ~2 | ~200 |
+| Silesia.tar | HC frame -15 | 30.78% | 2.7 | ~994 |
+| Silesia.tar | zstd -9 (ref) | 27.87% | 53 | 656 |
+| AIT A-H | seq L2 | 42.61% | ~120 | ~300 |
+| AIT A-H | seq L15 | 40.82% | ~15 | ~253 |
+| AIT A-H | zstd -1 (ref) | 59.91% | 413 | 1,322 |
+
+A complete competitive table (zstd, lizard, misa77, lz4, gzip) with methodology is in [bakeoff/COMPETITORS.md](bakeoff/COMPETITORS.md) and will be refreshed with the upcoming testing-hardware measurements.
 
 ## Documentation
 

@@ -1,3 +1,26 @@
+v1.6.1-pre
+- seq is now the compression engine of levels 1-15 inside the standard
+  .lz6 frame (the --seq side mode is gone); new magic-less per-block
+  codec dispatch (LZ6S2: seq / light-LZ / raw escape in one frame)
+- LZ6S3: content-segmented blocks — the CLI cuts blocks at entropy
+  profile shifts so each region gets its own literal mode and transform
+- fixed: plane transform skipped the normal pass on text (the lane-skew
+  gate passed on novels) — dickens 57.16% -> 32.95%, reymont to 24.20%
+- fixed: light-LZ fallback clobbered the seq payload when it lost
+- seq block default size B7 (single block up to 256MB); fixed blockwalk
+  diagnostic; MinGW binary-mode (pipes) fix; LZ6_SEG_MINSEG/THRESHOLD knobs
+- decode: streaming literals, dual-layout FSE tables, order-1 combined
+  entries, 16B inlined copies — Silesia L15 ~120 -> ~200 MB/s
+- encode: rep-stack MTF-3 in all HC strategies; 32MB windows; hash
+  widening by density (chain strategies); 32-bit __uint128_t fallback
+- Silesia.tar CLI: L2 42.81% -> 36.21%, L15 29.46% -> 28.34%; AIT
+  A-H L2 5,597,278 -> 5,497,008, L15 unchanged
+
+v1.6.0-pre
+- Windows x64/x86 cross-compile (static, Win7 SP1+): build_windows.sh
+- hardened decoder bounds (fuzz gate), frame format with 0x184D2207
+  seq-coded frames, 256MB chunk streaming, lz6io/CLI I/O error reporting
+
 v1.5
 - introduced compatibility with Visual C++ 2010 and newer
 - attached Visual Studio 2010 project
