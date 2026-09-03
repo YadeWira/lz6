@@ -497,15 +497,27 @@ static int LZ6IO_compressFilename_extRess(cRess_t ress, const char* srcFileName,
                 s_has = 1;
             }
 
-            while (segLen > 0)
+            while (segLen > 0 || !feof(srcFile))
             {
-                /* read one more window into the open segment */
+                /* read one more window into the open segment. If the
+                 * segment already fills the whole block there is no room:
+                 * flush it as a full block first, then read (never force a
+                 * read past the end of srcBuffer — that was a heap overflow
+                 * when segLen landed exactly on blockSize). */
+                if (segLen >= blockSize) {
+                    outSize = LZ6F_compressUpdate(ctx, dstBuffer, dstBufferSize, srcBuffer, segLen, NULL);
+                    if (LZ6F_isError(outSize)) EXM_THROW(34, "Compression failed : %s", LZ6F_getErrorName(outSize));
+                    compressedfilesize += outSize;
+                    sizeCheck = fwrite(dstBuffer, 1, outSize, dstFile);
+                    if (sizeCheck!=outSize) EXM_THROW(35, "Write error : cannot write compressed block");
+                    segLen = 0;
+                    memset(s_hist, 0, sizeof(s_hist));
+                    s_H = 0.0; s_has = 0;
+                    continue;
+                }
                 size_t room = blockSize - segLen < windowSize ? blockSize - segLen : windowSize;
-                if (room == 0) room = windowSize;   /* blockSize boundary handled below */
-                if (room > 0) {
-                    readSize = fread(segBuf + segLen, (size_t)1, room, srcFile);
-                    filesize += readSize;
-                } else readSize = 0;
+                readSize = fread(segBuf + segLen, (size_t)1, room, srcFile);
+                filesize += readSize;
 
                 if (readSize > 0) {
                     memset(w_hist, 0, sizeof(w_hist));
