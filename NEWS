@@ -1,3 +1,15 @@
+v1.6.2-pre
+- fixed: heap-buffer-overflow in the content-segmented loop when a
+  segment landed exactly on blockSize (-B1/-B2 crashed or corrupted
+  the heap; found by CLI audit + ASAN)
+- fixed: truncated output after a size-triggered flush (only one block
+  written; -B3/-B4 decoded to partial data with exit 0)
+- fixed: legacy LZ6S1 fixture used the pre-9a177e4 block format; the
+  compat shim failed on it (Error 46) — fixture regenerated, shim verified
+- verified: all block sizes -B1..-B7 round-trip with seq and HC levels
+  (8-file AIT matrix, incompressible and 200MB+ inputs; the small-block
+  dst bound is covered by LZ6F_compressFrameBound(blockSize))
+
 v1.6.1-pre
 - seq is now the compression engine of levels 1-15 inside the standard
   .lz6 frame (the --seq side mode is gone); new magic-less per-block
