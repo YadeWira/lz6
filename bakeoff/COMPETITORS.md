@@ -203,6 +203,43 @@ Resultados Silesia.tar CLI: L2 42.81% -> 36.87%, L15 29.46% -> 28.34%
 (la suma per-file, 27.91%, es el techo: el detector no corta todas las
 fronteras). AIT byte-idéntico. Los umbrales son insensibles en 0.6-1.5.
 
+### Round 5: el repcode era el 6% (y dos hipotesis refutadas)
+
+Instrumentando el encoder (`LZ6_SEQ_STATS=1`) aparece el desglose real de
+bytes: **los offsets son el 42-82% de la salida** (dickens L15: 2.75M de
+3.36M), no los literales (2% en texto). Y el repcode se codificaba como
+campo FIJO de 2 bits por secuencia cuando solo el 12% de las secuencias lo
+usa en texto y su entropia real es 0.56 bits. Fusionarlo en el alfabeto del
+offset (estilo zstd): **Silesia tar L15 -6.0%, AIT -3.2%, decode +6%**
+(commit dc388d6).
+
+Con el instrumento en mano quedaron dos hipotesis mas, ambas refutadas:
+
+**H1: la puerta de order-1 en literales es el limite de mozilla.**
+REFUTADA. Forzando la puerta (0.90 -> 2.00, es decir siempre intentar
+order-1) el tamaño de mozilla no cambia en absoluto, y las entropias que
+reporta el gate lo explican: h0=7.974 (casi uniforme), h1=7.883 con contexto
+de nibble = 0.989, o sea 1.1% teorico contra un header de 8KB. Los literales
+de mozilla son genuinamente incompresibles para un modelo de contexto de
+byte; el order-1 no es la palanca.
+
+**H2: la ventana de 32MB deja elegir offsets lejanos que no pagan.**
+REFUTADA. Barrido de tope duro de distancia en el modelo de precios
+(256K/1M/4M/16M/infinito), L15, tamaño one-shot:
+
+| cap | mozilla | nci | sao | ooffice | dickens | webster |
+|---|---:|---:|---:|---:|---:|---:|
+| 256K | 16,972,414 | 1,990,686 | 5,090,031 | 2,885,368 | 3,346,439 | 10,498,160 |
+| 1M | 16,656,374 | 1,969,856 | **5,080,718** | 2,813,672 | 3,174,931 | 9,857,582 |
+| 4M | 16,416,596 | 1,953,339 | 5,110,245 | 2,785,545 | 3,088,519 | 9,375,991 |
+| sin tope | **16,240,974** | **1,941,720** | 5,119,849 | **2,785,451** | **3,076,668** | **8,994,073** |
+
+Los offsets lejanos pagan en todos los archivos menos **sao**, que mejora
+0.76% con un tope de 1MB (el unico caso donde un techo se justifica). La
+ventana grande esta justificada; el gap de mozilla (31.74% vs zstd 29.41%)
+no viene de ahi. Candidatos restantes, ambos proyectos grandes: literales
+con prediccion de match (estilo LZMA "matched literal") y calidad de parse.
+
 **Resultado negativo documentado**: un detector dual con H1 (order-1)
 por ventana fue probado y RECHAZADO — el H1 por ventana varía dentro de
 mozilla tanto como entre fronteras de archivo, así que los cortes
