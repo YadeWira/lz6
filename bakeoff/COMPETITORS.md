@@ -227,18 +227,38 @@ byte; el order-1 no es la palanca.
 REFUTADA. Barrido de tope duro de distancia en el modelo de precios
 (256K/1M/4M/16M/infinito), L15, tamaño one-shot:
 
-| cap | mozilla | nci | sao | ooffice | dickens | webster |
-|---|---:|---:|---:|---:|---:|---:|
-| 256K | 16,972,414 | 1,990,686 | 5,090,031 | 2,885,368 | 3,346,439 | 10,498,160 |
-| 1M | 16,656,374 | 1,969,856 | **5,080,718** | 2,813,672 | 3,174,931 | 9,857,582 |
-| 4M | 16,416,596 | 1,953,339 | 5,110,245 | 2,785,545 | 3,088,519 | 9,375,991 |
-| sin tope | **16,240,974** | **1,941,720** | 5,119,849 | **2,785,451** | **3,076,668** | **8,994,073** |
+| cap | mozilla | sao | dickens | webster | nci |
+|---|---:|---:|---:|---:|---:|
+| 256K | 17,007,043 | 5,167,421 | 3,346,439 | 10,504,657 | 1,990,686 |
+| 1M | 16,698,163 | **5,154,594** | 3,174,931 | 9,858,644 | 1,969,856 |
+| 4M | 16,442,967 | 5,174,862 | 3,088,519 | 9,375,991 | 1,953,339 |
+| 16M | 16,293,854 | 5,182,271 | 3,076,668 | 9,051,936 | 1,943,081 |
+| sin tope | **16,259,654** | 5,182,271 | **3,076,668** | **8,994,073** | **1,941,720** |
 
 Los offsets lejanos pagan en todos los archivos menos **sao**, que mejora
-0.76% con un tope de 1MB (el unico caso donde un techo se justifica). La
+0.53% con un tope de 1MB (el unico caso donde un techo se justifica). La
 ventana grande esta justificada; el gap de mozilla (31.74% vs zstd 29.41%)
-no viene de ahi. Candidatos restantes, ambos proyectos grandes: literales
-con prediccion de match (estilo LZMA "matched literal") y calidad de parse.
+no viene de ahi.
+
+**H3: matched literals estilo LZMA (delta contra la prediccion rep0).**
+REFUTADA, y la leccion metodologica vale mas que el resultado. Se implemento
+el modo completo (encoder + decoder + modo 7 en el bloque seq): cada literal
+se delta-XOR-ea contra el byte en (pos - rep0), que el decoder ya tiene, y el
+candidato compite con Huffman/FSE/order-1. Ganancias medidas: mozilla -0.64%,
+ooffice -0.75%, sao -0.29%, texto 0% -> **-0.37% agregado**, insuficiente
+para un modo de formato nuevo, y revertido.
+
+Por que la estimacion previa daba -3.8%: el diagnostico midio h0 sobre los
+literales y comparaba con el h0 que reporta la puerta de order-1... que se
+calcula sobre una **muestra de 64K**, no el bloque. En mozilla esa muestra da
+h0=7.974 (casi uniforme) pero la entropia real del bloque completo es ~7.00
+bits, que el Huffman order-0 ya alcanza. El stream delta mide 7.277 bits: es
+PEOR. Dicho por bloque: raw hsz=6,537,671 vs delta hsz=6,817,564.
+
+Conclusion: la prediccion byte-exacta por rep0 no le gana a order-0 en estos
+datos. Lo que LZMA hace distinto es un modelo **bit a bit** guiado por el byte
+de match (captura acuerdo parcial, no solo igualdad); eso seria un coder de
+literales nuevo, no un modo mas.
 
 **Resultado negativo documentado**: un detector dual con H1 (order-1)
 por ventana fue probado y RECHAZADO — el H1 por ventana varía dentro de
