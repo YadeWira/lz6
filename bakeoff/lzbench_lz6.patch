@@ -1,0 +1,197 @@
+diff --git a/Makefile b/Makefile
+index b98f990..dcc2c92 100644
+--- a/Makefile
++++ b/Makefile
+@@ -944,6 +944,31 @@ else
+     $(MISA77_DIR)/%.o: $(MISA77_DIR)/%.cpp ; $(CMD_BUILD_MISA77)
+ endif
+ 
++# lz5 v1.5 (inikep, 2016) - predecessor of lz6, block codec.
++LZ5_DIR = lz/lz5
++LZ5_INC = -I$(LZ5_DIR) -DXXH_NAMESPACE=LZ5_
++LZ5_FILES = $(LZ5_DIR)/lz5.o $(LZ5_DIR)/lz5hc.o $(LZ5_DIR)/xxhash.o
++
++$(LZ5_DIR)/%.o: $(LZ5_DIR)/%.c
++	@$(MKDIR) $(dir $@)
++	$(CC) $(CFLAGS_O2) $(LZ5_INC) $< -c -o $@
++
++# lz6 (YadeWira/lz6) - add via -DLZ6_DIR=<path to a lz6 checkout>; the sources
++# are copied into lz/lz6 so no external path is needed by default.
++LZ6_DIR = lz/lz6
++LZ6_INC = -I$(LZ6_DIR) -I$(LZ6_DIR)/entropy -DXXH_NAMESPACE=LZ6_
++LZ6_FILES  = $(LZ6_DIR)/lz6.o $(LZ6_DIR)/lz6hc.o $(LZ6_DIR)/lz6frame.o $(LZ6_DIR)/xxhash.o
++# The seq entropy coders (fse/seq/huf) miscompile under -O3 -> build them at -O2.
++LZ6_FILES += $(LZ6_DIR)/entropy/lz6fse.o $(LZ6_DIR)/entropy/lz6rc.o $(LZ6_DIR)/entropy/lz6seq.o $(LZ6_DIR)/entropy/lz6huf.o
++
++$(LZ6_DIR)/%.o: $(LZ6_DIR)/%.c
++	@$(MKDIR) $(dir $@)
++	$(CC) $(CFLAGS) $(LZ6_INC) $< -c -o $@
++
++$(LZ6_DIR)/entropy/%.o: $(LZ6_DIR)/entropy/%.c
++	@$(MKDIR) $(dir $@)
++	$(CC) $(CFLAGS_O2) $(LZ6_INC) $< -c -o $@
++
+ # Symmetric codecs
+ ifeq "$(DONT_BUILD_BSC)" "1"
+     DEFINES += -DBENCH_REMOVE_BSC
+@@ -1148,7 +1173,7 @@ endif # ifeq "$(ENABLE_CUDA)"
+ 
+ MKDIR = mkdir -p
+ 
+-lzbench: $(BUGGY_C_FILES) $(BUGGY_CC_FILES) $(BUGGY_CXX_FILES) $(ACEAPEX_FILES) $(BSC_C_FILES) $(BSC_CXX_FILES) $(BSC_CUDA_FILES) $(ACEAPEX_CUDA_FILES) $(GPUCOMPACT_FILES) $(BZIP2_FILES) $(BZIP3_FILES) $(LBZIP2_FILES) $(CSC_FILES) $(KANZI_FILES) $(FASTLZMA2_OBJ) $(ZSTD_FILES) $(LZSSE_FILES) $(LZFSE_FILES) $(XZ_FILES) $(LIBLZG_FILES) $(BRIEFLZ_FILES) $(LZF_FILES) $(BROTLI_FILES) $(LZMA_FILES) $(ZLING_FILES) $(QUICKLZ_FILES) $(OPENZL_C_FILES) $(OPENZL_S_FILES) $(SNAPPY_FILES) $(ZLIB_FILES) $(ZLIB_NG_FILES) $(LZHAM_FILES) $(LZO_FILES) $(UCL_FILES) $(LZ4_FILES) $(LIZARD_FILES) $(LIBDEFLATE_FILES) $(ZXC_FILES) $(MISA77_FILES) $(MISC_FILES) $(NVCOMP_FILES) $(PPMD_FILES) $(BENCH_FILES) $(SKIM_FILE)
++lzbench: $(BUGGY_C_FILES) $(BUGGY_CC_FILES) $(BUGGY_CXX_FILES) $(ACEAPEX_FILES) $(BSC_C_FILES) $(BSC_CXX_FILES) $(BSC_CUDA_FILES) $(ACEAPEX_CUDA_FILES) $(GPUCOMPACT_FILES) $(BZIP2_FILES) $(BZIP3_FILES) $(LBZIP2_FILES) $(CSC_FILES) $(KANZI_FILES) $(FASTLZMA2_OBJ) $(ZSTD_FILES) $(LZSSE_FILES) $(LZFSE_FILES) $(XZ_FILES) $(LIBLZG_FILES) $(BRIEFLZ_FILES) $(LZF_FILES) $(BROTLI_FILES) $(LZMA_FILES) $(ZLING_FILES) $(QUICKLZ_FILES) $(OPENZL_C_FILES) $(OPENZL_S_FILES) $(SNAPPY_FILES) $(ZLIB_FILES) $(ZLIB_NG_FILES) $(LZHAM_FILES) $(LZO_FILES) $(UCL_FILES) $(LZ4_FILES) $(LIZARD_FILES) $(LIBDEFLATE_FILES) $(ZXC_FILES) $(MISA77_FILES) $(LZ5_FILES) $(LZ6_FILES) $(MISC_FILES) $(NVCOMP_FILES) $(PPMD_FILES) $(BENCH_FILES) $(SKIM_FILE)
+ 	$(CXX) $^ -o $@ $(LDFLAGS) $(LDFLAGS_LIBDL)
+ 	@echo Linked GCC_VERSION=$(GCC_VERSION) CLANG_VERSION=$(CLANG_VERSION) COMPILER=$(COMPILER)
+ 
+diff --git a/bench/codecs.h b/bench/codecs.h
+index e749255..7486f67 100644
+--- a/bench/codecs.h
++++ b/bench/codecs.h
+@@ -436,6 +436,34 @@ int64_t lzbench_memcpy(char *inbuf, size_t insize, char *outbuf, size_t outsize,
+ #endif
+ 
+ 
++#ifndef BENCH_REMOVE_LZ5
++    int64_t lzbench_lz5_compress(char* inbuf, size_t insize, char* outbuf, size_t outsize, codec_options_t* codec_options);
++    int64_t lzbench_lz5hc_compress(char* inbuf, size_t insize, char* outbuf, size_t outsize, codec_options_t* codec_options);
++    int64_t lzbench_lz5_decompress(char* inbuf, size_t insize, char* outbuf, size_t outsize, codec_options_t* codec_options);
++#else
++    #define lzbench_lz5_compress NULL
++    #define lzbench_lz5hc_compress NULL
++    #define lzbench_lz5_decompress NULL
++#endif
++
++
++#ifndef BENCH_REMOVE_LZ6
++    int64_t lzbench_lz6_compress(char* inbuf, size_t insize, char* outbuf, size_t outsize, codec_options_t* codec_options);
++    int64_t lzbench_lz6_decompress(char* inbuf, size_t insize, char* outbuf, size_t outsize, codec_options_t* codec_options);
++    char* lzbench_lz6hc_init(size_t insize, size_t level, size_t);
++    void lzbench_lz6hc_deinit(char* work_mem);
++    int64_t lzbench_lz6hc_compress(char* inbuf, size_t insize, char* outbuf, size_t outsize, codec_options_t* codec_options);
++    int64_t lzbench_lz6hc_decompress(char* inbuf, size_t insize, char* outbuf, size_t outsize, codec_options_t* codec_options);
++#else
++    #define lzbench_lz6_compress NULL
++    #define lzbench_lz6_decompress NULL
++    #define lzbench_lz6hc_init NULL
++    #define lzbench_lz6hc_deinit NULL
++    #define lzbench_lz6hc_compress NULL
++    #define lzbench_lz6hc_decompress NULL
++#endif
++
++
+ #ifndef BENCH_REMOVE_OPENZL
+     char* lzbench_openzl_init_serial(size_t insize, size_t level, size_t);
+     template <typename TInteger>
+diff --git a/bench/lz_codecs.cpp b/bench/lz_codecs.cpp
+index 6556b40..66fbe28 100644
+--- a/bench/lz_codecs.cpp
++++ b/bench/lz_codecs.cpp
+@@ -84,6 +84,93 @@ int64_t lzbench_misa77_safe_decompress(char* inbuf, size_t insize, char* outbuf,
+ 
+ 
+ 
++#ifndef BENCH_REMOVE_LZ5
++#include "lz5/lz5.h"
++#include "lz5/lz5hc.h"
++
++// lz5 v1.5 (inikep, 2016) - the direct predecessor of lz6; block codec,
++// same convention as the lz4/lz4hc entries.
++int64_t lzbench_lz5_compress(char* inbuf, size_t insize, char* outbuf, size_t outsize, codec_options_t* codec_options)
++{
++    (void)codec_options;
++    return (int64_t)LZ5_compress_default(inbuf, outbuf, (int)insize, (int)outsize);
++}
++
++int64_t lzbench_lz5hc_compress(char* inbuf, size_t insize, char* outbuf, size_t outsize, codec_options_t* codec_options)
++{
++    return (int64_t)LZ5_compress_HC(inbuf, outbuf, (int)insize, (int)outsize, (int)codec_options->level);
++}
++
++int64_t lzbench_lz5_decompress(char* inbuf, size_t insize, char* outbuf, size_t outsize, codec_options_t* codec_options)
++{
++    (void)codec_options;
++    return (int64_t)LZ5_decompress_safe(inbuf, outbuf, (int)insize, (int)outsize);
++}
++#endif // BENCH_REMOVE_LZ5
++
++
++
++#ifndef BENCH_REMOVE_LZ6
++#include "lz6/lz6.h"
++#include "lz6/entropy/lz6seq.h"
++#include "lz6/lz6frame.h"
++
++// lz6 seq codec (levels 1..15) - the project's main engine. The encoder
++// needs dstCap >= LZ6_COMPRESSBOUND(srcSize) + 65536; lzbench's outbuf
++// has that margin (checked in lzbench_lz6_compress).
++int64_t lzbench_lz6_compress(char* inbuf, size_t insize, char* outbuf, size_t outsize, codec_options_t* codec_options)
++{
++    if (outsize < (size_t)LZ6_compressBound((int)insize) + 65536)
++        return 0;
++    return (int64_t)LZ6_compress_seq(inbuf, insize, outbuf, outsize, (int)codec_options->level);
++}
++
++int64_t lzbench_lz6_decompress(char* inbuf, size_t insize, char* outbuf, size_t outsize, codec_options_t* codec_options)
++{
++    (void)codec_options;
++    return (int64_t)LZ6_decompress_seq(inbuf, insize, outbuf, outsize);
++}
++
++// lz6 HC frame (levels 1..15) - the classic hash-chain parser inside the
++// .lz6 frame, kept for comparison against the seq engine.
++char* lzbench_lz6hc_init(size_t, size_t, size_t)
++{
++    LZ6F_decompressionContext_t* c = (LZ6F_decompressionContext_t*)malloc(sizeof(*c));
++    if (!c) return NULL;
++    if (LZ6F_isError(LZ6F_createDecompressionContext(c, LZ6F_VERSION))) { free(c); return NULL; }
++    return (char*)c;
++}
++
++void lzbench_lz6hc_deinit(char* work_mem)
++{
++    if (work_mem) {
++        LZ6F_freeDecompressionContext(*(LZ6F_decompressionContext_t*)work_mem);
++        free(work_mem);
++    }
++}
++
++int64_t lzbench_lz6hc_compress(char* inbuf, size_t insize, char* outbuf, size_t outsize, codec_options_t* codec_options)
++{
++    LZ6F_preferences_t prefs;
++    memset(&prefs, 0, sizeof(prefs));
++    prefs.compressionLevel = (int)codec_options->level;
++    prefs.autoFlush = 1;
++    size_t r = LZ6F_compressFrame(outbuf, outsize, inbuf, insize, &prefs);
++    return LZ6F_isError(r) ? 0 : (int64_t)r;
++}
++
++int64_t lzbench_lz6hc_decompress(char* inbuf, size_t insize, char* outbuf, size_t outsize, codec_options_t* codec_options)
++{
++    LZ6F_decompressionContext_t* c = (LZ6F_decompressionContext_t*)codec_options->work_mem;
++    size_t dout = outsize, din = insize;
++    if (!c) return 0;
++    if (LZ6F_isError(LZ6F_decompress(*c, outbuf, &dout, inbuf, &din, NULL))) return 0;
++    return (int64_t)dout;
++}
++#endif // BENCH_REMOVE_LZ6
++
++
++
+ #ifndef BENCH_REMOVE_BRIEFLZ
+ #include "lz/brieflz/brieflz.h"
+ 
+diff --git a/bench/lzbench.h b/bench/lzbench.h
+index c9f39fa..af35fef 100644
+--- a/bench/lzbench.h
++++ b/bench/lzbench.h
+@@ -210,6 +210,10 @@ static const compressor_desc_t comp_desc[] =
+     { "lz4",        "lz4 1.10.0",              0,   0,    0,  BENCH_POOL_MT, lzbench_lz4_compress,        lzbench_lz4_decompress,        NULL,                    NULL },
+     { "lz4fast",    "lz4 1.10.0 --fast",       1,  99,    0,  BENCH_POOL_MT, lzbench_lz4fast_compress,    lzbench_lz4_decompress,        NULL,                    NULL },
+     { "lz4hc",      "lz4hc 1.10.0",            1,  12,    0,  BENCH_POOL_MT, lzbench_lz4hc_compress,      lzbench_lz4_decompress,        NULL,                    NULL },
++    { "lz5",        "lz5 v1.5",                0,   0,    0,  BENCH_POOL_MT, lzbench_lz5_compress,        lzbench_lz5_decompress,        NULL,                    NULL },
++    { "lz5hc",      "lz5 v1.5 HC",             1,  15,    0,  BENCH_POOL_MT, lzbench_lz5hc_compress,      lzbench_lz5_decompress,        NULL,                    NULL },
++    { "lz6",        "lz6 1.6.2-pre seq",       1,  15,    0,  BENCH_POOL_MT, lzbench_lz6_compress,        lzbench_lz6_decompress,        NULL,                    NULL },
++    { "lz6hc",      "lz6 1.6.2-pre HC",        1,  15,    0,  BENCH_POOL_MT, lzbench_lz6hc_compress,      lzbench_lz6hc_decompress,      lzbench_lz6hc_init,      lzbench_lz6hc_deinit },
+     { "lzav",       "lzav 5.16",               1,   2,    0,  BENCH_POOL_MT, lzbench_lzav_compress,       lzbench_lzav_decompress,       NULL,                    NULL },
+     { "lzf",        "lzf 3.6",                 0,   1,    0,  BENCH_POOL_MT, lzbench_lzf_compress,        lzbench_lzf_decompress,        NULL,                    NULL },
+     { "lzfse",      "lzfse 2017-03-08",        0,   0,    0,  BENCH_POOL_MT, lzbench_lzfse_compress,      lzbench_lzfse_decompress,      lzbench_lzfse_init,      lzbench_lzfse_deinit },

@@ -1,5 +1,11 @@
 # Análisis competitivo: zstd, lizard, misa77 (vs lz6)
 
+> **Actualización 2026-09-13:** la comparativa head-to-head completa, con todos
+> los codecs en un único harness (lzbench) y con Silesia además de AIT, está en
+> **[VS_CODECS.md](VS_CODECS.md)** — incluye lz5 v1.5 y lz6 como plugins de
+> lzbench. Este documento queda como el análisis original sobre AIT; sus
+> cifras de lz6 son previas al widening de hash y al fix del plane gate.
+
 Corpus: AIT A-H (13,136,308 bytes), single-threaded, medición mem-to-mem.
 Externos vía lzbench 1.2 (`-t2,2`); lz6 seq vía `bakeoff/bench_seq.c` (misma
 metodología mem-to-mem, MB/s corregidos a bytes de salida). Fecha: 2026-08-28,
