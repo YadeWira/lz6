@@ -1,3 +1,22 @@
+v1.6.3-pre
+- perf/seq: the per-sequence repcode (previously a fixed 2-bit field on
+  every sequence) is now folded into the offset FSE alphabet, so the
+  model codes the joint distribution of (offset bucket, repcode) instead
+  of paying 2 bits per sequence regardless of use. The field's real
+  entropy is ~0.6 bits on text (only 12% of sequences use a repcode) and
+  ~1.6-2.0 on binary. One less bitfield read per sequence, so decode gets
+  faster as well.
+  BREAKS THE SEQ BLOCK FORMAT: .lz6 files written by older seq levels no
+  longer decode (lab format, no compatibility shim). The frame HC levels
+  (--hc) are untouched and stay byte-identical.
+  Measured (single block, level 15): Silesia tar 62,437,010 -> 58,693,799
+  (-6.0%), level 2 76,742,753 -> 73,509,428 (-4.2%), AIT 5,367,989 ->
+  5,194,253 (-3.2%); x-ray -15.1%, webster -7.6%, dickens -8.4%. Decode
+  on the tar goes 149.5 -> 158.9 MB/s (L15).
+- bakeoff: compat_LZ6S1_C.lz6s1 regenerated with the current block format
+  (bakeoff/mk_legacy_fixture.c rebuilds it); the decode-only LZ6S1
+  envelope shim is unchanged and verified against it.
+
 v1.6.2-pre
 - fixed: heap-buffer-overflow in the content-segmented loop when a
   segment landed exactly on blockSize (-B1/-B2 crashed or corrupted

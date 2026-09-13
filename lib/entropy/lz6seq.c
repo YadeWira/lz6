@@ -315,6 +315,7 @@ static size_t compress_normal(const char* src, size_t srcSize,
 
     w8(&p, 0);             /* flags: not raw */
     w32le(&p, (uint32_t)srcSize);
+    size_t sz_hdr = (size_t)(p - blk);
 
     /* literals: Huffman (lit_mode=5, fast table decode) vs FSE order-0
      * (lit_mode=1), fall back to raw (lit_mode=0). Huffman's 257-byte
@@ -590,14 +591,15 @@ static size_t compress_normal(const char* src, size_t srcSize,
     }
 
     w32le(&p, (uint32_t)sc_cnt);
+    size_t sz_lits = (size_t)(p - blk) - sz_hdr;
+    int lit_mode_chosen = blk[sz_hdr];
 
     /* Convert sequences to symbols + repcodes */
     unsigned* ll_syms = (unsigned*)malloc((size_t)sc_cnt * sizeof(unsigned));
     unsigned* ml_syms = (unsigned*)malloc((size_t)sc_cnt * sizeof(unsigned));
     unsigned* of_syms = (unsigned*)malloc((size_t)sc_cnt * sizeof(unsigned));
-    uint8_t* rep_flags = (uint8_t*)calloc(1, ((size_t)sc_cnt * 2 + 7) / 8);
-    if (!ll_syms || !ml_syms || !of_syms || !rep_flags) {
-        free(ll_syms); free(ml_syms); free(of_syms); free(rep_flags);
+    if (!ll_syms || !ml_syms || !of_syms) {
+        free(ll_syms); free(ml_syms); free(of_syms);
         free(sc.lits); free(sc.lit_lens); free(sc.match_lens); free(sc.offsets);
         return 0;
     }
@@ -609,6 +611,7 @@ static size_t compress_normal(const char* src, size_t srcSize,
     size_t low_len = 0, low_cap = 0;
     uint32_t low_acc = 0; int low_nbits = 0;
     int rp[3] = {0, 0, 0};
+    size_t lz6_stat_rep[3] = {0, 0, 0}, lz6_stat_new = 0;
     if (!resid_top8 || !resid_n || !resid_cap) { /* oom */ }
     for (int i = 0; i < sc_cnt; i++) {
         ll_syms[i] = (unsigned)ll_code(sc.lit_lens[i]);
@@ -648,9 +651,9 @@ static size_t compress_normal(const char* src, size_t srcSize,
                     }
                 }
             } else {
-                of_syms[i] = (unsigned)ri;
+                of_syms[i] = (unsigned)(OF_CODES + ri);
             }
-            rep_flags[(size_t)i * 2 / 8] |= (uint8_t)(pc << ((i * 2) % 8));
+            if (pc == 0) lz6_stat_new++; else lz6_stat_rep[pc - 1]++;
             if (pc == 0) {
                 if (of != rp[0]) { rp[2] = rp[1]; rp[1] = rp[0]; rp[0] = of; }
             } else if (ri > 0) {
@@ -680,14 +683,10 @@ static size_t compress_normal(const char* src, size_t srcSize,
     size_t ml_csz = fse_encode(ml_syms, (size_t)sc_cnt, ML_CODES, p, blk_cap - (size_t)(p-blk), NULL, 0, &ts);
     if (ml_csz == 0) goto oom;
     p += ml_csz;
-    size_t of_csz = fse_encode(of_syms, (size_t)sc_cnt, OF_CODES-1, p, blk_cap - (size_t)(p-blk), NULL, 0, &ts);
+    size_t of_csz = fse_encode(of_syms, (size_t)sc_cnt, OF_CODES+2, p, blk_cap - (size_t)(p-blk), NULL, 0, &ts);
     if (of_csz == 0) goto oom;
     p += of_csz;
-
-    /* rep flags */
-    int rep_bytes = (sc_cnt * 2 + 7) / 8;
-    memcpy(p, rep_flags, (size_t)rep_bytes);
-    p += rep_bytes;
+    size_t sz_resid_start = (size_t)(p - blk);
 
     /* per-bucket FSE streams of resid top8 + low bits.
      * Uniform layout: [bid][size:4][cnt:4][data] where size has bit31 set
@@ -721,6 +720,8 @@ static size_t compress_normal(const char* src, size_t srcSize,
     w32le(&p, 0);
     w32le(&p, (uint32_t)low_bytes);
     if (low_bytes > 0) { memcpy(p, low_buf, low_bytes); p += low_bytes; }
+    size_t sz_resid = (size_t)(p - blk) - sz_resid_start;
+    size_t sz_extra_start = (size_t)(p - blk);
 
     /* extra bits: ll/ml interleaved */
     {
@@ -748,6 +749,29 @@ static size_t compress_normal(const char* src, size_t srcSize,
     }
 
     size_t blk_len = (size_t)(p - blk);
+    size_t sz_extra = blk_len - sz_extra_start;
+    if (getenv("LZ6_SEQ_STATS")) {
+        /* match-length histogram: 4-7, 8-11, 12-15, 16-23, 24-31, 32-63, 64-127, 128+ */
+        size_t mh[8] = {0};
+        size_t ofsum = 0;
+        for (int i = 0; i < sc_cnt; i++) {
+            size_t ml = (size_t)sc.match_lens[i];
+            if (ml == 0) continue;
+            ofsum += (size_t)sc.offsets[i];
+            int b = ml < 8 ? 0 : ml < 12 ? 1 : ml < 16 ? 2 : ml < 24 ? 3
+                  : ml < 32 ? 4 : ml < 64 ? 5 : ml < 128 ? 6 : 7;
+            mh[b]++;
+        }
+        fprintf(stderr, "SEQSTAT src=%zu seqs=%zu lits=%d mode=%d out=%zu hdr=%zu litsz=%zu "
+                "ll=%zu ml=%zu of=%zu resid=%zu low=%zu extra=%zu\n",
+                srcSize, (size_t)sc_cnt, lit_count, lit_mode_chosen, blk_len, sz_hdr,
+                sz_lits, ll_csz, ml_csz, of_csz, sz_resid, low_bytes, sz_extra);
+        fprintf(stderr, "SEQHIST src=%zu %zu %zu %zu %zu %zu %zu %zu %zu | meanoff=%zu | "
+                "litbytes=%zu rep0=%zu rep1=%zu rep2=%zu new=%zu\n",
+                srcSize, mh[0], mh[1], mh[2], mh[3], mh[4], mh[5], mh[6], mh[7],
+                sc_cnt ? ofsum / (size_t)sc_cnt : 0,
+                (size_t)lit_count, lz6_stat_rep[0], lz6_stat_rep[1], lz6_stat_rep[2], lz6_stat_new);
+    }
     size_t result = 0;
     if (blk_len < srcSize && blk_len <= dstCap) {
         /* compressed block fits and helps — copy it */
@@ -766,7 +790,7 @@ static size_t compress_normal(const char* src, size_t srcSize,
     for (int b = 0; b < OF_CODES; b++) free(resid_top8[b]);
     free(resid_top8); free(resid_n); free(resid_cap);
     free(low_buf);
-    free(ll_syms); free(ml_syms); free(of_syms); free(rep_flags);
+    free(ll_syms); free(ml_syms); free(of_syms);
     free(sc.lits); free(sc.lit_lens); free(sc.match_lens); free(sc.offsets);
     return result;
 
@@ -775,7 +799,7 @@ oom:
     for (int b = 0; b < OF_CODES; b++) free(resid_top8[b]);
     free(resid_top8); free(resid_n); free(resid_cap);
     free(low_buf);
-    free(ll_syms); free(ml_syms); free(of_syms); free(rep_flags);
+    free(ll_syms); free(ml_syms); free(of_syms);
     free(sc.lits); free(sc.lit_lens); free(sc.match_lens); free(sc.offsets);
     return 0;
 }
@@ -1284,8 +1308,8 @@ static size_t decode_normal(const char* src, size_t srcSize,
      * one interleaved pass into byte arrays. Measured faster than decoding
      * them inline in the application loop (which serializes the rANS
      * dependency chains against the copies on sequence-dense data).
-     * True encoder alphabets: ll<=35, ml<=36, of<=24. */
-    static const int smax[3] = { 35, 36, 24 };
+     * True encoder alphabets: ll<=35, ml<=36, of<=27 (24 buckets + 3 rep). */
+    static const int smax[3] = { 35, 36, OF_CODES + 2 };
     fse_dtable dt[3];
     uint32_t xs[3];
     const uint8_t *sp3[3], *se3[3];
@@ -1330,12 +1354,6 @@ static size_t decode_normal(const char* src, size_t srcSize,
         }
         p += off;
     }
-
-    /* rep flags */
-    int rep_bytes = (sc * 2 + 7) / 8;
-    if ((size_t)(end - p) < (size_t)rep_bytes) goto fail;
-    const uint8_t* rep_flags = p;
-    p += rep_bytes;
 
     /* per-bucket top8 streams, uniform layout:
      * [bid][size:4][cnt:4][data] — size bit31 = raw (data = rn bytes,
@@ -1402,10 +1420,6 @@ static size_t decode_normal(const char* src, size_t srcSize,
     size_t resid_pos[OF_CODES];
     for (b = 0; b < OF_CODES; b++) resid_pos[b] = 0;
     uint8_t* out = (uint8_t*)dst;
-    /* rolling 2-bit rep flag reader */
-    const uint8_t* rfl = rep_flags;
-    const uint8_t* rfl_end = rep_flags + rep_bytes;
-    uint32_t rfa = 0; int rfn = 0;
     for (int i = 0; i < sc; i++) {
         int ll = LL_base[symarr[0][i]];
         int le = LL_extra[symarr[0][i]];
@@ -1419,16 +1433,14 @@ static size_t decode_normal(const char* src, size_t srcSize,
             if (me > 0) ml += br_bits(&bit_acc, &bit_nbits, &extra_p, extra_end, me, &br_err);
             if (br_err) goto fail;
         }
-        /* rep flag: refill 8 bits when fewer than 2 remain */
-        if (rfn < 2) {
-            if (rfl < rfl_end) { rfa |= (uint32_t)*rfl++ << rfn; rfn += 8; }
-            else if (rfn == 0) { goto fail; }
-        }
-        int pc = (int)(rfa & 3);
-        rfa >>= 2; rfn -= 2;
+        /* offset symbol: buckets 0..OF_CODES-1, rep stack entries above.
+         * The rep code used to be a separate 2-bit field per sequence; it is
+         * folded here so the FSE models the joint distribution (~1.4 bits
+         * per sequence cheaper on text, and one decode instead of two). */
+        int osym = (int)symarr[2][i];
         int md = 0, is_rep = 0;
-        if (symarr[1][i] > 0 && pc == 0) {
-            int bid = (int)symarr[2][i];
+        if (symarr[1][i] > 0 && osym < OF_CODES) {
+            int bid = osym;
             if (bid < 0 || bid >= OF_CODES) goto fail;
             if (resid_pos[bid] >= resid_n[bid]) goto fail;
             unsigned top8 = resid_top8[bid][resid_pos[bid]++];
@@ -1437,7 +1449,8 @@ static size_t decode_normal(const char* src, size_t srcSize,
             if (br_err) goto fail;
             md = OF_base[bid] + ((int)top8 << nlow) + low;
         } else if (symarr[1][i] > 0) {
-            int ri = pc - 1;
+            int ri = osym - OF_CODES;
+            if (ri < 0 || ri > 2) goto fail;
             md = rp[ri];
             is_rep = 1;
             if (ri > 0) {
