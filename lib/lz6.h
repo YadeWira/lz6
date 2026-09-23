@@ -130,6 +130,17 @@ LZ6_compress_fast() :
 */
 int LZ6_compress_fast (const char* source, char* dest, int sourceSize, int maxDestSize, int acceleration);
 
+/*
+LZ6_compress_fast_window() :
+    Same as LZ6_compress_fast(), with every match distance capped to
+    (1 << windowLog) - 1, windowLog in [10, 24] (returns 0 otherwise).
+    The block format is unchanged: a decoder that keeps only the last
+    2^windowLog bytes of output can decode the result. Meant for decoders
+    with a fixed memory budget (e.g. ZPAQL post-processors in zpaq).
+*/
+int LZ6_compress_fast_window (const char* source, char* dest, int sourceSize, int maxDestSize,
+                              int acceleration, int windowLog);
+
 
 /*
 LZ6_compress_fast_extState() :

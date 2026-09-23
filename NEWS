@@ -1,4 +1,11 @@
 v1.6.4-pre (in progress)
+- api: LZ6_compress_fast_window() and LZ6_compress_HC_window() cap every
+  match distance to (1 << windowLog) - 1, windowLog 10..24. The block
+  format is unchanged; a decoder that keeps only the last 2^windowLog
+  bytes can decode the output (e.g. a ZPAQL post-processor that must
+  reserve its whole window per thread). The existing entry points are
+  byte-identical to before (verified on dickens/samba/x-ray, fast and HC
+  1/9/15). Measured cost on dickens HC -15: 2^22 +1.2%, 2^20 +5.5%.
 - perf/seq decode: literals decoded in bulk before the sequence loop
   (two-symbol Huffman lookups, 4 lookups per 64-bit window), branch-free
   2-byte rANS renorm on budgeted unchecked blocks, 4-byte {f,off} table

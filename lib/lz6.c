@@ -151,7 +151,8 @@ FORCE_INLINE int LZ6_compress_generic(
                  const tableType_t tableType,
                  const dict_directive dict,
                  const dictIssue_directive dictIssue,
-                 const U32 acceleration)
+                 const U32 acceleration,
+                 const U32 maxDistance)
 {
     LZ6_stream_t_internal* const dictPtr = (LZ6_stream_t_internal*)ctx;
 
@@ -235,7 +236,7 @@ FORCE_INLINE int LZ6_compress_generic(
                 LZ6_putPositionOnHash(ip, h, ctx, tableType, base);
 
             } while ( ((dictIssue==dictSmall) ? (match < lowRefLimit) : 0)
-                || ((tableType==byU16) ? 0 : (match + MAX_DISTANCE < ip))
+                || ((tableType==byU16 && maxDistance >= 65535) ? 0 : (match + maxDistance < ip))
                 || (MEM_read32(match+refDelta) != MEM_read32(ip)) );
         }
 
@@ -367,7 +368,7 @@ _next_match:
         }
         LZ6_putPosition(ip, ctx, tableType, base);
         if ( ((dictIssue==dictSmall) ? (match>=lowRefLimit) : 1)
-            && (match+MAX_DISTANCE>=ip)
+            && (match+maxDistance>=ip)
             && (MEM_read32(match+refDelta)==MEM_read32(ip)) )
         { token=op++; *token=0; goto _next_match; }
 
@@ -409,16 +410,16 @@ int LZ6_compress_fast_extState(void* state, const char* source, char* dest, int 
     if (maxOutputSize >= LZ6_compressBound(inputSize))
     {
         if (inputSize < LZ6_64Klimit)
-            return LZ6_compress_generic(state, source, dest, inputSize, 0, notLimited, byU16,                        noDict, noDictIssue, acceleration);
+            return LZ6_compress_generic(state, source, dest, inputSize, 0, notLimited, byU16,                        noDict, noDictIssue, acceleration, MAX_DISTANCE);
         else
-            return LZ6_compress_generic(state, source, dest, inputSize, 0, notLimited, MEM_64bits() ? byU32 : byPtr, noDict, noDictIssue, acceleration);
+            return LZ6_compress_generic(state, source, dest, inputSize, 0, notLimited, MEM_64bits() ? byU32 : byPtr, noDict, noDictIssue, acceleration, MAX_DISTANCE);
     }
     else
     {
         if (inputSize < LZ6_64Klimit)
-            return LZ6_compress_generic(state, source, dest, inputSize, maxOutputSize, limitedOutput, byU16,                        noDict, noDictIssue, acceleration);
+            return LZ6_compress_generic(state, source, dest, inputSize, maxOutputSize, limitedOutput, byU16,                        noDict, noDictIssue, acceleration, MAX_DISTANCE);
         else
-            return LZ6_compress_generic(state, source, dest, inputSize, maxOutputSize, limitedOutput, MEM_64bits() ? byU32 : byPtr, noDict, noDictIssue, acceleration);
+            return LZ6_compress_generic(state, source, dest, inputSize, maxOutputSize, limitedOutput, MEM_64bits() ? byU32 : byPtr, noDict, noDictIssue, acceleration, MAX_DISTANCE);
     }
 }
 
@@ -446,6 +447,35 @@ int LZ6_compress_default(const char* source, char* dest, int inputSize, int maxO
     return LZ6_compress_fast(source, dest, inputSize, maxOutputSize, 1);
 }
 
+/* LZ6_compress_fast() with the match distance capped to (1 << windowLog) - 1,
+ * windowLog in [10, 24]. Same block format; a decoder only needs a
+ * 2^windowLog window to decode the result. */
+int LZ6_compress_fast_window(const char* source, char* dest, int inputSize, int maxOutputSize,
+                             int acceleration, int windowLog)
+{
+    if (windowLog < 10 || windowLog > MAXD_LOG) return 0;
+#if (HEAPMODE)
+    void* ctxPtr = ALLOCATOR(1, sizeof(LZ6_stream_t));
+    if (!ctxPtr) return 0;
+#else
+    LZ6_stream_t ctx;
+    void* ctxPtr = &ctx;
+#endif
+    const U32 maxDistance = ((U32)1 << windowLog) - 1;
+    const tableType_t tt = inputSize < LZ6_64Klimit ? byU16 : (MEM_64bits() ? byU32 : byPtr);
+    int result;
+    LZ6_resetStream((LZ6_stream_t*)ctxPtr);
+    if (acceleration < 1) acceleration = ACCELERATION_DEFAULT;
+    if (maxOutputSize >= LZ6_compressBound(inputSize))
+        result = LZ6_compress_generic(ctxPtr, source, dest, inputSize, 0, notLimited, tt, noDict, noDictIssue, acceleration, maxDistance);
+    else
+        result = LZ6_compress_generic(ctxPtr, source, dest, inputSize, maxOutputSize, limitedOutput, tt, noDict, noDictIssue, acceleration, maxDistance);
+#if (HEAPMODE)
+    FREEMEM(ctxPtr);
+#endif
+    return result;
+}
+
 
 /* hidden debug function */
 /* strangely enough, gcc generates faster code when this function is uncommented, even if unused */
@@ -456,9 +486,9 @@ int LZ6_compress_fast_force(const char* source, char* dest, int inputSize, int m
     LZ6_resetStream(&ctx);
 
     if (inputSize < LZ6_64Klimit)
-        return LZ6_compress_generic(&ctx, source, dest, inputSize, maxOutputSize, limitedOutput, byU16,                        noDict, noDictIssue, acceleration);
+        return LZ6_compress_generic(&ctx, source, dest, inputSize, maxOutputSize, limitedOutput, byU16,                        noDict, noDictIssue, acceleration, MAX_DISTANCE);
     else
-        return LZ6_compress_generic(&ctx, source, dest, inputSize, maxOutputSize, limitedOutput, MEM_64bits() ? byU32 : byPtr, noDict, noDictIssue, acceleration);
+        return LZ6_compress_generic(&ctx, source, dest, inputSize, maxOutputSize, limitedOutput, MEM_64bits() ? byU32 : byPtr, noDict, noDictIssue, acceleration, MAX_DISTANCE);
 }
 
 
@@ -820,9 +850,9 @@ int LZ6_compress_fast_continue (LZ6_stream_t* LZ6_stream, const char* source, ch
     {
         int result;
         if ((streamPtr->dictSize < LZ6_DICT_SIZE) && (streamPtr->dictSize < streamPtr->currentOffset))
-            result = LZ6_compress_generic(LZ6_stream, source, dest, inputSize, maxOutputSize, limitedOutput, byU32, withPrefix64k, dictSmall, acceleration);
+            result = LZ6_compress_generic(LZ6_stream, source, dest, inputSize, maxOutputSize, limitedOutput, byU32, withPrefix64k, dictSmall, acceleration, MAX_DISTANCE);
         else
-            result = LZ6_compress_generic(LZ6_stream, source, dest, inputSize, maxOutputSize, limitedOutput, byU32, withPrefix64k, noDictIssue, acceleration);
+            result = LZ6_compress_generic(LZ6_stream, source, dest, inputSize, maxOutputSize, limitedOutput, byU32, withPrefix64k, noDictIssue, acceleration, MAX_DISTANCE);
         streamPtr->dictSize += (U32)inputSize;
         streamPtr->currentOffset += (U32)inputSize;
         return result;
@@ -832,9 +862,9 @@ int LZ6_compress_fast_continue (LZ6_stream_t* LZ6_stream, const char* source, ch
     {
         int result;
         if ((streamPtr->dictSize < LZ6_DICT_SIZE) && (streamPtr->dictSize < streamPtr->currentOffset))
-            result = LZ6_compress_generic(LZ6_stream, source, dest, inputSize, maxOutputSize, limitedOutput, byU32, usingExtDict, dictSmall, acceleration);
+            result = LZ6_compress_generic(LZ6_stream, source, dest, inputSize, maxOutputSize, limitedOutput, byU32, usingExtDict, dictSmall, acceleration, MAX_DISTANCE);
         else
-            result = LZ6_compress_generic(LZ6_stream, source, dest, inputSize, maxOutputSize, limitedOutput, byU32, usingExtDict, noDictIssue, acceleration);
+            result = LZ6_compress_generic(LZ6_stream, source, dest, inputSize, maxOutputSize, limitedOutput, byU32, usingExtDict, noDictIssue, acceleration, MAX_DISTANCE);
         streamPtr->dictionary = (const BYTE*)source;
         streamPtr->dictSize = (U32)inputSize;
         streamPtr->currentOffset += (U32)inputSize;
@@ -854,7 +884,7 @@ int LZ6_compress_forceExtDict (LZ6_stream_t* LZ6_dict, const char* source, char*
     if (smallest > (const BYTE*) source) smallest = (const BYTE*) source;
     LZ6_renormDictT((LZ6_stream_t_internal*)LZ6_dict, smallest);
 
-    result = LZ6_compress_generic(LZ6_dict, source, dest, inputSize, 0, notLimited, byU32, usingExtDict, noDictIssue, 1);
+    result = LZ6_compress_generic(LZ6_dict, source, dest, inputSize, 0, notLimited, byU32, usingExtDict, noDictIssue, 1, MAX_DISTANCE);
 
     streamPtr->dictionary = (const BYTE*)source;
     streamPtr->dictSize = (U32)inputSize;

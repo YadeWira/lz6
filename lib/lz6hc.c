@@ -91,6 +91,25 @@ static void LZ6HC_capParamsToSize(LZ6HC_parameters* p, size_t maxSrcSize)
 }
 
 static int LZ6_alloc_mem_HC_wl(LZ6HC_Data_Structure* ctx, int compressionLevel,
+                               size_t maxSrcSize, int maxWindowLog);
+
+/* HC with the window capped at 2^windowLog (offsets <= 2^windowLog - 1):
+ * same block format, for decoders with a fixed memory budget */
+int LZ6_compress_HC_window(const char* src, char* dst, int srcSize, int maxDstSize,
+                           int compressionLevel, int windowLog)
+{
+    LZ6HC_Data_Structure state;
+    int cSize;
+    if (windowLog < 10 || windowLog > MAXD_LOG) return 0;
+    if (!LZ6_alloc_mem_HC_wl(&state, compressionLevel, (size_t)(srcSize > 0 ? srcSize : 1), -windowLog))
+        return 0;
+    cSize = LZ6_compress_HC_extStateHC(&state, src, dst, srcSize, maxDstSize);
+    LZ6_free_mem_HC(&state);
+    return cSize;
+}
+
+/* maxWindowLog < 0 caps the window at -maxWindowLog instead of raising it */
+static int LZ6_alloc_mem_HC_wl(LZ6HC_Data_Structure* ctx, int compressionLevel,
                                size_t maxSrcSize, int maxWindowLog)
 {
     ctx->compressionLevel = compressionLevel;
@@ -105,6 +124,12 @@ static int LZ6_alloc_mem_HC_wl(LZ6HC_Data_Structure* ctx, int compressionLevel,
         U32 delta = ctx->params.contentLog - ctx->params.windowLog;
         ctx->params.windowLog  = (U32)maxWindowLog;
         ctx->params.contentLog = (U32)maxWindowLog + delta;
+    }
+    if (maxWindowLog < 0 && (U32)(-maxWindowLog) < ctx->params.windowLog)
+    {
+        U32 delta = ctx->params.contentLog - ctx->params.windowLog;
+        ctx->params.windowLog  = (U32)(-maxWindowLog);
+        ctx->params.contentLog = (U32)(-maxWindowLog) + delta;
     }
     LZ6HC_capParamsToSize(&ctx->params, maxSrcSize);
 

@@ -59,6 +59,11 @@ typedef struct LZ6HC_match_s {
 *  Block Compression
 **************************************/
 int LZ6_compress_HC (const char* src, char* dst, int srcSize, int maxDstSize, int compressionLevel);
+
+/* LZ6_compress_HC() with every match distance capped to (1 << windowLog) - 1,
+ * windowLog in [10, 24] (returns 0 otherwise). Same block format. */
+int LZ6_compress_HC_window (const char* src, char* dst, int srcSize, int maxDstSize,
+                            int compressionLevel, int windowLog);
 /*
 LZ6_compress_HC :
     Destination buffer 'dst' must be already allocated.
