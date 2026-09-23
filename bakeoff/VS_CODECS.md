@@ -15,6 +15,10 @@ machine and settings: **fastlzma2** 1.0.1 (lzbench's build, C decoder),
 with Igor Pavlov's assembler LZMA decoder: same LZMA2 stream, compressed
 sizes byte-identical to fastlzma2 on every file) and **memlz** 0.2 beta.
 uf-lzma2 enters through its own lzbench patch, reviewed before building.
+Its level 11 (level 10 + a per-file lc/lp/pb search, standard LZMA2 output)
+comes from its v11 patch, measured 2026-09-23; in that run level 10 decoded
+at 120.6 MB/s on Silesia (110.5 in the 09-22 run shown), so level 11 decodes
+~2% slower than level 10 when both come from the same run.
 
 Rebuild and rerun everything with `bakeoff/run_vs_codecs.sh` (fetch + patch +
 build + both corpora); the raw dumps are parsed by
@@ -55,6 +59,7 @@ Two caveats, both material:
 | **lz6 seq -5** | 5,401,410 | 41.12% | 56.1 | 409.3 |
 | **lz6 seq -2** | 5,429,532 | 41.33% | 94.5 | 435.9 |
 | **lz6 seq -1** | 5,557,735 | 42.31% | 106.4 | 446.0 |
+| uf-lzma2 L11 (asm dec) | 6,914,570 | 52.64% | 2.2 | 64.8 |
 | brotli L11 | 7,041,245 | 53.60% | 0.6 | 222.5 |
 | fastlzma2 L10 | 7,067,576 | 53.80% | 6.2 | 47.0 |
 | uf-lzma2 L10 (asm dec) | 7,067,576 | 53.80% | 6.2 | 63.9 |
@@ -110,6 +115,7 @@ Two caveats, both material:
 
 | codec | csize | ratio | enc MB/s | dec MB/s |
 |---|---:|---:|---:|---:|
+| uf-lzma2 L11 (asm dec) | 48,483,163 | 22.88% | 1.2 | 118.3 |
 | fastlzma2 L10 | 48,673,262 | 22.97% | 3.3 | 81.0 |
 | uf-lzma2 L10 (asm dec) | 48,673,262 | 22.97% | 3.3 | 110.5 |
 | xz L9 | 48,795,480 | 23.02% | 2.5 | 103.7 |
@@ -177,9 +183,12 @@ Without D, lz6 -15 is 46.64% and sits **behind** the LZMA/brotli class:
 | uf-lzma2 -10 | 53.80% | 45.50% | 51.87% | 17.78% | 24.78% | 85.52% | 82.53% | 28.53% | 35.97% |
 | xz -9 | 54.16% | 45.92% | 53.34% | 17.76% | 24.72% | 85.84% | 82.38% | 29.71% | 35.87% |
 | zstd -19 | 55.97% | 48.06% | 51.77% | 18.06% | 26.66% | 88.52% | 87.83% | 31.61% | 38.49% |
+| uf-lzma2 -11 | 52.64% | 44.13% | 51.87% | 17.78% | 24.59% | 78.01% | 79.12% | 28.51% | 35.86% |
 
-Per file, lz6 -15 wins E and F (the byte-plane transform) and is close on
-G; on A, B, C and H it loses even to zstd -19. (Until 2026-09-22 these
+Per file, lz6 -15 has the best E among the codecs without a per-file
+parameter search (79.76%, uf-lzma2 -11: 78.01%); on F it is within 0.3
+points of brotli -11 and uf-lzma2 -11, which are both slightly smaller; it
+is close on G; on A, B, C and H it loses even to zstd -19. (Until 2026-09-22 these
 tables showed lz6 at 46.66% against the other codecs' 8-file totals: the
 parser rebuilt each file's size from lzbench's rounded ratio, and D's 0.00
 ratio dropped it from lz6's denominator only. Fixed in parse_lzbench.py,
@@ -191,11 +200,13 @@ brotli -11 by a third.** L15 is 26.52% @ 493 MB/s versus zstd -19's 24.96% @
 axes, but its decode lead is now 1.6x (it was 2.0x before seq v2). lizard -49
 is 2.1 points behind lz6 at 2.35x the decode (1158 MB/s).
 
-**LZMA2 with an assembler decoder.** uf-lzma2 -10 is the best ratio in the
-Silesia table (22.97%, xz -9: 23.02%) at 110 MB/s decode, 36-48% faster than
-the same streams through fastlzma2's C decoder. That is the ceiling of the
-bit-wise range-coder class; lz6 -15 trades 3.6 points of ratio for 4.5x the
-decode.
+**LZMA2 with an assembler decoder.** uf-lzma2 -11 is the best ratio in the
+Silesia table (22.88%; -10: 22.97%, xz -9: 23.02%) at ~110-118 MB/s decode;
+its -10 streams decode 36-48% faster than the same streams through
+fastlzma2's C decoder. That is the ceiling of the bit-wise range-coder
+class; lz6 -15 trades 3.6 points of ratio for ~4.2x the decode. Level 11's
+per-file lc/lp/pb search also takes AIT/E from 85.52% to 78.01% (lz6's
+byte-plane result there: 79.76%).
 
 **memlz** is the opposite end: ~0.9 GB/s both ways on Silesia (1.7-1.9 GB/s
 on AIT) at 59.91%, a worse ratio than lz4 (47.60%): a compression-speed codec.

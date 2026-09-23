@@ -44,6 +44,7 @@ Measured with one harness ([lzbench], one thread, mem-to-mem, per file) on 2x Xe
 
 | codec | ratio | enc MB/s | dec MB/s |
 |---|---:|---:|---:|
+| uf-lzma2 -11 (asm decoder) | 22.88% | 1.2 | 118 |
 | uf-lzma2 -10 (asm decoder) | 22.97% | 3.3 | 110 |
 | zstd -19 | 24.96% | 2.7 | 778 |
 | **lz6 -15** | **26.52%** | 2.2 | **493** |
@@ -63,6 +64,7 @@ Measured with one harness ([lzbench], one thread, mem-to-mem, per file) on 2x Xe
 |---|---:|---:|---:|
 | **lz6 -15** | **39.54%** | 2.1 | **405** |
 | **lz6 -2** | **41.33%** | 94.5 | **436** |
+| uf-lzma2 -11 (asm decoder) | 52.64% | 2.2 | 65 |
 | uf-lzma2 -10 (asm decoder) | 53.80% | 6.2 | 64 |
 | zstd -19 | 55.97% | 5.3 | 1,085 |
 | lizard -49 | 61.21% | 5.3 | 1,537 |
