@@ -69,8 +69,9 @@ typedef enum { notLimited = 0, limitedOutput = 1 } limitedOutput_directive;
 /* byPtr is kept for completeness but no longer selected: on 32-bit hosts
  * its empty (NULL) entries were rejected only by the distance check, and
  * with lz6's 16 MB window a low heap (Windows x86 puts it around 11 MB)
- * let NULL pass and the encoder read address 0. byU32 stores indices, so
- * 32-bit output is now identical to 64-bit output as well. */
+ * let NULL pass and the encoder read address 0. byU32 stores indices.
+ * (32-bit and 64-bit output still differ: LZ6_hashPosition hashes 5 bytes
+ * on 64-bit hosts and 4 on 32-bit, as in LZ4. Both decode identically.) */
 typedef enum { byPtr, byU32, byU16 } tableType_t;
 
 typedef enum { noDict = 0, withPrefix64k, usingExtDict } dict_directive;
