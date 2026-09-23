@@ -31,7 +31,17 @@ def parse(path):
         ratio = float(m.group("ratio"))
         enc = float(m.group("enc"))
         dec = float(m.group("dec"))
-        orig = csize * 100.0 / ratio if ratio > 0 else 0
+        # the real file size: reconstructing it from lzbench's 2-decimal
+        # ratio is off by ~500 bytes per codec, and a 0.00 ratio (lz6 on
+        # AIT's PRNG file D: 7 bytes) dropped the file from the totals
+        # while still counting it
+        if os.path.isfile(f):
+            orig = float(os.path.getsize(f))
+        else:
+            orig = csize * 100.0 / ratio if ratio > 0 else 0
+            if ratio == 0:
+                sys.stderr.write(f"parse_lzbench: {f} not found and ratio 0.00; "
+                                 f"{name} totals will miss it\n")
         rows.setdefault(name, []).append((f, orig, csize, enc, dec))
     agg = {}
     for name, rs in rows.items():

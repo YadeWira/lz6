@@ -44,8 +44,8 @@ Measured with one harness ([lzbench], one thread, mem-to-mem, per file) on 2x Xe
 
 | codec | ratio | enc MB/s | dec MB/s |
 |---|---:|---:|---:|
-| uf-lzma2 -10 (asm decoder) | 22.96% | 3.3 | 111 |
-| zstd -19 | 24.95% | 2.7 | 790 |
+| uf-lzma2 -10 (asm decoder) | 22.97% | 3.3 | 111 |
+| zstd -19 | 24.96% | 2.7 | 790 |
 | **lz6 -15** | **26.39%** | 2.2 | **399** |
 | lizard -49 | 28.62% | 1.9 | 1,198 |
 | **lz6 -9** | **29.01%** | 16.8 | **356** |
@@ -61,8 +61,8 @@ Measured with one harness ([lzbench], one thread, mem-to-mem, per file) on 2x Xe
 
 | codec | ratio | enc MB/s | dec MB/s |
 |---|---:|---:|---:|
-| **lz6 -15** | **46.66%** | 1.7 | **291** |
-| **lz6 -2** | **48.79%** | 79.3 | **359** |
+| **lz6 -15** | **39.55%** | 2.0 | **320** |
+| **lz6 -2** | **41.36%** | 91.4 | **389** |
 | uf-lzma2 -10 (asm decoder) | 53.80% | 6.2 | 64 |
 | zstd -19 | 55.97% | 4.7 | 1,053 |
 | lizard -49 | 61.21% | 5.1 | 1,553 |
@@ -71,7 +71,7 @@ Measured with one harness ([lzbench], one thread, mem-to-mem, per file) on 2x Xe
 | lz4 | 75.66% | 689 | 4,638 |
 | memlz | 81.64% | 1,873 | 1,713 |
 
-lz6 has the best ratio on AIT by 9 points. On Silesia it is 1.4 points behind zstd -19 and ahead of lizard, lz5 and misa77. Decode speed remains its weak axis: 2-4x below zstd and lizard. See also [bakeoff/COMPETITORS.md](bakeoff/COMPETITORS.md) and the [wiki](https://github.com/YadeWira/lz6/wiki/Benchmarks).
+On AIT most of lz6's lead comes from one file, D (glibc `random()` output, regenerated from its seed: 2 MB -> 7 bytes); without D, lz6 -15 is 46.66%, behind brotli -11 (45.27%) and LZMA (45.50%) and 1.4 points ahead of zstd -19. On Silesia lz6 -15 is 1.4 points behind zstd -19 and ahead of lizard, lz5 and misa77. Decode speed remains its weak axis: 2-4x below zstd and lizard. See also [bakeoff/COMPETITORS.md](bakeoff/COMPETITORS.md) and the [wiki](https://github.com/YadeWira/lz6/wiki/Benchmarks).
 
 ## Documentation
 

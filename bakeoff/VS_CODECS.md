@@ -39,21 +39,21 @@ Two caveats, both material:
 
 | codec | csize | ratio | enc MB/s | dec MB/s |
 |---|---:|---:|---:|---:|
-| **lz6 seq -13** | 5,195,790 | 46.66% | 5.2 | 286.4 |
-| **lz6 seq -14** | 5,195,809 | 46.66% | 4.2 | 294.9 |
-| **lz6 seq -15** | 5,195,697 | 46.66% | 1.7 | 291.4 |
-| **lz6 seq -11** | 5,199,040 | 46.68% | 7.8 | 302.1 |
-| **lz6 seq -12** | 5,198,938 | 46.68% | 7.7 | 295.5 |
-| **lz6 seq -10** | 5,222,695 | 46.90% | 16.3 | 311.4 |
-| **lz6 seq -9** | 5,241,048 | 47.06% | 16.9 | 311.2 |
-| **lz6 seq -6** | 5,285,184 | 47.46% | 23.6 | 303.9 |
-| **lz6 seq -7** | 5,285,184 | 47.46% | 23.7 | 306.4 |
-| **lz6 seq -8** | 5,285,197 | 47.46% | 23.9 | 298.0 |
-| **lz6 seq -3** | 5,375,855 | 48.27% | 60.4 | 326.6 |
-| **lz6 seq -4** | 5,404,438 | 48.53% | 45.6 | 308.3 |
-| **lz6 seq -5** | 5,404,438 | 48.53% | 46.2 | 307.8 |
-| **lz6 seq -2** | 5,433,041 | 48.79% | 79.3 | 359.4 |
-| **lz6 seq -1** | 5,561,279 | 49.94% | 87.4 | 372.5 |
+| **lz6 seq -15** | 5,195,697 | 39.55% | 2.0 | 320.4 |
+| **lz6 seq -13** | 5,195,790 | 39.55% | 6.1 | 315.2 |
+| **lz6 seq -14** | 5,195,809 | 39.55% | 4.9 | 324.0 |
+| **lz6 seq -12** | 5,198,938 | 39.58% | 9.1 | 324.6 |
+| **lz6 seq -11** | 5,199,040 | 39.58% | 9.2 | 331.3 |
+| **lz6 seq -10** | 5,222,695 | 39.76% | 19.1 | 340.8 |
+| **lz6 seq -9** | 5,241,048 | 39.90% | 19.8 | 340.6 |
+| **lz6 seq -6** | 5,285,184 | 40.23% | 27.6 | 333.2 |
+| **lz6 seq -7** | 5,285,184 | 40.23% | 27.7 | 335.7 |
+| **lz6 seq -8** | 5,285,197 | 40.23% | 28.0 | 327.1 |
+| **lz6 seq -3** | 5,375,855 | 40.92% | 70.0 | 356.2 |
+| **lz6 seq -4** | 5,404,438 | 41.14% | 53.1 | 337.6 |
+| **lz6 seq -5** | 5,404,438 | 41.14% | 53.7 | 337.2 |
+| **lz6 seq -2** | 5,433,041 | 41.36% | 91.4 | 389.0 |
+| **lz6 seq -1** | 5,561,279 | 42.34% | 100.4 | 402.0 |
 | brotli L11 | 7,041,245 | 53.60% | 0.5 | 210.5 |
 | fastlzma2 L10 | 7,067,576 | 53.80% | 6.2 | 47.0 |
 | uf-lzma2 L10 (asm dec) | 7,067,576 | 53.80% | 6.2 | 63.9 |
@@ -66,7 +66,7 @@ Two caveats, both material:
 | zstd L19 | 7,351,946 | 55.97% | 4.7 | 1052.6 |
 | xz L3 | 7,379,360 | 56.18% | 6.0 | 62.2 |
 | xz L1 | 7,435,760 | 56.60% | 8.3 | 60.6 |
-| brotli L9 | 7,468,536 | 56.86% | 13.0 | 303.3 |
+| brotli L9 | 7,468,536 | 56.85% | 13.0 | 303.3 |
 | brotli L6 | 7,489,339 | 57.01% | 30.8 | 297.5 |
 | zstd L15 | 7,530,938 | 57.33% | 12.9 | 1022.9 |
 | zstd L12 | 7,552,509 | 57.49% | 36.1 | 1012.8 |
@@ -81,27 +81,27 @@ Two caveats, both material:
 | lizard L49 | 8,041,060 | 61.21% | 5.1 | 1552.8 |
 | zlib L1 | 8,094,068 | 61.62% | 53.1 | 291.9 |
 | lizard L45 | 8,253,375 | 62.83% | 14.9 | 1543.6 |
-| lizard L40 | 8,481,600 | 64.57% | 329.8 | 1491.8 |
+| lizard L40 | 8,481,600 | 64.57% | 329.8 | 1491.7 |
 | lz5 HC L15 | 8,603,507 | 65.49% | 2.0 | 919.8 |
 | lz5 HC L12 | 8,720,302 | 66.38% | 10.5 | 990.0 |
 | lizard L30 | 8,756,123 | 66.66% | 430.4 | 1909.1 |
-| misa77 L3 | 8,867,044 | 67.50% | 9.6 | 5471.3 |
+| misa77 L3 | 8,867,044 | 67.50% | 9.6 | 5471.2 |
 | lz5 HC L9 | 8,900,815 | 67.76% | 18.3 | 1076.7 |
 | **lz6 HC -15** | 8,996,054 | 68.48% | 10.1 | 1653.0 |
-| **lz6 HC -12** | 8,996,268 | 68.49% | 10.9 | 1655.8 |
+| **lz6 HC -12** | 8,996,268 | 68.48% | 10.9 | 1655.8 |
 | lz5 HC L6 | 9,066,986 | 69.02% | 37.9 | 1348.0 |
 | misa77 L4 | 9,070,575 | 69.05% | 7.0 | 3534.7 |
-| **lz6 HC -6** | 9,190,747 | 69.97% | 41.6 | 1567.1 |
-| misa77 L2 | 9,287,323 | 70.70% | 36.0 | 6587.5 |
+| **lz6 HC -6** | 9,190,747 | 69.96% | 41.6 | 1567.1 |
+| misa77 L2 | 9,287,323 | 70.70% | 36.0 | 6587.6 |
 | lz5 | 9,469,498 | 72.09% | 306.1 | 1162.0 |
 | misa77 L0 | 9,554,603 | 72.73% | 213.0 | 7255.0 |
 | misa77 L1 | 9,628,088 | 73.29% | 48.9 | 7762.4 |
 | lizard L20 | 9,761,531 | 74.31% | 443.3 | 2472.3 |
-| lizard L10 | 9,926,082 | 75.56% | 610.2 | 4684.3 |
+| lizard L10 | 9,926,082 | 75.56% | 610.1 | 4684.2 |
 | lz4 | 9,938,605 | 75.66% | 689.3 | 4637.7 |
-| misa77 L-1 | 10,041,718 | 76.44% | 327.8 | 7400.5 |
-| lz5 HC L1 | 10,441,177 | 79.48% | 492.1 | 2259.5 |
-| memlz | 10,724,346 | 81.64% | 1872.5 | 1712.6 |
+| misa77 L-1 | 10,041,718 | 76.44% | 327.8 | 7400.4 |
+| lz5 HC L1 | 10,441,177 | 79.48% | 492.1 | 2259.6 |
+| memlz | 10,724,346 | 81.64% | 1872.5 | 1712.7 |
 
 ## Silesia (212 MB, per-file)
 
@@ -109,39 +109,39 @@ Two caveats, both material:
 
 | codec | csize | ratio | enc MB/s | dec MB/s |
 |---|---:|---:|---:|---:|
-| fastlzma2 L10 | 48,673,262 | 22.96% | 3.3 | 81.0 |
-| uf-lzma2 L10 (asm dec) | 48,673,262 | 22.96% | 3.3 | 110.5 |
+| fastlzma2 L10 | 48,673,262 | 22.97% | 3.3 | 81.0 |
+| uf-lzma2 L10 (asm dec) | 48,673,262 | 22.97% | 3.3 | 110.5 |
 | xz L9 | 48,795,480 | 23.02% | 2.5 | 110.3 |
-| brotli L11 | 50,328,370 | 23.75% | 0.5 | 358.5 |
+| brotli L11 | 50,328,370 | 23.75% | 0.5 | 358.6 |
 | fastlzma2 L5 | 51,124,925 | 24.12% | 5.9 | 77.9 |
 | uf-lzma2 L5 (asm dec) | 51,124,925 | 24.12% | 6.1 | 107.0 |
-| zstd L19 | 52,891,946 | 24.95% | 2.7 | 789.6 |
+| zstd L19 | 52,891,946 | 24.96% | 2.7 | 789.5 |
 | **lz6 seq -15** | 55,929,013 | 26.39% | 2.2 | 399.0 |
-| **lz6 seq -11** | 56,423,053 | 26.62% | 3.8 | 393.4 |
-| xz L1 | 58,716,448 | 27.71% | 16.3 | 94.2 |
+| **lz6 seq -11** | 56,423,053 | 26.62% | 3.8 | 393.3 |
+| xz L1 | 58,716,448 | 27.70% | 16.3 | 94.2 |
 | fastlzma2 L1 | 58,993,508 | 27.84% | 17.8 | 65.1 |
 | uf-lzma2 L1 (asm dec) | 58,993,508 | 27.84% | 18.1 | 96.4 |
 | lizard L49 | 60,667,327 | 28.62% | 1.9 | 1197.6 |
 | **lz6 seq -9** | 61,487,881 | 29.01% | 16.8 | 356.2 |
-| zstd L5 | 62,751,501 | 29.60% | 101.6 | 808.3 |
+| zstd L5 | 62,751,501 | 29.61% | 101.6 | 808.3 |
 | lz5 HC L15 | 65,595,195 | 30.95% | 2.1 | 750.3 |
-| **lz6 seq -5** | 67,364,556 | 31.79% | 32.4 | 319.6 |
+| **lz6 seq -5** | 67,364,556 | 31.78% | 32.4 | 319.7 |
 | **lz6 seq -3** | 67,590,963 | 31.89% | 35.2 | 341.0 |
 | **lz6 seq -2** | 67,645,372 | 31.92% | 38.4 | 363.5 |
 | zlib L6 | 68,220,487 | 32.19% | 26.6 | 326.1 |
-| **lz6 seq -1** | 70,883,628 | 33.44% | 41.3 | 372.1 |
-| zstd L1 | 73,229,468 | 34.55% | 358.0 | 1205.3 |
+| **lz6 seq -1** | 70,883,628 | 33.45% | 41.3 | 372.1 |
+| zstd L1 | 73,229,468 | 34.55% | 358.1 | 1205.3 |
 | brotli L1 | 73,429,961 | 34.65% | 211.8 | 333.4 |
 | zlib L1 | 77,246,811 | 36.45% | 83.5 | 303.9 |
-| misa77 L3 | 80,028,169 | 37.76% | 11.0 | 4620.8 |
+| misa77 L3 | 80,028,169 | 37.76% | 11.0 | 4620.7 |
 | lz5 HC L6 | 80,576,517 | 38.02% | 47.7 | 1148.0 |
-| **lz6 HC -15** | 81,308,555 | 38.37% | 5.6 | 1296.5 |
+| **lz6 HC -15** | 81,308,555 | 38.36% | 5.6 | 1296.5 |
 | lizard L30 | 85,765,250 | 40.47% | 322.5 | 1226.8 |
-| lz5 | 88,218,423 | 41.62% | 234.9 | 706.6 |
+| lz5 | 88,218,423 | 41.62% | 234.9 | 706.5 |
 | misa77 L1 | 90,385,225 | 42.65% | 51.1 | 5153.7 |
 | misa77 L-1 | 99,073,179 | 46.75% | 280.9 | 4791.0 |
 | lz4 | 100,880,147 | 47.60% | 540.7 | 3579.7 |
-| lz5 HC L1 | 113,525,877 | 53.56% | 505.6 | 1640.2 |
+| lz5 HC L1 | 113,525,877 | 53.57% | 505.6 | 1640.2 |
 | memlz | 126,970,186 | 59.91% | 963.2 | 887.8 |
 
 ### Silesia per-file ratio
@@ -163,19 +163,35 @@ Two caveats, both material:
 
 ## Findings
 
-**lz6 owns AIT.** L15 is 46.66% against brotli -11's 53.60% - a 6.9 point gap
-- while decoding at 291 MB/s (brotli -11: 211 MB/s, xz -9: 64 MB/s). Against
-zstd -19 it is 9.3 points smaller for a 3.6x slower decode (zstd -19:
-1053 MB/s).
+**AIT: the lead is file D.** L15 is 39.55% on the 8 files against brotli
+-11's 53.60% and zstd -19's 55.97%, decoding at 320 MB/s. Almost all of that
+comes from one file: D is glibc `random()` output, which lz6 regenerates
+from its seed (2,000,000 -> 7 bytes) while every other codec stores it raw.
+Without D, lz6 -15 is 46.66% and sits **behind** the LZMA/brotli class:
+
+| codec | 8 files | without D | A | B | C | E | F | G | H |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| **lz6 -15** | **39.55%** | 46.66% | 57.80% | 19.36% | 28.84% | 79.76% | 79.44% | 29.39% | 41.11% |
+| brotli -11 | 53.60% | 45.27% | 50.85% | 17.41% | 24.92% | 84.75% | 79.28% | 30.97% | 36.26% |
+| uf-lzma2 -10 | 53.80% | 45.50% | 51.87% | 17.78% | 24.78% | 85.52% | 82.53% | 28.53% | 35.97% |
+| xz -9 | 54.16% | 45.92% | 53.34% | 17.76% | 24.72% | 85.84% | 82.38% | 29.71% | 35.87% |
+| zstd -19 | 55.97% | 48.06% | 51.77% | 18.06% | 26.66% | 88.52% | 87.83% | 31.61% | 38.49% |
+
+Per file, lz6 -15 wins E and F (the byte-plane transform) and is close on
+G; on A, B, C and H it loses even to zstd -19. (Until 2026-09-22 these
+tables showed lz6 at 46.66% against the other codecs' 8-file totals: the
+parser rebuilt each file's size from lzbench's rounded ratio, and D's 0.00
+ratio dropped it from lz6's denominator only. Fixed in parse_lzbench.py,
+which now uses the real file sizes; reported by uf-lzma2.)
 
 **On Silesia lz6 -15 is 1.4 points behind zstd -19 and now out-decodes
-brotli -11.** L15 is 26.39% @ 399 MB/s versus zstd -19's 24.95% @ 790 MB/s
+brotli -11.** L15 is 26.39% @ 399 MB/s versus zstd -19's 24.96% @ 790 MB/s
 and brotli -11's 23.75% @ 359 MB/s. zstd -19 still beats lz6 on both axes;
 brotli -11 is smaller but decodes slower. lizard -49 is 2.2 points behind at
 3.0x the decode (1198 MB/s).
 
 **LZMA2 with an assembler decoder.** uf-lzma2 -10 is the best ratio in the
-Silesia table (22.96%, xz -9: 23.02%) at 110 MB/s decode, 36-48% faster than
+Silesia table (22.97%, xz -9: 23.02%) at 110 MB/s decode, 36-48% faster than
 the same streams through fastlzma2's C decoder. That is the ceiling of the
 bit-wise range-coder class; lz6 -15 trades 3.4 points of ratio for 3.6x the
 decode.
@@ -215,9 +231,9 @@ mostly format-level: rANS with a multiply per symbol, single-state streams,
 Roadmap page).
 
 **Level redundancy is still there.** L6 == L7 and L4 == L5 byte-identical on
-AIT, and L11-L15 span 0.02 points (46.66-46.68%) while encode cost ranges
-from 7.8 down to 1.7 MB/s. L12 could be dropped with no ratio loss; L13/L14
-are effectively L15. On AIT the fastest-decoding seq level is L1 (373 MB/s).
+AIT, and L11-L15 span 0.03 points (39.55-39.58%) while encode cost ranges
+from 9.2 down to 2.0 MB/s. L12 could be dropped with no ratio loss; L13/L14
+are effectively L15. On AIT the fastest-decoding seq level is L1 (402 MB/s).
 
 **Not benchmarked here:** brotli/xz are different families with no
 fast-decode pretension. The uncomfortable line is now zstd -19, which is
