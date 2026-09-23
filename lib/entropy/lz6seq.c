@@ -479,6 +479,18 @@ static inline void tbr_reload(tbr_t* r)
     else { const size_t b2 = (size_t)(r->ptr - r->start); r->ptr = r->start; r->used -= (unsigned)(b2 * 8); }
     r->c = tbr_load(r->ptr);
 }
+/* branch-free reload while the stream has >= 24 bytes left below ptr:
+ * even an overrun (used <= 64 + 57) moves ptr by at most 15 bytes */
+static inline void tbr_reload_fast(tbr_t* r)
+{
+    if (r->ptr - r->start >= 24) {
+        r->ptr -= r->used >> 3;
+        r->used &= 7;
+        r->c = tbr_load(r->ptr);
+    } else {
+        tbr_reload(r);
+    }
+}
 /* every real bit consumed, none of the padding */
 static int tbr_exact(const tbr_t* r)
 {
@@ -1606,18 +1618,23 @@ static size_t decode_normal(const char* src, size_t srcSize,
             /* ---- stage A: read sequence `nread` ---- */
             const tans_dentry eL = dLL[sLL], eM = dML[sML], eO = dOF[sOF];
             const unsigned c0 = eL.sym, c1 = eM.sym, osym = eO.sym;
-            tbr_reload(&br);
+            const unsigned lx = (unsigned)LL_extra[c0];
+            const unsigned mx = c1 > 0 ? (unsigned)ML_extra[c1 - 1] : 0;
+            const unsigned ox = (c1 > 0 && osym < OF_CODES) ? osym : 0;
+            const int more = nread + 1 < sc;
+            /* the whole sequence's bits are known from the three entries:
+             * one refill covers them unless they exceed 56 (rare) */
+            const unsigned need = ox + mx + lx + (more ? (unsigned)eL.nbBits + eM.nbBits + eO.nbBits : 0u);
+            const int split = need > 56;
+            tbr_reload_fast(&br);
             size_t ml = 0, md = 0;
-            unsigned mx = 0, lx = (unsigned)LL_extra[c0];
             if (c1 > 0) {
-                const unsigned real = c1 - 1;
-                mx = (unsigned)ML_extra[real];
                 /* offset symbol: buckets 0..OF_CODES-1 (bucket + raw bits),
                  * rep stack entries above */
                 if (osym < OF_CODES) {
-                    md = (size_t)OF_base[osym] + tbr_read(&br, osym);
+                    md = (size_t)OF_base[osym] + tbr_read(&br, ox);
                     if (md != (size_t)rp[0]) { rp[2] = rp[1]; rp[1] = rp[0]; rp[0] = (int)md; }
-                    if (osym + mx + lx > 56) tbr_reload(&br);
+                    if (split) tbr_reload(&br);
                 } else {
                     const unsigned ri = osym - OF_CODES;
                     if (ri > 2) goto fail;
@@ -1628,11 +1645,11 @@ static size_t decode_normal(const char* src, size_t srcSize,
                         rp[0] = t;
                     }
                 }
-                ml = (size_t)ML_base[real] + tbr_read(&br, mx);
+                ml = (size_t)ML_base[c1 - 1] + tbr_read(&br, mx);
             }
             size_t ll = (size_t)LL_base[c0] + tbr_read(&br, lx);
-            if (nread + 1 < sc) {
-                tbr_reload(&br);
+            if (more) {
+                if (split) tbr_reload(&br);
                 sLL = eL.newState + tbr_read(&br, eL.nbBits);
                 sML = eM.newState + tbr_read(&br, eM.nbBits);
                 sOF = eO.newState + tbr_read(&br, eO.nbBits);
