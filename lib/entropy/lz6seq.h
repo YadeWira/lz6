@@ -2,11 +2,11 @@
  * lz6seq.h - Sequence codec: lz6 matcher + FSE entropy (self-contained).
  *
  * Compresses a buffer by running lz6's HC match finder and coding the
- * resulting sequences with an rANS entropy coder:
- *   - lit_len / match_len as log-bucket rANS symbols + raw extra bits
- *   - offsets: log2 bucket or repcode (rep0/1/2) folded into one rANS
- *     alphabet; bucket residuals split into per-bucket top-8 rANS
- *     streams + raw low bits
+ * resulting sequences with an entropy stage:
+ *   - lit_len / match_len / offset symbols (log buckets, offset repcodes
+ *     rep0/1/2 folded into the offset alphabet) as table-ANS states
+ *   - every extra bit (ll/ml extras, offset = bucket + raw bits) in the
+ *     same backward bitstream as the states
  *   - literals: raw / Huffman / rANS order-0 / rANS order-1 (16 or 256
  *     contexts), picked per block
  *   - whole-block transforms: byte-plane lanes, PRNG seed regeneration
@@ -17,10 +17,8 @@
  * Stream layout (per block):
  *   [flags:1][isize:4]
  *   [lit_mode:1][lit_count:vlq][literal payload]
- *   [seq_count:4][ll stream][ml stream][of stream]
- *   [top-8 bucket streams ... terminated by [0][0:4]]
- *   [low bits: size:4 + LSB-first bits]
- *   [extra bits: ll/ml, LSB-first, to the end of the block]
+ *   [seq_count:4][ll table][ml table][of table]
+ *   [bits len:4][8 pad bytes][backward bitstream]
  * The byte-exact specification is the "Seq Stream Format" page of the
  * project wiki.
  */

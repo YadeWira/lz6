@@ -1,4 +1,22 @@
 v1.6.4-pre (in progress)
+- perf/seq v2: the ll/ml/of symbols move from three rANS streams to
+  table ANS (zstd FSE-style: one table load + a bit read per symbol, no
+  multiply), and their states share ONE backward bitstream with every
+  extra bit (ll/ml extras; offsets as bucket + raw bits). Six sections
+  (3 rANS streams, 25 per-bucket offset top-8 streams, low bits, extra
+  bits) become three small table headers and one stream; the decoder
+  reads a sequence with one refill.
+  BREAKS THE SEQ BLOCK FORMAT (lab format, no compatibility shim; the
+  LZ6S1 fixture is regenerated). The frame HC levels are untouched.
+  Measured (one core, interleaved vs master, Silesia): decode L2
+  ~376 -> ~459 MB/s, L15 ~393 -> ~485 MB/s (cycles/byte 9.95 -> 8.29,
+  9.26 -> 7.65). Size: Silesia L2 +0.27%, L15 +0.50% (the dropped
+  offset model; mozilla/nci/sao/x-ray carry it); AIT L2 -0.06%, L15
+  -0.04% (fewer stream headers).
+  Tried and rejected: two interleaved sequence bitstreams (+6.5% cycles:
+  the decoder is instruction-bound at IPC ~2.5, not latency-bound).
+- fixed: plane_encode leaked the Huffman candidate buffer when the LZ
+  candidate won (found by ASAN on AIT G at level 1).
 - api: LZ6_compress_fast_window() and LZ6_compress_HC_window() cap every
   match distance to (1 << windowLog) - 1, windowLog 10..24. The block
   format is unchanged; a decoder that keeps only the last 2^windowLog
