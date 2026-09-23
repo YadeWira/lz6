@@ -1,4 +1,4 @@
-v1.6.4-pre (in progress)
+v1.6.4-pre
 - perf/seq v2: the ll/ml/of symbols move from three rANS streams to
   table ANS (zstd FSE-style: one table load + a bit read per symbol, no
   multiply), and their states share ONE backward bitstream with every

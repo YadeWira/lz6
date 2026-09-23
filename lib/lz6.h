@@ -47,7 +47,7 @@ extern "C" {
 /**************************************
 *  Version
 **************************************/
-#define LZ6_VERSION          "v1.6.3-pre"
+#define LZ6_VERSION          "v1.6.4-pre"
 #define LZ6_VERSION_MAJOR    1    /* for breaking interface changes  */
 #define LZ6_VERSION_MINOR    6    /* for new (non-breaking) interface capabilities */
 #define LZ6_VERSION_RELEASE  3    /* for tweaks, bug-fixes, or development */
