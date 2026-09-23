@@ -76,6 +76,8 @@ Following the literals is the match copy operation.
 
 It starts by the offset. The length of offset depends on the flag field.
 The flag "011" informs that decoder should use the last encoded offset.
+At the start of a block no offset has been decoded yet, and the last offset
+is 1: a block may begin with a "011" codeword, which then copies from 1 byte back.
 The flag "00" informs that the offset is a 2 bytes value (16-bit), in little endian format.
 The flag "010" informs that the offset is a 3 bytes value (24-bit), in little endian format.
 The flag "1" informs that the offset is a 1 bytes value.
