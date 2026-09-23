@@ -445,8 +445,8 @@ size_t fse_dtable_prepare(fse_dtable* t, const uint8_t* in, size_t in_len,
     }
     if (slot != M) { fse_dtable_free(t); return 0; }
 
-    /* combined 12B entries only when the table stays cache-resident
-     * (M <= 4096): for M = 65536 the 768KB combined table thrashes L2/TLB
+    /* combined entries only when the table stays cache-resident
+     * (M <= 4096): for M = 65536 a combined table thrashes L2/TLB
      * and decodes slower than the compact layout */
     if (M <= 4096) {
         t->dcomp = (fse_dentry*)malloc((size_t)M * sizeof(fse_dentry));
@@ -455,9 +455,8 @@ size_t fse_dtable_prepare(fse_dtable* t, const uint8_t* in, size_t in_len,
         for (unsigned s2 = 0; s2 < M; s2++) {
             fse_dentry* e = &t->dcomp[s2];
             unsigned s = t->dtab1[s2];
-            e->s = (uint8_t)s;
-            e->f = t->freq_tab[s];
-            e->off = (int32_t)s2 - (int32_t)t->cumul[s];
+            e->f = (uint16_t)t->freq_tab[s];
+            e->off = (uint16_t)(s2 - t->cumul[s]);
         }
     }
     return hdr;
@@ -500,13 +499,15 @@ static int fse_decode_syms(const fse_dtable* t, const uint8_t* in, size_t in_len
     if (t->dcomp) {
         /* combined-entry loop: one load per symbol (M <= 4096 tables) */
         const fse_dentry* dtab = t->dcomp;
+        const uint8_t* dsym = t->dtab1;
         for (k = 0; k < n; k++) {
-            /* combined entry: symbol + freq + (slot - cumul[s]) in one load.
+            /* combined entry: freq + (slot - cumul[s]) in one load, symbol
+             * from dtab1 at the same slot.
              * f >= 1 for every slot (freqs sum to exactly M), so the rANS
              * invariant holds and the renorm below needs at most 2 bytes. */
             const fse_dentry* e = &dtab[x & Mmask];
             unsigned f = e->f;
-            syms[k] = e->s;
+            syms[k] = dsym[x & Mmask];
             /* advance (must come BEFORE refill: x is initially valid after encoder flush) */
             x = f * (x >> L_bits) + (uint32_t)e->off;
             /* refill with slack fast path: at most 2 bytes ever needed */

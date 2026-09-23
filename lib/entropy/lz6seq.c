@@ -17,6 +17,12 @@
 #include <math.h>
 #include <stdio.h>
 
+#if defined(__GNUC__) || defined(__clang__)
+#  define LZ6SEQ_PREFETCH(p) __builtin_prefetch(p)
+#else
+#  define LZ6SEQ_PREFETCH(p) ((void)(p))
+#endif
+
 /* ---- symbol tables (match ozip's ozf3.c) ---- */
 #define LL_CODES 36
 #define ML_CODES 36
@@ -174,7 +180,7 @@ static int seq_dec_sym(const fse_dtable* t, uint32_t* x, const uint8_t** sp,
     uint32_t v;
     if (t->dcomp) {
         const fse_dentry* e = &t->dcomp[*x & (t->M - 1)];
-        *out = e->s;
+        *out = t->dtab1[*x & (t->M - 1)];
         v = e->f * (*x >> t->L_bits) + (uint32_t)e->off;
     } else {
         unsigned s = t->dtab1[*x & (t->M - 1)];
@@ -218,19 +224,6 @@ static int rvlq(const uint8_t** p, const uint8_t* end) {
     }
     return (int)v;
 }
-/* bit reader for extra/low bits: bounded by `end`; sets *err when the
- * stream is exhausted mid-field (corrupt input) */
-static int br_bits(uint32_t* acc, int* nbits, const uint8_t** pp,
-                   const uint8_t* end, int n, int* err) {
-    while (*nbits < n) {
-        if (*pp >= end) { *err = 1; return 0; }
-        *acc |= (uint32_t)*(*pp)++ << *nbits; *nbits += 8;
-    }
-    uint32_t v = *acc & ((1u << n) - 1);
-    *acc >>= n; *nbits -= n;
-    return (int)v;
-}
-
 /* ---- sequence collector (lz6 callback) ---- */
 typedef struct {
     int* lit_lens;
@@ -1101,72 +1094,263 @@ static void lit_dec_free(lit_dec_t* L)
     }
 }
 
-/* decode the next n literal bytes straight into out (caller guarantees
- * n >= 0 and at least `room` writable bytes at out); returns -1 on
- * corrupt/exhausted stream */
-static int lit_decode_chunk(lit_dec_t* L, uint8_t* out, int n, size_t room)
+/* rANS renorm without a loop: a valid state needs at most 2 bytes
+ * (x >= 2^16 and f >= 1 keep the advanced value >= 2^(16-L_bits) >= 16),
+ * so pick 0/1/2 bytes arithmetically. Caller guarantees 2 readable
+ * bytes at sp. Identical to the byte loop on every valid stream. */
+#define RANS_RENORM2(v, sp) do {                                         \
+        unsigned n_ = ((v) < 0x10000u) + ((v) < 0x100u);                 \
+        uint64_t w_ = ((uint64_t)(v) << 16)                              \
+                    | ((uint32_t)(sp)[0] << 8) | (uint32_t)(sp)[1];      \
+        (v) = (uint32_t)(w_ >> (16 - 8 * n_));                           \
+        (sp) += n_;                                                      \
+    } while (0)
+
+/* symbols decodable with RANS_RENORM2 before the stream needs checks */
+static size_t rans_budget(const uint8_t* sp, const uint8_t* se)
 {
+    return (size_t)(se - sp) / 2;
+}
+
+/* one symbol, unchecked renorm (caller holds a rans_budget), either
+ * table layout — the layout branch is loop-invariant and predicted */
+static inline uint8_t rans_step(const fse_dtable* t, uint32_t* x, const uint8_t** sp)
+{
+    const unsigned mask = t->M - 1;
+    uint32_t v;
+    uint8_t sy;
+    if (t->dcomp) {
+        const fse_dentry* e = &t->dcomp[*x & mask];
+        v = e->f * (*x >> t->L_bits) + (uint32_t)e->off;
+        sy = t->dtab1[*x & mask];
+    } else {
+        sy = t->dtab1[*x & mask];
+        v = t->freq_tab[sy] * (*x >> t->L_bits) + (*x & mask) - t->cumul[sy];
+    }
+    const uint8_t* q = *sp;
+    RANS_RENORM2(v, q);
+    *sp = q;
+    *x = v;
+    return sy;
+}
+
+/* order-1 literal symbol, checked renorm (stream tail) */
+static int o1_dec_checked(const fse_ctx_table* t, uint32_t* x,
+                          const uint8_t** sp, const uint8_t* se, uint8_t* out)
+{
+    const fse_o1entry* e = &t->dcomp[*x & (t->M - 1)];
+    uint32_t v = e->f * (*x >> t->L_bits) + (uint32_t)e->off;
+    *out = e->s;
+    while (v < 0x10000u) {
+        if (*sp >= se) return -1;
+        v = (v << 8) | *(*sp)++;
+    }
+    *x = v;
+    return 0;
+}
+
+/* decode all n literals into out (non-raw modes). Decoding the whole
+ * stream in one tight loop instead of per-sequence chunks keeps the
+ * coder state in registers and lets the sequence loop copy literals
+ * with wide moves. Returns -1 on a corrupt/exhausted stream. */
+static int lit_decode_all(lit_dec_t* L, uint8_t* out, size_t n)
+{
+    size_t i = 0;
     switch (L->kind) {
-    case LIT_RAW:
-        if (n > 0 && (size_t)(L->rend - L->rp) < (size_t)n) return -1;
-        /* tiny-copy fast path: one fixed 8-byte move beats a libc call for
-         * the 1-4 byte literal runs that dominate text; the padded tail is
-         * overwritten by the following sequences (room >= 8 keeps the
-         * write inside the declared output) */
-        if (n <= 8 && room >= 8 && (size_t)(L->rend - L->rp) >= 8) {
-            memcpy(out, L->rp, 8);
-        } else {
-            memcpy(out, L->rp, (size_t)n);
-        }
-        L->rp += n;
-        return 0;
     case LIT_HUF:
-        return huf_dec_n(&L->huf, out, (size_t)n);
-    case LIT_FSE0:
-        for (int i = 0; i < n; i++) {
-            uint8_t s;
-            if (seq_dec_sym(&L->ft, &L->fx, &L->fsp, L->fsend, &s)) return -1;
-            out[i] = s;
-        }
-        return 0;
-    case LIT_FSE1_6: {
-        uint32_t x = L->x6;
-        const uint8_t* sp = L->s6p;
-        int prev = L->prev6;
-        for (int i = 0; i < n; i++) {
-            const fse_ctx_table* t = &L->t6[prev >> 4];
-            const fse_o1entry* e = &t->dcomp[x & (t->M - 1)];
-            out[i] = e->s;
-            x = e->f * (x >> t->L_bits) + (uint32_t)e->off;
-            while (x < 0x10000u) {
-                if (sp >= L->s6e) return -1;
-                x = (x << 8) | *sp++;
+        return huf_dec_n(&L->huf, out, n);
+    case LIT_FSE0: {
+        const fse_dtable* t = &L->ft;
+        const unsigned mask = t->M - 1;
+        const int lb = t->L_bits;
+        uint32_t x = L->fx;
+        const uint8_t* sp = L->fsp;
+        const uint8_t* se = L->fsend;
+        while (i < n) {
+            size_t lim = i + rans_budget(sp, se);
+            if (lim > n) lim = n;
+            if (lim == i) {
+                if (seq_dec_sym(t, &x, &sp, se, &out[i])) return -1;
+                i++;
+                continue;
             }
-            prev = (int)e->s;
+            if (t->dcomp) {
+                for (; i < lim; i++) {
+                    const fse_dentry* e = &t->dcomp[x & mask];
+                    uint32_t v = e->f * (x >> lb) + (uint32_t)e->off;
+                    out[i] = t->dtab1[x & mask];
+                    RANS_RENORM2(v, sp);
+                    x = v;
+                }
+            } else {
+                for (; i < lim; i++) {
+                    unsigned sy = t->dtab1[x & mask];
+                    uint32_t v = t->freq_tab[sy] * (x >> lb) + (x & mask) - t->cumul[sy];
+                    out[i] = (uint8_t)sy;
+                    RANS_RENORM2(v, sp);
+                    x = v;
+                }
+            }
         }
-        L->x6 = x; L->s6p = sp; L->prev6 = prev;
+        L->fx = x; L->fsp = sp;
         return 0;
     }
+    case LIT_FSE1_6:
     case LIT_FSE1_3: {
-        uint32_t x = L->x3;
-        const uint8_t* sp = L->s3p;
-        int prev = L->prev3;
-        for (int i = 0; i < n; i++) {
-            const fse_ctx_table* t = L->active3[prev] ? &L->t3[prev] : L->gtab3;
-            const fse_o1entry* e = &t->dcomp[x & (t->M - 1)];
-            out[i] = e->s;
-            x = e->f * (x >> t->L_bits) + (uint32_t)e->off;
-            while (x < 0x10000u) {
-                if (sp >= L->s3e) return -1;
-                x = (x << 8) | *sp++;
+        const int six = L->kind == LIT_FSE1_6;
+        uint32_t x = six ? L->x6 : L->x3;
+        const uint8_t* sp = six ? L->s6p : L->s3p;
+        const uint8_t* se = six ? L->s6e : L->s3e;
+        int prev = six ? L->prev6 : L->prev3;
+        while (i < n) {
+            size_t lim = i + rans_budget(sp, se);
+            if (lim > n) lim = n;
+            if (lim == i) {
+                const fse_ctx_table* t = six ? &L->t6[prev >> 4]
+                                             : (L->active3[prev] ? &L->t3[prev] : L->gtab3);
+                if (o1_dec_checked(t, &x, &sp, se, &out[i])) return -1;
+                prev = out[i++];
+                continue;
             }
-            prev = (int)e->s;
+            if (six) {
+                for (; i < lim; i++) {
+                    const fse_ctx_table* t = &L->t6[prev >> 4];
+                    const fse_o1entry* e = &t->dcomp[x & (t->M - 1)];
+                    uint32_t v = e->f * (x >> t->L_bits) + (uint32_t)e->off;
+                    out[i] = e->s;
+                    RANS_RENORM2(v, sp);
+                    x = v;
+                    prev = e->s;
+                }
+            } else {
+                for (; i < lim; i++) {
+                    const fse_ctx_table* t = L->active3[prev] ? &L->t3[prev] : L->gtab3;
+                    const fse_o1entry* e = &t->dcomp[x & (t->M - 1)];
+                    uint32_t v = e->f * (x >> t->L_bits) + (uint32_t)e->off;
+                    out[i] = e->s;
+                    RANS_RENORM2(v, sp);
+                    x = v;
+                    prev = e->s;
+                }
+            }
         }
-        L->x3 = x; L->s3p = sp; L->prev3 = prev;
+        if (six) { L->x6 = x; L->s6p = sp; L->prev6 = prev; }
+        else     { L->x3 = x; L->s3p = sp; L->prev3 = prev; }
         return 0;
     }
     }
     return -1;
+}
+
+/* LSB-first bit reader over [p, end) with a 64-bit refill. Past `end` it
+ * feeds zero bytes and counts them in `over`: consuming any of those
+ * bits means the stream was truncated, checked once after the loop
+ * (the old reader failed at the first such field; the result is the
+ * same 0 return, and no output or memory access depends on the bits). */
+typedef struct {
+    uint64_t acc;
+    unsigned nbits;
+    const uint8_t* p;
+    const uint8_t* end;
+    size_t over;
+} lbr_t;
+
+static inline void lbr_refill(lbr_t* b)
+{
+    if (b->end - b->p >= 8) {
+        uint64_t w;
+#if defined(__BYTE_ORDER__) && __BYTE_ORDER__ == __ORDER_BIG_ENDIAN__
+        const uint8_t* q = b->p;
+        w = (uint64_t)q[0] | ((uint64_t)q[1] << 8) | ((uint64_t)q[2] << 16)
+          | ((uint64_t)q[3] << 24) | ((uint64_t)q[4] << 32) | ((uint64_t)q[5] << 40)
+          | ((uint64_t)q[6] << 48) | ((uint64_t)q[7] << 56);
+#else
+        memcpy(&w, b->p, 8);   /* little-endian host: the stream order */
+#endif
+        b->acc |= w << b->nbits;
+        b->p += (63 - b->nbits) >> 3;
+        b->nbits |= 56;
+    } else {
+        while (b->nbits <= 56) {
+            if (b->p < b->end) b->acc |= (uint64_t)*b->p++ << b->nbits;
+            else b->over += 8;
+            b->nbits += 8;
+        }
+    }
+}
+
+/* n <= 32; the caller refilled (>= 57 bits held) */
+static inline size_t lbr_get(lbr_t* b, unsigned n)
+{
+    size_t v = (size_t)(b->acc & ((1ull << n) - 1));
+    b->acc >>= n;
+    b->nbits -= n;
+    return v;
+}
+
+static int lbr_overrun(const lbr_t* b)
+{
+    return b->over > b->nbits;
+}
+
+/* one offset-bucket top8 stream ([table][4B slen][x:4][stream]) into
+ * n bytes: fse_decode's arithmetic and plain 1-byte table (bucket streams
+ * are often short, a combined-entry table would cost more to fill than
+ * it saves), with the unchecked renorm on the budgeted body.
+ * Returns -1 on a corrupt stream. */
+static int top8_decode(const uint8_t* in, size_t in_len, size_t n, uint8_t* out)
+{
+    unsigned counts[256], cumul[256];
+    int rmaxSym, L_bits;
+    size_t hdr = fse_read_table(in, in_len, counts, &rmaxSym, &L_bits);
+    if (hdr == 0 || rmaxSym > 255 || L_bits < 1 || L_bits > 16) return -1;
+    const unsigned M = 1u << L_bits, mask = M - 1;
+    unsigned acc = 0;
+    for (int i = 0; i <= rmaxSym; i++) { cumul[i] = acc; acc += counts[i]; }
+    uint8_t* dtab = (uint8_t*)malloc(M);
+    if (!dtab) return -1;
+    unsigned slot = 0;
+    for (int i = 0; i <= rmaxSym; i++) {
+        unsigned f = counts[i];
+        if (f > M - slot) { free(dtab); return -1; }
+        memset(dtab + slot, i, f);
+        slot += f;
+    }
+    if (slot != M || hdr + 8 > in_len) { free(dtab); return -1; }
+    uint32_t slen = (uint32_t)in[hdr] | ((uint32_t)in[hdr+1] << 8)
+                  | ((uint32_t)in[hdr+2] << 16) | ((uint32_t)in[hdr+3] << 24);
+    if (slen < 4 || hdr + 4 + (size_t)slen > in_len) { free(dtab); return -1; }
+    const uint8_t* sp = in + hdr + 4;
+    const uint8_t* se = sp + slen;
+    uint32_t x = ((uint32_t)sp[0] << 24) | ((uint32_t)sp[1] << 16)
+               | ((uint32_t)sp[2] << 8) | (uint32_t)sp[3];
+    sp += 4;
+    size_t i = 0;
+    while (i < n) {
+        size_t lim = i + rans_budget(sp, se);
+        if (lim > n) lim = n;
+        if (lim == i) {
+            /* stream tail: checked renorm */
+            unsigned sy = dtab[x & mask];
+            uint32_t v = counts[sy] * (x >> L_bits) + (x & mask) - cumul[sy];
+            out[i++] = (uint8_t)sy;
+            while (v < 0x10000u) {
+                if (sp >= se) { free(dtab); return -1; }
+                v = (v << 8) | *sp++;
+            }
+            x = v;
+            continue;
+        }
+        for (; i < lim; i++) {
+            unsigned sy = dtab[x & mask];
+            uint32_t v = counts[sy] * (x >> L_bits) + (x & mask) - cumul[sy];
+            out[i] = (uint8_t)sy;
+            RANS_RENORM2(v, sp);
+            x = v;
+        }
+    }
+    free(dtab);
+    return 0;
 }
 
 static size_t decode_normal(const char* src, size_t srcSize,
@@ -1299,10 +1483,11 @@ static size_t decode_normal(const char* src, size_t srcSize,
     /* per-bucket top8 streams — MUST be NULL-initialized before the first
      * `goto fail`: the fail cleanup frees resid_top8[b], and an early jump
      * (e.g. a corrupt FSE stream) would otherwise free stale stack bytes */
-    unsigned* resid_top8[OF_CODES];
+    uint8_t* resid_top8[OF_CODES];
     size_t resid_n[OF_CODES];
     int b;
     for (b = 0; b < OF_CODES; b++) { resid_top8[b] = NULL; resid_n[b] = 0; }
+    uint8_t* litbuf = NULL;   /* freed on every exit below */
 
     /* 3 symbol streams: tables prepared once, then all symbols decoded in
      * one interleaved pass into byte arrays. Measured faster than decoding
@@ -1341,10 +1526,57 @@ static size_t decode_normal(const char* src, size_t srcSize,
         symarr[2] = ok ? (uint8_t*)malloc((size_t)sc) : NULL;
         if (!symarr[0] || !symarr[1] || !symarr[2]) ok = 0;
         if (ok) {
-            for (int i = 0; i < sc && ok; i++) {
+            int i = 0;
+            const int comb = dt[0].dcomp && dt[1].dcomp && dt[2].dcomp;
+            while (i < sc && ok) {
+                size_t bud = rans_budget(sp3[0], se3[0]);
+                size_t b1 = rans_budget(sp3[1], se3[1]);
+                size_t b2 = rans_budget(sp3[2], se3[2]);
+                if (b1 < bud) bud = b1;
+                if (b2 < bud) bud = b2;
+                if (bud > (size_t)(sc - i)) bud = (size_t)(sc - i);
+                if (comb && bud > 0) {
+                    /* unchecked interleaved block: three independent
+                     * state chains per iteration, no renorm branches */
+                    const fse_dentry *c0 = dt[0].dcomp, *c1 = dt[1].dcomp, *c2 = dt[2].dcomp;
+                    const uint8_t *d0 = dt[0].dtab1, *d1 = dt[1].dtab1, *d2 = dt[2].dtab1;
+                    const unsigned m0 = dt[0].M - 1, m1 = dt[1].M - 1, m2 = dt[2].M - 1;
+                    const int l0 = dt[0].L_bits, l1 = dt[1].L_bits, l2 = dt[2].L_bits;
+                    uint32_t x0 = xs[0], x1 = xs[1], x2 = xs[2];
+                    const uint8_t *q0 = sp3[0], *q1 = sp3[1], *q2 = sp3[2];
+                    uint8_t *a0 = symarr[0], *a1 = symarr[1], *a2 = symarr[2];
+                    const int lim = i + (int)bud;
+                    for (; i < lim; i++) {
+                        const fse_dentry* e0 = &c0[x0 & m0];
+                        const fse_dentry* e1 = &c1[x1 & m1];
+                        const fse_dentry* e2 = &c2[x2 & m2];
+                        uint32_t v0 = e0->f * (x0 >> l0) + (uint32_t)e0->off;
+                        uint32_t v1 = e1->f * (x1 >> l1) + (uint32_t)e1->off;
+                        uint32_t v2 = e2->f * (x2 >> l2) + (uint32_t)e2->off;
+                        a0[i] = d0[x0 & m0]; a1[i] = d1[x1 & m1]; a2[i] = d2[x2 & m2];
+                        RANS_RENORM2(v0, q0);
+                        RANS_RENORM2(v1, q1);
+                        RANS_RENORM2(v2, q2);
+                        x0 = v0; x1 = v1; x2 = v2;
+                    }
+                    xs[0] = x0; xs[1] = x1; xs[2] = x2;
+                    sp3[0] = q0; sp3[1] = q1; sp3[2] = q2;
+                    continue;
+                }
+                if (bud > 0) {
+                    /* same block when a table uses the compact layout */
+                    const int lim = i + (int)bud;
+                    for (; i < lim; i++) {
+                        symarr[0][i] = rans_step(&dt[0], &xs[0], &sp3[0]);
+                        symarr[1][i] = rans_step(&dt[1], &xs[1], &sp3[1]);
+                        symarr[2][i] = rans_step(&dt[2], &xs[2], &sp3[2]);
+                    }
+                    continue;
+                }
                 if (seq_dec_sym(&dt[0], &xs[0], &sp3[0], se3[0], &symarr[0][i])) ok = 0;
                 else if (seq_dec_sym(&dt[1], &xs[1], &sp3[1], se3[1], &symarr[1][i])) ok = 0;
                 else if (seq_dec_sym(&dt[2], &xs[2], &sp3[2], se3[2], &symarr[2][i])) ok = 0;
+                i++;
             }
         }
         if (!ok) {
@@ -1374,27 +1606,24 @@ static size_t decode_normal(const char* src, size_t srcSize,
             if (cnt != rn) goto fail;
             p += 4;
             if (resid_top8[bid]) { goto fail; }   /* duplicate bucket: corrupt */
-            unsigned* top8 = (unsigned*)malloc((size_t)rn * sizeof(unsigned));
+            uint8_t* top8 = (uint8_t*)malloc((size_t)rn + 1);
             if (!top8) goto fail;
-            for (uint32_t i = 0; i < rn; i++) top8[i] = p[i];
+            memcpy(top8, p, rn);
             resid_top8[bid] = top8;
             resid_n[bid] = rn;
             p += rn;
             continue;
         }
-        /* FSE bucket: w = stream size, cnt = exact symbol count.
-         * fse_decode builds its own plain 1-byte table — a combined-entry
-         * table (12B/slot, up to 768KB) would cost more to fill than the
-         * decode saves on bucket-sized streams. */
+        /* FSE bucket: w = stream size, cnt = exact symbol count. */
         uint32_t rsz = w;
         if (bid < 0 || bid >= OF_CODES || rsz == 0 || (size_t)(end - p) < 4) goto fail;
         uint32_t cnt = (uint32_t)p[0] | ((uint32_t)p[1]<<8) | ((uint32_t)p[2]<<16) | ((uint32_t)p[3]<<24);
         p += 4;
         if (cnt == 0 || cnt > (unsigned)sc || rsz == 0 || (size_t)(end - p) < rsz) goto fail;
         if (resid_top8[bid]) { goto fail; }   /* duplicate bucket: corrupt */
-        unsigned* top8 = (unsigned*)malloc((size_t)cnt * sizeof(unsigned));
+        uint8_t* top8 = (uint8_t*)malloc((size_t)cnt);
         if (!top8) goto fail;
-        if (fse_decode(p, rsz, cnt, 255, top8)) { free(top8); goto fail; }
+        if (top8_decode(p, rsz, cnt, top8)) { free(top8); goto fail; }
         resid_top8[bid] = top8;
         resid_n[bid] = cnt;
         p += rsz;
@@ -1404,91 +1633,159 @@ static size_t decode_normal(const char* src, size_t srcSize,
     uint32_t low_size = (uint32_t)p[0] | ((uint32_t)p[1]<<8) | ((uint32_t)p[2]<<16) | ((uint32_t)p[3]<<24);
     p += 4;
     if ((size_t)(end - p) < low_size) goto fail;
-    const uint8_t* low_p = p;
-    const uint8_t* low_end = low_p + low_size;
+    lbr_t lowb = { 0, 0, p, p + low_size, 0 };
     p += low_size;
-    uint32_t low_acc = 0; int low_nbits = 0;
+    /* extra bits (ll/ml) run to the end of the block */
+    lbr_t xb = { 0, 0, p, end, 0 };
 
-    /* extra bits (ll/ml) */
-    const uint8_t* extra_p = p;
-    const uint8_t* extra_end = end;
-    uint32_t bit_acc = 0; int bit_nbits = 0;
-    int br_err = 0;
+    /* literals: raw ones are read in place; every other mode is decoded
+     * up front into a padded buffer. lit_hard bounds the over-read of the
+     * 16-byte literal moves (the source block itself for raw). */
+    const uint8_t *lit_ptr, *lit_end, *lit_hard;
+    if (L.kind == LIT_RAW) {
+        lit_ptr = L.rp;
+        lit_end = L.rend;
+        lit_hard = end;
+    } else {
+        litbuf = (uint8_t*)malloc((size_t)lit_count + 32);
+        if (!litbuf) goto fail;
+        if (lit_decode_all(&L, litbuf, (size_t)lit_count)) goto fail;
+        lit_ptr = litbuf;
+        lit_end = litbuf + lit_count;
+        lit_hard = lit_end + 32;
+    }
 
-    int op = 0;
     int rp[3] = {0, 0, 0};
     size_t resid_pos[OF_CODES];
     for (b = 0; b < OF_CODES; b++) resid_pos[b] = 0;
-    uint8_t* out = (uint8_t*)dst;
-    for (int i = 0; i < sc; i++) {
-        int ll = LL_base[symarr[0][i]];
-        int le = LL_extra[symarr[0][i]];
-        if (le > 0) ll += br_bits(&bit_acc, &bit_nbits, &extra_p, extra_end, le, &br_err);
-        if (br_err) goto fail;
-        int ml = 0;
-        if (symarr[1][i] > 0) {
-            int real = (int)symarr[1][i] - 1;
-            ml = ML_base[real];
-            int me = ML_extra[real];
-            if (me > 0) ml += br_bits(&bit_acc, &bit_nbits, &extra_p, extra_end, me, &br_err);
-            if (br_err) goto fail;
-        }
-        /* offset symbol: buckets 0..OF_CODES-1, rep stack entries above.
-         * The rep code used to be a separate 2-bit field per sequence; it is
-         * folded here so the FSE models the joint distribution (~1.4 bits
-         * per sequence cheaper on text, and one decode instead of two). */
-        int osym = (int)symarr[2][i];
-        int md = 0, is_rep = 0;
-        if (symarr[1][i] > 0 && osym < OF_CODES) {
-            int bid = osym;
-            if (bid < 0 || bid >= OF_CODES) goto fail;
-            if (resid_pos[bid] >= resid_n[bid]) goto fail;
-            unsigned top8 = resid_top8[bid][resid_pos[bid]++];
-            int nlow = bid >= 8 ? (bid - 8) : 0;
-            int low = nlow > 0 ? br_bits(&low_acc, &low_nbits, &low_p, low_end, nlow, &br_err) : 0;
-            if (br_err) goto fail;
-            md = OF_base[bid] + ((int)top8 << nlow) + low;
-        } else if (symarr[1][i] > 0) {
-            int ri = osym - OF_CODES;
-            if (ri < 0 || ri > 2) goto fail;
-            md = rp[ri];
-            is_rep = 1;
-            if (ri > 0) {
-                int t = rp[ri];
-                for (int k = ri; k > 0; k--) rp[k] = rp[k-1];
-                rp[0] = t;
+    uint8_t* const ostart = (uint8_t*)dst;
+    uint8_t* const oend = ostart + isize;
+    uint8_t* o = ostart;
+    const uint8_t* const sy0 = symarr[0];
+    const uint8_t* const sy1 = symarr[1];
+    const uint8_t* const sy2 = symarr[2];
+
+    /* Two-stage pipeline: stage A turns symbols + bits into (ll, ml, md)
+     * SEQ_AHEAD sequences before stage B executes them, and prefetches
+     * each match source on the way. With a 32MB window far matches miss
+     * every cache level, and stage A never reads the output, so the
+     * misses overlap instead of stalling one by one. */
+    enum { SEQ_AHEAD = 16 };   /* 8 and 4 measured 4-6% slower on Silesia */
+    struct { size_t ll, ml, md; } ring[SEQ_AHEAD];
+    size_t vpos = 0;   /* output position after the sequences read so far */
+    int nread = 0, nexec = 0;
+    int done_read = sc == 0;
+    for (;;) {
+        if (!done_read && nread - nexec < SEQ_AHEAD) {
+            /* ---- stage A: read sequence `nread` ---- */
+            const unsigned c0 = sy0[nread], c1 = sy1[nread], osym = sy2[nread];
+            lbr_refill(&xb);   /* ll + ml extra bits <= 48 */
+            size_t ll = (size_t)LL_base[c0] + lbr_get(&xb, (unsigned)LL_extra[c0]);
+            size_t ml = 0, md = 0;
+            if (c1 > 0) {
+                const unsigned real = c1 - 1;
+                ml = (size_t)ML_base[real] + lbr_get(&xb, (unsigned)ML_extra[real]);
+                /* offset symbol: buckets 0..OF_CODES-1, rep stack entries above.
+                 * The rep code used to be a separate 2-bit field per sequence; it is
+                 * folded here so the FSE models the joint distribution (~1.4 bits
+                 * per sequence cheaper on text, and one decode instead of two). */
+                if (osym < OF_CODES) {
+                    if (resid_pos[osym] >= resid_n[osym]) goto fail;
+                    const unsigned top8 = resid_top8[osym][resid_pos[osym]++];
+                    const unsigned nlow = osym >= 8 ? osym - 8 : 0;
+                    lbr_refill(&lowb);
+                    md = (size_t)OF_base[osym] + ((size_t)top8 << nlow) + lbr_get(&lowb, nlow);
+                    if (md != (size_t)rp[0]) { rp[2] = rp[1]; rp[1] = rp[0]; rp[0] = (int)md; }
+                } else {
+                    const unsigned ri = osym - OF_CODES;
+                    if (ri > 2) goto fail;
+                    md = (size_t)rp[ri];
+                    if (ri > 0) {
+                        int t = rp[ri];
+                        for (unsigned k = ri; k > 0; k--) rp[k] = rp[k-1];
+                        rp[0] = t;
+                    }
+                }
             }
+            const int slot = nread & (SEQ_AHEAD - 1);
+            ring[slot].ll = ll; ring[slot].ml = ml; ring[slot].md = md;
+            vpos += ll;
+            if (md <= vpos && vpos <= (size_t)isize) {
+                /* two lines: most matches straddle a line boundary */
+                LZ6SEQ_PREFETCH(ostart + (vpos - md));
+                LZ6SEQ_PREFETCH(ostart + (vpos - md) + 64);
+            }
+            vpos += ml;
+            nread++;
+            if (ml == 0 || nread == sc) done_read = 1;
+            continue;
         }
-        if (op + ll > isize) goto fail;
-        if (lit_decode_chunk(&L, out + op, ll, (size_t)(isize - op))) goto fail;
-        op += ll;
+        if (nexec == nread) break;
+
+        /* ---- stage B: execute sequence `nexec` ---- */
+        const int slot = nexec & (SEQ_AHEAD - 1);
+        const size_t ll = ring[slot].ll, ml = ring[slot].ml, md = ring[slot].md;
+        nexec++;
+
+        /* literals */
+        if ((size_t)(lit_end - lit_ptr) < ll || (size_t)(oend - o) < ll) goto fail;
+        if ((size_t)(oend - o) >= ll + 16 && (size_t)(lit_hard - lit_ptr) >= ll + 16) {
+            uint8_t* d = o;
+            const uint8_t* s = lit_ptr;
+            uint8_t* const de = o + ll;
+            do { memcpy(d, s, 16); d += 16; s += 16; } while (d < de);
+        } else {
+            memcpy(o, lit_ptr, ll);
+        }
+        o += ll;
+        lit_ptr += ll;
         if (ml == 0) break;
-        if (md < 1 || md > op || op + ml > isize) goto fail;
-        if (md == 1) memset(out + op, out[op - 1], (size_t)ml);
-        else if (md >= 8 && ml <= 8 && op + 8 <= isize) memcpy(out + op, out + op - md, 8);   /* padded fast path */
-        else if ((size_t)md >= 16 && ml >= 16 && (size_t)md >= (size_t)ml) {
-            /* non-overlapping mid-size copy: inlined 16B moves beat the
-             * libc call (no overlap: md >= 16 keeps the source 16 bytes
-             * behind the write cursor) */
-            size_t k = 0;
-            for (; k + 16 <= (size_t)ml; k += 16)
-                memcpy(out + op + k, out + op - md + k, 16);
-            if (k < (size_t)ml) memcpy(out + op + k, out + op - md + k, (size_t)ml - k);
-        }
-        else if ((size_t)md >= (size_t)ml) memcpy(out + op, out + op - md, (size_t)ml);
-        else {
-            memcpy(out + op, out + op - md, (size_t)md);
-            size_t filled = (size_t)md;
-            while (filled + filled <= (size_t)ml) {
-                memcpy(out + op + filled, out + op, filled);
+
+        /* match */
+        if (md < 1 || md > (size_t)(o - ostart) || (size_t)(oend - o) < ml) goto fail;
+        const uint8_t* m = o - md;
+        if ((size_t)(oend - o) >= ml + 16) {
+            /* wide copy: may write up to 15 bytes past the match end, all
+             * inside the output and overwritten by what follows */
+            uint8_t* d = o;
+            uint8_t* const de = o + ml;
+            if (md >= 16) {
+                do { memcpy(d, m, 16); d += 16; m += 16; } while (d < de);
+            } else {
+                if (md < 8) {
+                    /* spread the first 8 bytes so the source then trails
+                     * the cursor by >= 8 (zstd's overlapCopy8) */
+                    static const unsigned dec32[8] = { 0, 1, 2, 1, 4, 4, 4, 4 };
+                    static const unsigned dec64[8] = { 8, 8, 8, 7, 8, 9, 10, 11 };
+                    d[0] = m[0]; d[1] = m[1]; d[2] = m[2]; d[3] = m[3];
+                    m += dec32[md];
+                    memcpy(d + 4, m, 4);
+                    m -= dec64[md];
+                } else {
+                    memcpy(d, m, 8);
+                }
+                d += 8; m += 8;
+                while (d < de) { memcpy(d, m, 8); d += 8; m += 8; }
+            }
+        } else if (md == 1) {
+            memset(o, o[-1], ml);
+        } else if (md >= ml) {
+            memcpy(o, m, ml);
+        } else {
+            memcpy(o, m, md);
+            size_t filled = md;
+            while (filled + filled <= ml) {
+                memcpy(o + filled, o, filled);
                 filled += filled;
             }
-            if (filled < (size_t)ml) memcpy(out + op + filled, out + op, (size_t)ml - filled);
+            if (filled < ml) memcpy(o + filled, o, ml - filled);
         }
-        op += ml;
-        if (!is_rep && md != rp[0]) { rp[2] = rp[1]; rp[1] = rp[0]; rp[0] = md; }
+        o += ml;
     }
+    if (lbr_overrun(&xb) || lbr_overrun(&lowb)) goto fail;
+    size_t op = (size_t)(o - ostart);
 
+    free(litbuf);
     for (b = 0; b < OF_CODES; b++) free(resid_top8[b]);
     for (b = 0; b < 3; b++) fse_dtable_free(&dt[b]);
     free(symarr[0]); free(symarr[1]); free(symarr[2]);
@@ -1496,6 +1793,7 @@ static size_t decode_normal(const char* src, size_t srcSize,
     return (size_t)op;
 
 fail:
+    free(litbuf);
     for (b = 0; b < OF_CODES; b++) free(resid_top8[b]);
     for (b = 0; b < 3; b++) fse_dtable_free(&dt[b]);
     free(symarr[0]); free(symarr[1]); free(symarr[2]);
@@ -1515,43 +1813,63 @@ size_t LZ6_decompress_seq(const char* src, size_t srcSize,
         q += 4;
         if (isize < 0 || (size_t)isize > dstCap) return 0;
         int stride = (flags & 3) == 2 ? 4 : 2;
+        /* the encoder only planes stride-divisible blocks; a remainder
+         * would leave the tail unwritten yet report it as decoded */
+        if (isize % stride) return 0;
         size_t plane_size = (size_t)isize / (size_t)stride;
         const uint8_t* end = p + srcSize;
-        uint8_t* plane_buf = (uint8_t*)malloc(plane_size);
-        if (!plane_buf) return 0;
+        /* all lanes decode into one buffer, then a single interleave pass
+         * (a strided scatter per lane walked the whole output per lane) */
+        uint8_t* planes = (uint8_t*)malloc(plane_size * (size_t)stride + 1);
+        if (!planes) return 0;
+        uint8_t* plane_buf = planes;
         uint8_t* out = (uint8_t*)dst;
-        for (int lane = 0; lane < stride; lane++) {
-            if (q >= end) { free(plane_buf); return 0; }
+        for (int lane = 0; lane < stride; lane++, plane_buf += plane_size) {
+            if (q >= end) { free(planes); return 0; }
             int mode = *q++;
             if (mode == 1) {  /* compressed lane */
-                if ((size_t)(end - q) < 4) { free(plane_buf); return 0; }
+                if ((size_t)(end - q) < 4) { free(planes); return 0; }
                 uint32_t csize = (uint32_t)q[0] | ((uint32_t)q[1] << 8) |
                                  ((uint32_t)q[2] << 16) | ((uint32_t)q[3] << 24);
                 q += 4;
-                if ((size_t)(end - q) < csize) { free(plane_buf); return 0; }
+                if ((size_t)(end - q) < csize) { free(planes); return 0; }
                 if (decode_normal((const char*)q, csize, (char*)plane_buf, plane_size) != plane_size) {
-                    free(plane_buf); return 0;
+                    free(planes); return 0;
                 }
                 q += csize;
             } else if (mode == 2) {  /* pure huffman lane */
-                if ((size_t)(end - q) < 4) { free(plane_buf); return 0; }
+                if ((size_t)(end - q) < 4) { free(planes); return 0; }
                 uint32_t csize = (uint32_t)q[0] | ((uint32_t)q[1] << 8) |
                                  ((uint32_t)q[2] << 16) | ((uint32_t)q[3] << 24);
                 q += 4;
-                if ((size_t)(end - q) < csize) { free(plane_buf); return 0; }
+                if ((size_t)(end - q) < csize) { free(planes); return 0; }
                 if (huf_decode(q, csize, plane_size, plane_buf) != csize) {
-                    free(plane_buf); return 0;
+                    free(planes); return 0;
                 }
                 q += csize;
             } else if (mode == 0) {  /* raw lane */
-                if ((size_t)(end - q) < plane_size) { free(plane_buf); return 0; }
+                if ((size_t)(end - q) < plane_size) { free(planes); return 0; }
                 memcpy(plane_buf, q, plane_size);
                 q += plane_size;
-            } else { free(plane_buf); return 0; }
-            for (size_t j = 0; j < plane_size; j++)
-                out[j * (size_t)stride + (size_t)lane] = plane_buf[j];
+            } else { free(planes); return 0; }
         }
-        free(plane_buf);
+        if (stride == 2) {
+            const uint8_t *l0 = planes, *l1 = planes + plane_size;
+            for (size_t j = 0; j < plane_size; j++) {
+                out[2 * j] = l0[j];
+                out[2 * j + 1] = l1[j];
+            }
+        } else {
+            const uint8_t *l0 = planes, *l1 = planes + plane_size;
+            const uint8_t *l2 = l1 + plane_size, *l3 = l2 + plane_size;
+            for (size_t j = 0; j < plane_size; j++) {
+                out[4 * j] = l0[j];
+                out[4 * j + 1] = l1[j];
+                out[4 * j + 2] = l2[j];
+                out[4 * j + 3] = l3[j];
+            }
+        }
+        free(planes);
         return (size_t)isize;
     }
     return decode_normal(src, srcSize, dst, dstCap);

@@ -244,77 +244,134 @@ size_t huf_dec_init(huf_dstate* s, const uint8_t* in, size_t in_len)
         }
     }
 
+    /* two-symbol table: when the code at the window head leaves room for
+     * a second complete code inside the k-bit index, one lookup emits
+     * both. A second code of length l2 is fully determined by the index
+     * iff l2 <= k - l1 (its bits are all inside the window). */
+    uint32_t* table2 = (uint32_t*)malloc(tsize * sizeof(uint32_t));
+    if (!table2) { free(table); return 0; }
+    for (size_t i = 0; i < tsize; i++) {
+        uint16_t v1 = table[i];
+        unsigned l1 = v1 & 15;
+        if (l1 - 1u >= (unsigned)k) { table2[i] = 0; continue; }
+        uint32_t e = (uint32_t)(v1 >> 4) | ((uint32_t)l1 << 16) | (1u << 20);
+        if ((int)l1 < k) {
+            uint16_t v2 = table[(i << l1) & (tsize - 1)];
+            unsigned l2 = v2 & 15;
+            if (l2 >= 1 && (int)l2 <= k - (int)l1)
+                e = (uint32_t)(v1 >> 4) | ((uint32_t)(v2 >> 4) << 8)
+                  | ((uint32_t)(l1 + l2) << 16) | (2u << 20);
+        }
+        table2[i] = e;
+    }
+
     s->k = k;
     s->table = table;
-    s->acc = 0;
-    s->nbits = 0;
-    s->p = stream;
-    s->pend = stream + nbytes;
-    while (s->nbits < 32 && s->p < s->pend) { s->acc = (s->acc << 8) | *s->p++; s->nbits += 8; }
+    s->table2 = table2;
+    s->base = stream;
+    s->nbytes = nbytes;
+    s->bitpos = 0;
     return 261 + nbytes;
+}
+
+/* big-endian 64-bit load (compiles to one load + bswap on gcc/clang) */
+static inline uint64_t huf_read_be64(const uint8_t* q)
+{
+    return ((uint64_t)q[0] << 56) | ((uint64_t)q[1] << 48) | ((uint64_t)q[2] << 40)
+         | ((uint64_t)q[3] << 32) | ((uint64_t)q[4] << 24) | ((uint64_t)q[5] << 16)
+         | ((uint64_t)q[6] << 8) | (uint64_t)q[7];
+}
+
+/* one symbol at s->bitpos through a zero-extended 32-bit window (stream
+ * tail and long codes); returns -1 on an invalid code */
+static int huf_dec_one(const huf_dstate* s, size_t* bitpos, uint8_t* out)
+{
+    const size_t idx = *bitpos >> 3;
+    uint32_t win = 0;
+    for (int j = 0; j < 4; j++)
+        win = (win << 8) | (idx + (size_t)j < s->nbytes ? s->base[idx + (size_t)j] : 0u);
+    win <<= (*bitpos & 7);   /* >= 25 valid bits, MSB-aligned */
+    uint16_t v = s->table[win >> (32 - s->k)];
+    unsigned l = v & 15;
+    if (l - 1u < (unsigned)s->k) {
+        *out = (uint8_t)(v >> 4);
+        *bitpos += l;
+        return 0;
+    }
+    /* long code: canonical walk (rare) */
+    int codev = 0;
+    for (int l2 = 1; l2 <= HUF_MAX_CODE_BITS; l2++) {
+        codev = (codev << 1) | (int)((win >> (32 - l2)) & 1);
+        int d = codev - s->first_code[l2];
+        if (d >= 0 && d < s->cnt[l2]) {
+            *out = s->sorted[s->off[l2] + d];
+            *bitpos += (size_t)l2;
+            return 0;
+        }
+    }
+    return -1;
 }
 
 int huf_dec_n(huf_dstate* s, uint8_t* out, size_t n)
 {
-    const uint32_t kmask = (1u << s->k) - 1;
-    uint64_t acc = s->acc;
-    int nbits = s->nbits;
-    const uint8_t* p = s->p;
-    const uint8_t* pend = s->pend;
+    const int k = s->k;
+    const unsigned kl = (unsigned)k;
     const uint16_t* table = s->table;
-    const int* cnt = s->cnt;
-    const uint8_t* sorted = s->sorted;
-    const int* off = s->off;
-    const int* first_code = s->first_code;
+    const uint8_t* base = s->base;
+    /* a full 8-byte load fits while the byte index is <= lastw */
+    const size_t lastw = s->nbytes >= 8 ? s->nbytes - 8 : 0;
+    const int fast_ok = s->nbytes >= 8;
+    size_t bitpos = s->bitpos;
+    size_t i = 0;
 
-    for (size_t i = 0; i < n; i++) {
-        /* refill: 4 bytes at a time while the MSB-first stream allows
-         * (nbits stays < 64; the lookup only touches the low nbits+k
-         * bits, garbage above is masked by kmask) */
-        while (nbits < 24) {
-            if (pend - p >= 4) {
-                uint32_t w;
-                memcpy(&w, p, 4);
-                acc = (acc << 32) | __builtin_bswap32(w);
-                p += 4;
-                nbits += 32;
-            } else {
-                acc = (acc << 8) | (p < pend ? *p++ : 0);
-                nbits += 8;
+    const uint32_t* table2 = s->table2;
+    while (i < n) {
+        if (fast_ok && i + 8 <= n && (bitpos >> 3) <= lastw) {
+            /* up to 4 lookups x 2 symbols per window (<= 48 bits) */
+            uint64_t w = huf_read_be64(base + (bitpos >> 3)) << (bitpos & 7);
+            int j;
+            for (j = 0; j < 4; j++) {
+                uint32_t e = table2[w >> (64 - k)];
+                unsigned cnt = e >> 20;
+                unsigned l = (e >> 16) & 15;
+                if (cnt == 0) break;       /* long code */
+                out[i] = (uint8_t)e;
+                out[i + 1] = (uint8_t)(e >> 8);   /* junk when cnt == 1, overwritten next */
+                i += cnt;
+                w <<= l;
+                bitpos += l;
             }
+            if (j == 4) continue;
+            if (huf_dec_one(s, &bitpos, &out[i])) return -1;
+            i++;
+            continue;
         }
-        int shift = nbits - s->k;
-        uint16_t v = table[(unsigned)((acc >> shift) & kmask)];
-        int l = v & 15;
-        if (l != 0 && l <= s->k) {
-            out[i] = (uint8_t)(v >> 4);
-            nbits -= l;
-        } else {
-            /* long code: canonical bit-by-bit walk (rare) */
-            int codev = 0;
-            int l2 = 0;
-            for (l2 = 1; l2 <= HUF_MAX_CODE_BITS; l2++) {
-                if (nbits == 0) {
-                    acc = (acc << 8) | (p < pend ? *p++ : 0);
-                    nbits = 8;
-                }
-                codev = (codev << 1) | (int)((acc >> (nbits - 1)) & 1);
-                nbits--;
-                int d = codev - first_code[l2];
-                if (d >= 0 && d < cnt[l2]) {
-                    out[i] = sorted[off[l2] + d];
-                    break;
-                }
+        if (fast_ok && i + 4 <= n && (bitpos >> 3) <= lastw) {
+            /* 64-bit window: >= 57 valid bits, 4 codes of <= 12 bits fit */
+            uint64_t w = huf_read_be64(base + (bitpos >> 3)) << (bitpos & 7);
+            int j;
+            for (j = 0; j < 4; j++) {
+                uint16_t v = table[w >> (64 - k)];
+                unsigned l = v & 15;
+                if (l - 1u >= kl) break;   /* long code */
+                out[i + (size_t)j] = (uint8_t)(v >> 4);
+                w <<= l;
+                bitpos += l;
             }
-            if (l2 > HUF_MAX_CODE_BITS) return -1;
+            i += (size_t)j;
+            if (j == 4) continue;
         }
+        if (huf_dec_one(s, &bitpos, &out[i])) return -1;
+        i++;
     }
-    s->acc = acc; s->nbits = nbits; s->p = p;
+    s->bitpos = bitpos;
     return 0;
 }
 
 void huf_dec_free(huf_dstate* s)
 {
     free(s->table);
+    free(s->table2);
     s->table = NULL;
+    s->table2 = NULL;
 }

@@ -57,19 +57,21 @@ int    fse_decode(const uint8_t* in, size_t in_len,
  * The per-slot entry packs everything the hot loop needs: symbol,
  * normalized frequency, and (slot - cumul[s]) so the rANS advance is
  * one multiply + one add without secondary loads. */
+/* 4-byte combined entry (M <= 4096: f <= 4096, off < f); the symbol is
+ * read from dtab1[] at the same index — two independent loads that both
+ * stay in L1 (16KB + 4KB), where a 12B entry with the symbol inlined
+ * spilled a 4096-slot table to L2 */
 typedef struct {
-    uint8_t  s;             /* decoded symbol */
-    uint8_t  pad[3];
-    uint32_t f;             /* normalized frequency of s */
-    int32_t  off;           /* slot - cumul[s] */
+    uint16_t f;             /* normalized frequency of the slot's symbol */
+    uint16_t off;           /* slot - cumul[s] */
 } fse_dentry;
 
 typedef struct {
     int L_bits;
     unsigned M;
     /* dual layout, chosen by size:
-     *  - M <= 4096: dcomp[] holds combined 12B entries (single load per
-     *    symbol, cache-resident) — the hot ll/ml/of streams
+     *  - M <= 4096: dcomp[] holds 4B {f, off} entries next to dtab1[]
+     *    (cache-resident) — the hot ll/ml/of streams
      *  - M > 4096 (literal o0, L=16): dcomp stays NULL and the decode
      *    walks dtab1[] + freq_tab/cumul (a 768KB combined table would
      *    thrash L2/TLB and lose more than it saves) */

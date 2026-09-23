@@ -50,13 +50,15 @@ size_t huf_decode(const uint8_t* in, size_t in_len, size_t n,
 typedef struct {
     int k;                    /* lookup table bits */
     uint16_t* table;          /* 2^k entries: (sym << 4) | len, 0xFFFF = long code */
+    uint32_t* table2;         /* 2^k entries: sym1 | sym2<<8 | len<<16 | count<<20,
+                                 count 0 = long first code */
     int cnt[17];              /* codes per length (canonical walk) */
     uint8_t sorted[256];
     int off[17];
     int first_code[17];
-    uint64_t acc;             /* bitstream state */
-    int nbits;
-    const uint8_t *p, *pend;
+    const uint8_t* base;      /* MSB-first bitstream, zero-extended past nbytes */
+    size_t nbytes;
+    size_t bitpos;            /* bits consumed from base */
 } huf_dstate;
 
 size_t huf_dec_init(huf_dstate* s, const uint8_t* in, size_t in_len);
