@@ -16,7 +16,10 @@ with Igor Pavlov's assembler LZMA decoder: same LZMA2 stream, compressed
 sizes byte-identical to fastlzma2 on every file) and **memlz** 0.2 beta.
 uf-lzma2 enters through its own lzbench patch, reviewed before building.
 Its level 11 (level 10 + a per-file lc/lp/pb search, standard LZMA2 output)
-comes from its v11 patch, measured 2026-09-23; in that run level 10 decoded
+is **uf-lzma2 1.2.0**: measured 2026-09-23 from its v11 patch, whose sources
+match the v1.2.0 tag except the version constant (checked file by file);
+levels 1/5/10 were measured with 1.1.0 (level 10 gives the same bytes in
+both); in that run level 10 decoded
 at 120.6 MB/s on Silesia (110.5 in the 09-22 run shown), so level 11 decodes
 ~2% slower than level 10 when both come from the same run.
 
@@ -59,7 +62,7 @@ Two caveats, both material:
 | **lz6 seq -5** | 5,401,410 | 41.12% | 56.1 | 409.3 |
 | **lz6 seq -2** | 5,429,532 | 41.33% | 94.5 | 435.9 |
 | **lz6 seq -1** | 5,557,735 | 42.31% | 106.4 | 446.0 |
-| uf-lzma2 L11 (asm dec) | 6,914,570 | 52.64% | 2.2 | 64.8 |
+| uf-lzma2 1.2.0 L11 (asm dec) | 6,914,570 | 52.64% | 2.2 | 64.8 |
 | brotli L11 | 7,041,245 | 53.60% | 0.6 | 222.5 |
 | fastlzma2 L10 | 7,067,576 | 53.80% | 6.2 | 47.0 |
 | uf-lzma2 L10 (asm dec) | 7,067,576 | 53.80% | 6.2 | 63.9 |
@@ -115,7 +118,7 @@ Two caveats, both material:
 
 | codec | csize | ratio | enc MB/s | dec MB/s |
 |---|---:|---:|---:|---:|
-| uf-lzma2 L11 (asm dec) | 48,483,163 | 22.88% | 1.2 | 118.3 |
+| uf-lzma2 1.2.0 L11 (asm dec) | 48,483,163 | 22.88% | 1.2 | 118.3 |
 | fastlzma2 L10 | 48,673,262 | 22.97% | 3.3 | 81.0 |
 | uf-lzma2 L10 (asm dec) | 48,673,262 | 22.97% | 3.3 | 110.5 |
 | xz L9 | 48,795,480 | 23.02% | 2.5 | 103.7 |
