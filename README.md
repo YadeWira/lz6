@@ -38,36 +38,36 @@ Windows (mingw-w64 cross-compile from Linux, or MSVC):
 
 ## Benchmarks
 
-Measured with one harness ([lzbench], one thread, mem-to-mem, per file) on 2x Xeon E5-2697A v4. The full matrix and scripts are in [bakeoff/](bakeoff/):
+Measured with one harness ([lzbench], one thread, mem-to-mem, per file) on 2x Xeon E5-2697A v4. The full matrix (all levels, plus brotli, xz and zlib) is in [bakeoff/VS_CODECS.md](bakeoff/VS_CODECS.md):
 
 **Silesia** (212 MB, 12 files)
 
 | codec | ratio | enc MB/s | dec MB/s |
 |---|---:|---:|---:|
-| zstd -19 | 24.95% | 2.4 | 773 |
-| **lz6 -15** | **26.39%** | 2.0 | **373** |
-| lizard -49 | 28.62% | 1.7 | 1,141 |
-| **lz6 -9** | **29.01%** | 16 | **345** |
-| lz5 v1.5 HC -15 | 30.95% | 1.9 | 740 |
-| **lz6 -2** | **31.92%** | 37 | **364** |
-| zstd -1 | 34.55% | 342 | 1,121 |
-| lizard -30 | 40.47% | 310 | 1,179 |
-| misa77 -1 | 42.65% | 48 | 4,965 |
-| lz4 | 47.60% | 513 | 3,455 |
+| zstd -19 | 24.95% | 2.7 | 790 |
+| **lz6 -15** | **26.39%** | 2.2 | **399** |
+| lizard -49 | 28.62% | 1.9 | 1,198 |
+| **lz6 -9** | **29.01%** | 16.8 | **356** |
+| lz5 v1.5 HC -15 | 30.95% | 2.1 | 750 |
+| **lz6 -2** | **31.92%** | 38.4 | **363** |
+| zstd -1 | 34.55% | 358 | 1,205 |
+| lizard -30 | 40.47% | 323 | 1,227 |
+| misa77 -1 | 42.65% | 51 | 5,154 |
+| lz4 | 47.60% | 541 | 3,580 |
 
 **AIT A-H** (13 MB, 8 files)
 
 | codec | ratio | enc MB/s | dec MB/s |
 |---|---:|---:|---:|
-| **lz6 -15** | **46.66%** | 1.7 | **300** |
-| **lz6 -2** | **48.79%** | 74 | **362** |
-| zstd -19 | 55.97% | 4.9 | 1,093 |
-| lizard -49 | 61.21% | 5.1 | 1,551 |
-| lz5 v1.5 HC -15 | 65.49% | 1.9 | 990 |
-| misa77 -1 | 73.29% | 51 | 7,787 |
-| lz4 | 75.66% | 787 | 5,153 |
+| **lz6 -15** | **46.66%** | 1.7 | **291** |
+| **lz6 -2** | **48.79%** | 79.3 | **359** |
+| zstd -19 | 55.97% | 4.7 | 1,053 |
+| lizard -49 | 61.21% | 5.1 | 1,553 |
+| lz5 v1.5 HC -15 | 65.49% | 2.0 | 920 |
+| misa77 -1 | 73.29% | 49 | 7,762 |
+| lz4 | 75.66% | 689 | 4,638 |
 
-lz6 has the best ratio on AIT by 9 points. On Silesia it is 1.4 points behind zstd -19 and ahead of lizard, lz5 and misa77. Decode speed remains its weak axis: 2-3x below zstd and lizard. See [bakeoff/VS_CODECS.md](bakeoff/VS_CODECS.md), [bakeoff/COMPETITORS.md](bakeoff/COMPETITORS.md) and the [wiki](https://github.com/YadeWira/lz6/wiki/Benchmarks).
+lz6 has the best ratio on AIT by 9 points. On Silesia it is 1.4 points behind zstd -19 and ahead of lizard, lz5 and misa77. Decode speed remains its weak axis: 2-4x below zstd and lizard. See also [bakeoff/COMPETITORS.md](bakeoff/COMPETITORS.md) and the [wiki](https://github.com/YadeWira/lz6/wiki/Benchmarks).
 
 ## Documentation
 
