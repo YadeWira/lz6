@@ -1419,8 +1419,14 @@ static int lit_decode_all(lit_dec_t* L, uint8_t* out, size_t n)
 }
 
 
-static size_t decode_normal(const char* src, size_t srcSize,
-                            char* dst, size_t dstCap) {
+#if defined(__GNUC__) || defined(__clang__)
+#  define LZ6SEQ_FORCE_INLINE static inline __attribute__((always_inline))
+#else
+#  define LZ6SEQ_FORCE_INLINE static inline
+#endif
+
+LZ6SEQ_FORCE_INLINE size_t decode_normal_body(const char* src, size_t srcSize,
+                                              char* dst, size_t dstCap) {
     const uint8_t* p = (const uint8_t*)src;
     const uint8_t* end = p + srcSize;
     if (srcSize < 6) return 0;
@@ -1742,6 +1748,35 @@ fail:
     free(dts);
     lit_dec_free(&L);
     return 0;
+}
+
+/* The decoder is dominated by variable-count shifts (bit reads); with BMI2
+ * (shlx/shrx: 1 uop instead of 3) it runs ~5% faster. Compile the body
+ * twice and pick at run time, like zstd's DYNAMIC_BMI2; other compilers and
+ * targets get the plain build only. */
+static size_t decode_normal_default(const char* src, size_t srcSize, char* dst, size_t dstCap)
+{
+    return decode_normal_body(src, srcSize, dst, dstCap);
+}
+#if (defined(__GNUC__) || defined(__clang__)) && (defined(__x86_64__) || defined(_M_X64)) \
+    && !defined(LZ6SEQ_NO_DYNAMIC_BMI2)
+#  define LZ6SEQ_DYNAMIC_BMI2 1
+__attribute__((target("bmi2")))
+static size_t decode_normal_bmi2(const char* src, size_t srcSize, char* dst, size_t dstCap)
+{
+    return decode_normal_body(src, srcSize, dst, dstCap);
+}
+#endif
+
+static size_t decode_normal(const char* src, size_t srcSize, char* dst, size_t dstCap)
+{
+#ifdef LZ6SEQ_DYNAMIC_BMI2
+    /* no cached flag: a static would be a data race between threads, and
+     * the libgcc check is a load of its own (already initialised) state */
+    __builtin_cpu_init();
+    if (__builtin_cpu_supports("bmi2")) return decode_normal_bmi2(src, srcSize, dst, dstCap);
+#endif
+    return decode_normal_default(src, srcSize, dst, dstCap);
 }
 
 size_t LZ6_decompress_seq(const char* src, size_t srcSize,
