@@ -1,5 +1,13 @@
 # lz6 vs the field - one harness head-to-head
 
+> **Update (v1.6.4-pre decode work):** the lz6 rows below predate the seq
+> decoder rewrite. A focused lzbench rerun on the same machine (lz6
+> -1/-2/-9/-15 against zstd, lizard, misa77, lz4, lz5) gives Silesia
+> L15 373 MB/s (was 274), L9 345 (239), L2 364 (255); AIT L15 300 (234),
+> L2 362 (278). Sizes moved by +0.01-0.04% from the 12-bit rANS precision
+> cap. The README table uses those numbers; a full sweep refresh is
+> pending.
+
 All numbers below come from a single harness: **lzbench 2.3.1**, one thread
 (`-t1,1`), memory-to-memory per file, on an Intel Xeon E5-2697A v4 @ 2.60GHz.
 lz6 and lz5 are integrated as lzbench plugins (see

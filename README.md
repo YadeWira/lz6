@@ -1,6 +1,6 @@
 # lz6
 
-**lz6** is an experimental lossless compressor: maximum compression with fast decompression.
+**lz6** is an experimental lossless compressor: maximum compression with fast decompression. It is meant as the successor of LZ4 and LZ5 v1.5, and it competes with [zstd], [lizard] and [misa77].
 
 It started as a fork of [LZ5 v1.5] (itself a LZ4 derivative) and grew into its own codec family:
 
@@ -38,19 +38,36 @@ Windows (mingw-w64 cross-compile from Linux, or MSVC):
 
 ## Benchmarks
 
-Reference numbers (mem-to-mem, 2x Xeon E5-2697A v4; full matrix + scripts in [bakeoff/](bakeoff/)):
+Measured with one harness ([lzbench], one thread, mem-to-mem, per file) on 2x Xeon E5-2697A v4. The full matrix and scripts are in [bakeoff/](bakeoff/):
 
-| corpus | mode | ratio | enc MB/s | dec MB/s |
-|---|---|---:|---:|---:|
-| Silesia.tar | seq L2 | 36.21% | ~99 | ~270 |
-| Silesia.tar | seq L15 | 28.34% | ~2 | ~200 |
-| Silesia.tar | HC frame -15 | 30.78% | 2.7 | ~994 |
-| Silesia.tar | zstd -9 (ref) | 27.87% | 53 | 656 |
-| AIT A-H | seq L2 | 42.61% | ~120 | ~300 |
-| AIT A-H | seq L15 | 40.82% | ~15 | ~253 |
-| AIT A-H | zstd -1 (ref) | 59.91% | 413 | 1,322 |
+**Silesia** (212 MB, 12 files)
 
-A complete competitive table (zstd, lizard, misa77, lz4, gzip) with methodology is in [bakeoff/COMPETITORS.md](bakeoff/COMPETITORS.md) and will be refreshed with the upcoming testing-hardware measurements.
+| codec | ratio | enc MB/s | dec MB/s |
+|---|---:|---:|---:|
+| zstd -19 | 24.95% | 2.4 | 773 |
+| **lz6 -15** | **26.39%** | 2.0 | **373** |
+| lizard -49 | 28.62% | 1.7 | 1,141 |
+| **lz6 -9** | **29.01%** | 16 | **345** |
+| lz5 v1.5 HC -15 | 30.95% | 1.9 | 740 |
+| **lz6 -2** | **31.92%** | 37 | **364** |
+| zstd -1 | 34.55% | 342 | 1,121 |
+| lizard -30 | 40.47% | 310 | 1,179 |
+| misa77 -1 | 42.65% | 48 | 4,965 |
+| lz4 | 47.60% | 513 | 3,455 |
+
+**AIT A-H** (13 MB, 8 files)
+
+| codec | ratio | enc MB/s | dec MB/s |
+|---|---:|---:|---:|
+| **lz6 -15** | **46.66%** | 1.7 | **300** |
+| **lz6 -2** | **48.79%** | 74 | **362** |
+| zstd -19 | 55.97% | 4.9 | 1,093 |
+| lizard -49 | 61.21% | 5.1 | 1,551 |
+| lz5 v1.5 HC -15 | 65.49% | 1.9 | 990 |
+| misa77 -1 | 73.29% | 51 | 7,787 |
+| lz4 | 75.66% | 787 | 5,153 |
+
+lz6 has the best ratio on AIT by 9 points. On Silesia it is 1.4 points behind zstd -19 and ahead of lizard, lz5 and misa77. Decode speed remains its weak axis: 2-3x below zstd and lizard. See [bakeoff/VS_CODECS.md](bakeoff/VS_CODECS.md), [bakeoff/COMPETITORS.md](bakeoff/COMPETITORS.md) and the [wiki](https://github.com/YadeWira/lz6/wiki/Benchmarks).
 
 ## Documentation
 
@@ -58,9 +75,14 @@ A complete competitive table (zstd, lizard, misa77, lz4, gzip) with methodology 
 - [lz6_Frame_format.md](lz6_Frame_format.md) — frame format (block codec flags, per-block dispatch)
 - [bakeoff/COMPETITORS.md](bakeoff/COMPETITORS.md) — competitive analysis vs zstd, lizard, misa77
 - `lib/entropy/lz6seq.h` — the seq codec API
+- [Wiki](https://github.com/YadeWira/lz6/wiki) — architecture, seq stream format, decoder internals, development workflow, roadmap
 
 ## Status
 
 Experimental, format may change. The seq codec and the frame layer are fuzz-tested (corrupt raw streams + corrupted frames through the full `LZ6F_decompress` path); binaries are VM-tested on Windows 7 SP1 x64 and Windows 10.
 
 [LZ5 v1.5]: https://github.com/inikep/lz5
+[zstd]: https://github.com/facebook/zstd
+[lizard]: https://github.com/inikep/lizard
+[misa77]: https://github.com/welcome-to-the-sunny-side/misa77
+[lzbench]: https://github.com/inikep/lzbench

@@ -2,26 +2,27 @@
  * lz6seq.h - Sequence codec: lz6 matcher + FSE entropy (self-contained).
  *
  * Compresses a buffer by running lz6's HC match finder and coding the
- * resulting sequences with an FSE/rANS entropy coder:
- *   - lit_len / match_len / offset-bucket as FSE symbol streams
- *   - repcodes (rep0/1/2) for repeat offsets
- *   - literals: FSE order-0 (lit_mode=1) with raw fallback
- *   - offset residual: log2-bucket + raw bits
+ * resulting sequences with an rANS entropy coder:
+ *   - lit_len / match_len as log-bucket rANS symbols + raw extra bits
+ *   - offsets: log2 bucket or repcode (rep0/1/2) folded into one rANS
+ *     alphabet; bucket residuals split into per-bucket top-8 rANS
+ *     streams + raw low bits
+ *   - literals: raw / Huffman / rANS order-0 / rANS order-1 (16 or 256
+ *     contexts), picked per block
+ *   - whole-block transforms: byte-plane lanes, PRNG seed regeneration
  *
  * This is the "entropy backend" extracted from the ozip project so the
- * whole lz6→entropy pipeline lives in one repository.
+ * whole lz6->entropy pipeline lives in one repository.
  *
  * Stream layout (per block):
  *   [flags:1][isize:4]
- *   [lit_mode:1][lit_count:vlq][lit_csize:vlq][lit_data]  (lit_mode 0=raw,1=fse)
- *   [seq_count:4]
- *   [ll FSE stream][ml FSE stream][of FSE stream]
- *   [rep_flags: ceil(sc*2/8)]
- *   [extra bits: ll/ml interleaved]
- *
- * The of_syms are log2 buckets (0..24); the residual is split into
- * top8 (FSE per bucket, [1B bucket][4B size][stream]... terminated by
- * [0][0]) + low raw bits ([4B size][bytes]).
+ *   [lit_mode:1][lit_count:vlq][literal payload]
+ *   [seq_count:4][ll stream][ml stream][of stream]
+ *   [top-8 bucket streams ... terminated by [0][0:4]]
+ *   [low bits: size:4 + LSB-first bits]
+ *   [extra bits: ll/ml, LSB-first, to the end of the block]
+ * The byte-exact specification is the "Seq Stream Format" page of the
+ * project wiki.
  */
 #ifndef LZ6SEQ_H
 #define LZ6SEQ_H

@@ -1,3 +1,22 @@
+v1.6.4-pre (in progress)
+- perf/seq decode: literals decoded in bulk before the sequence loop
+  (two-symbol Huffman lookups, 4 lookups per 64-bit window), branch-free
+  2-byte rANS renorm on budgeted unchecked blocks, 4-byte {f,off} table
+  entries (L1-resident), 64-bit bit readers, two-stage sequence pipeline
+  with match-source prefetch 16 sequences ahead, 16B wild copies with an
+  exact tail, byte-sized offset top-8 arrays, single-pass plane
+  interleave. Format unchanged; old streams decode.
+  Measured (mem-to-mem, one core, interleaved vs master): Silesia L2
+  ~259 -> ~374 MB/s, L15 ~271 -> ~390 MB/s; AIT L2 312 -> 398, L15
+  259 -> 339.
+- encode: rANS table precision capped at 12 bits (was 14/16 for larger
+  alphabets) so every decode table takes the cache-resident layout.
+  Output changes, format does not: Silesia L15 +0.011%, L2 +0.015%;
+  AIT L15 +0.031%, L2 +0.036%.
+- hardening: byte-plane blocks whose size is not a multiple of the
+  stride are rejected (the tail used to be reported as decoded without
+  being written; the encoder never emits them).
+
 v1.6.3-pre
 - perf/seq: the per-sequence repcode (previously a fixed 2-bit field on
   every sequence) is now folded into the offset FSE alphabet, so the
