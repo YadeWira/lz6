@@ -65,9 +65,11 @@ static void normalize(const unsigned* counts, int maxSym,
 
 static int pick_L_bits(int maxSym)
 {
-    /* 32-bit state, byte renorm, RANS_L = 2^16: L_bits <= 16 */
-    if (maxSym >= 200) return 16;
-    if (maxSym >= 32)  return 14;
+    /* 32-bit state, byte renorm, RANS_L = 2^16: L_bits <= 16.
+     * Capped at 12 (M <= 4096) so every decode table takes the combined
+     * cache-resident layout: the old 14/16 cost 5-6% decode speed on
+     * Silesia for a 0.01% size gain (measured: Silesia L15 +0.011%,
+     * L2 +0.015%). The decoder still accepts any L_bits in 1..16. */
     if (maxSym >= 8)   return 12;
     return 10;
 }
