@@ -15,6 +15,11 @@ v1.6.4-pre (in progress)
   -0.04% (fewer stream headers).
   Tried and rejected: two interleaved sequence bitstreams (+6.5% cycles:
   the decoder is instruction-bound at IPC ~2.5, not latency-bound).
+- perf/seq: run-time BMI2 dispatch for the decoder body (x86-64, GCC/
+  clang): variable shifts cost 1 uop instead of 3; Silesia cycles/byte
+  L15 7.97 -> 7.65, L2 8.73 -> 8.32. Tried and rejected: the same for the
+  Huffman literal decoder (no change) and single-window field extraction
+  in the sequence reader (~1%, not worth duplicating the reader).
 - fixed: plane_encode leaked the Huffman candidate buffer when the LZ
   candidate won (found by ASAN on AIT G at level 1).
 - api: LZ6_compress_fast_window() and LZ6_compress_HC_window() cap every
