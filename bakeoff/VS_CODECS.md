@@ -8,7 +8,12 @@ with the same buffers and the same round-trip verification as lz4, lizard,
 zstd, misa77, brotli, xz and zlib.
 
 Last full sweep: 2026-09-22, master `8c1713c` (the v1.6.4-pre seq decoder
-and the 12-bit rANS precision cap).
+and the 12-bit rANS precision cap). Added the same night on the same
+machine and settings: **fastlzma2** 1.0.1 (lzbench's build, C decoder),
+**uf-lzma2** 1.1.0 (github.com/YadeWira/ultra-fast-lzma2, a fast-lzma2 fork,
+with Igor Pavlov's assembler LZMA decoder: same LZMA2 stream, compressed
+sizes byte-identical to fastlzma2 on every file) and **memlz** 0.2 beta.
+uf-lzma2 enters through its own lzbench patch, reviewed before building.
 
 Rebuild and rerun everything with `bakeoff/run_vs_codecs.sh` (fetch + patch +
 build + both corpora); the raw dumps are parsed by
@@ -50,8 +55,14 @@ Two caveats, both material:
 | **lz6 seq -2** | 5,433,041 | 48.79% | 79.3 | 359.4 |
 | **lz6 seq -1** | 5,561,279 | 49.94% | 87.4 | 372.5 |
 | brotli L11 | 7,041,245 | 53.60% | 0.5 | 210.5 |
+| fastlzma2 L10 | 7,067,576 | 53.80% | 6.2 | 47.0 |
+| uf-lzma2 L10 (asm dec) | 7,067,576 | 53.80% | 6.2 | 63.9 |
+| fastlzma2 L5 | 7,086,428 | 53.95% | 8.6 | 46.5 |
+| uf-lzma2 L5 (asm dec) | 7,086,428 | 53.95% | 8.6 | 62.8 |
 | xz L6 | 7,114,024 | 54.16% | 3.3 | 65.9 |
 | xz L9 | 7,114,024 | 54.16% | 3.0 | 63.6 |
+| fastlzma2 L1 | 7,330,324 | 55.80% | 16.3 | 49.3 |
+| uf-lzma2 L1 (asm dec) | 7,330,324 | 55.80% | 16.4 | 70.4 |
 | zstd L19 | 7,351,946 | 55.97% | 4.7 | 1052.6 |
 | xz L3 | 7,379,360 | 56.18% | 6.0 | 62.2 |
 | xz L1 | 7,435,760 | 56.60% | 8.3 | 60.6 |
@@ -90,6 +101,7 @@ Two caveats, both material:
 | lz4 | 9,938,605 | 75.66% | 689.3 | 4637.7 |
 | misa77 L-1 | 10,041,718 | 76.44% | 327.8 | 7400.5 |
 | lz5 HC L1 | 10,441,177 | 79.48% | 492.1 | 2259.5 |
+| memlz | 10,724,346 | 81.64% | 1872.5 | 1712.6 |
 
 ## Silesia (212 MB, per-file)
 
@@ -97,12 +109,18 @@ Two caveats, both material:
 
 | codec | csize | ratio | enc MB/s | dec MB/s |
 |---|---:|---:|---:|---:|
+| fastlzma2 L10 | 48,673,262 | 22.96% | 3.3 | 81.0 |
+| uf-lzma2 L10 (asm dec) | 48,673,262 | 22.96% | 3.3 | 110.5 |
 | xz L9 | 48,795,480 | 23.02% | 2.5 | 110.3 |
 | brotli L11 | 50,328,370 | 23.75% | 0.5 | 358.5 |
+| fastlzma2 L5 | 51,124,925 | 24.12% | 5.9 | 77.9 |
+| uf-lzma2 L5 (asm dec) | 51,124,925 | 24.12% | 6.1 | 107.0 |
 | zstd L19 | 52,891,946 | 24.95% | 2.7 | 789.6 |
 | **lz6 seq -15** | 55,929,013 | 26.39% | 2.2 | 399.0 |
 | **lz6 seq -11** | 56,423,053 | 26.62% | 3.8 | 393.4 |
 | xz L1 | 58,716,448 | 27.71% | 16.3 | 94.2 |
+| fastlzma2 L1 | 58,993,508 | 27.84% | 17.8 | 65.1 |
+| uf-lzma2 L1 (asm dec) | 58,993,508 | 27.84% | 18.1 | 96.4 |
 | lizard L49 | 60,667,327 | 28.62% | 1.9 | 1197.6 |
 | **lz6 seq -9** | 61,487,881 | 29.01% | 16.8 | 356.2 |
 | zstd L5 | 62,751,501 | 29.60% | 101.6 | 808.3 |
@@ -124,6 +142,7 @@ Two caveats, both material:
 | misa77 L-1 | 99,073,179 | 46.75% | 280.9 | 4791.0 |
 | lz4 | 100,880,147 | 47.60% | 540.7 | 3579.7 |
 | lz5 HC L1 | 113,525,877 | 53.56% | 505.6 | 1640.2 |
+| memlz | 126,970,186 | 59.91% | 963.2 | 887.8 |
 
 ### Silesia per-file ratio
 
@@ -154,6 +173,15 @@ brotli -11.** L15 is 26.39% @ 399 MB/s versus zstd -19's 24.95% @ 790 MB/s
 and brotli -11's 23.75% @ 359 MB/s. zstd -19 still beats lz6 on both axes;
 brotli -11 is smaller but decodes slower. lizard -49 is 2.2 points behind at
 3.0x the decode (1198 MB/s).
+
+**LZMA2 with an assembler decoder.** uf-lzma2 -10 is the best ratio in the
+Silesia table (22.96%, xz -9: 23.02%) at 110 MB/s decode, 36-48% faster than
+the same streams through fastlzma2's C decoder. That is the ceiling of the
+bit-wise range-coder class; lz6 -15 trades 3.4 points of ratio for 3.6x the
+decode.
+
+**memlz** is the opposite end: ~0.9 GB/s both ways on Silesia (1.7-1.9 GB/s
+on AIT) at 59.91%, a worse ratio than lz4 (47.60%): a compression-speed codec.
 
 **Per file, lz6 L15 wins only x-ray** (56.73% vs zstd's 60.53%), but it is
 within a point on webster (21.70 vs 20.93) and osdb (31.67 vs 30.74), and
