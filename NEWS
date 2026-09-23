@@ -1,4 +1,12 @@
 v1.6.4-pre
+- fixed: the fast LZ encoder (-0, and the light-LZ fallback inside seq
+  frames) crashed on Windows x86 (32-bit). On 32-bit hosts its hash table
+  held pointers whose empty (NULL) entries were rejected only by the
+  distance check; lz6's 16 MB window let NULL pass when the heap sits
+  below 16 MB, as it does on Windows x86, and the encoder read address 0.
+  It now always uses the index table (as 64-bit hosts already did); 64-bit
+  output is unchanged. Present since the window grew to 16 MB (v1.6.3-pre
+  win32 is affected; Linux x86 was not, its heap is high).
 - perf/seq v2: the ll/ml/of symbols move from three rANS streams to
   table ANS (zstd FSE-style: one table load + a bit read per symbol, no
   multiply), and their states share ONE backward bitstream with every
