@@ -285,6 +285,8 @@ struct LZ6HC_Data_s
        entropy coder picks whether to render it as a 1B rep codeword. */
     int (*emitSeq)(void* opaque, size_t lit_len, size_t match_len, size_t offset);
     void* emitOpaque;
+    /* entropy-aware parser prices (seq path only; NULL = codeword bytes) */
+    const struct LZ6HC_seqPrice_s* seqPrice;
 };
 
 /* LZ6HC_match_t is now defined in lz6hc.h (the public header). This

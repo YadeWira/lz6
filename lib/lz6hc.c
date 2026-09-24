@@ -113,6 +113,7 @@ static int LZ6_alloc_mem_HC_wl(LZ6HC_Data_Structure* ctx, int compressionLevel,
                                size_t maxSrcSize, int maxWindowLog)
 {
     ctx->compressionLevel = compressionLevel;
+    ctx->seqPrice = NULL;
     if (compressionLevel > g_maxCompressionLevel) ctx->compressionLevel = g_maxCompressionLevel;
     if (compressionLevel < 1) ctx->compressionLevel = LZ6HC_compressionLevel_default;
 
@@ -231,6 +232,7 @@ static void LZ6HC_init (LZ6HC_Data_Structure* ctx, const BYTE* start)
     ctx->rep_off2 = 0;
     ctx->rep_off3 = 0;
     ctx->emitSeq    = NULL;   /* default: write codeword; LZ6HC_compress_sequences wires this */
+    ctx->seqPrice   = NULL;   /* default: codeword-byte prices */
     ctx->emitOpaque = NULL;
 }
 
@@ -1197,6 +1199,26 @@ FORCE_INLINE int LZ6HC_encodeSequence (
     }
 
 
+/* entropy-aware prices (ctx->seqPrice) for the optimal parser; the byte
+ * codeword prices stay the default so the frame codec is unchanged */
+static inline unsigned LZ6HC_spLL(const LZ6HC_seqPrice* sp, size_t n) { return sp->ll[n < LZ6HC_SP_LEN ? n : LZ6HC_SP_LEN]; }
+static inline unsigned LZ6HC_spML(const LZ6HC_seqPrice* sp, size_t n) { return sp->ml[n < LZ6HC_SP_LEN ? n : LZ6HC_SP_LEN]; }
+static inline size_t LZ6HC_sp_price(const LZ6HC_seqPrice* sp, size_t litlen, size_t offset, size_t mlen3)
+{
+    unsigned oc;
+    if (offset == 0) oc = sp->rep0;
+    else { unsigned b = 31u - (unsigned)__builtin_clz((unsigned)offset); oc = sp->of[b < 25 ? b : 24]; }
+    return (size_t)sp->lit * litlen + LZ6HC_spLL(sp, litlen) + LZ6HC_spML(sp, mlen3 + MINMATCH) + oc;
+}
+#define OPT_PRICE(l, o, m3) (ctx->seqPrice ? LZ6HC_sp_price(ctx->seqPrice, (l), (o), (m3)) : LZ6HC_get_price((l), (o), (m3)))
+#define OPT_LITONLY(n)      (ctx->seqPrice ? (size_t)ctx->seqPrice->lit * (n) + LZ6HC_spLL(ctx->seqPrice, (n)) : (size_t)LZ6_LIT_ONLY_COST(n))
+#define OPT_LLEN(n)         (ctx->seqPrice ? (size_t)ctx->seqPrice->lit * (n) : (size_t)(n))
+
+void LZ6HC_setSeqPrice(void* state, const LZ6HC_seqPrice* sp)
+{
+    ((LZ6HC_Data_Structure*)state)->seqPrice = sp;
+}
+
 static int LZ6HC_compress_optimal_price (
     LZ6HC_Data_Structure* ctx,
     const BYTE* source,
@@ -1250,7 +1272,7 @@ static int LZ6HC_compress_optimal_price (
             do
             {
                 litlen = 0;
-                price = LZ6HC_get_price(llen, 0, mlen - MINMATCH) - llen;
+                price = OPT_PRICE(llen, 0, mlen - MINMATCH) - OPT_LLEN(llen);
                 if (mlen > last_pos || price < (size_t)opt[mlen].price)
                     SET_PRICE(mlen, mlen, 0, litlen, price);
                 mlen--;
@@ -1305,7 +1327,7 @@ static int LZ6HC_compress_optimal_price (
            while (mlen <= best_mlen)
            {
                 litlen = 0;
-                price = LZ6HC_get_price(llen + litlen, eff_off, mlen - MINMATCH) - llen;
+                price = OPT_PRICE(llen + litlen, eff_off, mlen - MINMATCH) - OPT_LLEN(llen);
                 if (mlen > last_pos || price < (size_t)opt[mlen].price)
                     SET_PRICE(mlen, mlen, matches[i].off, litlen, price);
                 mlen++;
@@ -1330,20 +1352,20 @@ static int LZ6HC_compress_optimal_price (
                 
                 if (cur != litlen)
                 {
-                    price = opt[cur - litlen].price + LZ6_LIT_ONLY_COST(litlen);
+                    price = opt[cur - litlen].price + OPT_LITONLY(litlen);
                     LZ6_LOG_PRICE("%d: TRY1 opt[%d].price=%d price=%d cur=%d litlen=%d\n", (int)(inr-source), cur - litlen, opt[cur - litlen].price, price, cur, litlen);
                 }
                 else
                 {
-                    price = LZ6_LIT_ONLY_COST(llen + litlen) - llen;
+                    price = OPT_LITONLY(llen + litlen) - OPT_LLEN(llen);
                     LZ6_LOG_PRICE("%d: TRY2 price=%d cur=%d litlen=%d llen=%d\n", (int)(inr-source), price, cur, litlen, llen);
                 }
            }
            else
            {
                 litlen = 1;
-                price = opt[cur - 1].price + LZ6_LIT_ONLY_COST(litlen);                  
-                LZ6_LOG_PRICE("%d: TRY3 price=%d cur=%d litlen=%d litonly=%d\n", (int)(inr-source), price, cur, litlen, LZ6_LIT_ONLY_COST(litlen));
+                price = opt[cur - 1].price + OPT_LITONLY(litlen);                  
+                LZ6_LOG_PRICE("%d: TRY3 price=%d cur=%d litlen=%d litonly=%d\n", (int)(inr-source), price, cur, litlen, OPT_LITONLY(litlen));
            }
            
            mlen = 1;
@@ -1422,20 +1444,20 @@ static int LZ6HC_compress_optimal_price (
 
                     if (cur != litlen)
                     {
-                        price = opt[cur - litlen].price + LZ6HC_get_price(litlen, 0, mlen - MINMATCH);
+                        price = opt[cur - litlen].price + OPT_PRICE(litlen, 0, mlen - MINMATCH);
                         LZ6_LOG_PRICE("%d: TRY1 opt[%d].price=%d price=%d cur=%d litlen=%d\n", (int)(inr-source), cur - litlen, opt[cur - litlen].price, price, cur, litlen);
                     }
                     else
                     {
-                        price = LZ6HC_get_price(llen + litlen, 0, mlen - MINMATCH) - llen;
+                        price = OPT_PRICE(llen + litlen, 0, mlen - MINMATCH) - OPT_LLEN(llen);
                         LZ6_LOG_PRICE("%d: TRY2 price=%d cur=%d litlen=%d llen=%d\n", (int)(inr-source), price, cur, litlen, llen);
                     }
                 }
                 else
                 {
                     litlen = 0;
-                    price = opt[cur].price + LZ6HC_get_price(litlen, 0, mlen - MINMATCH);
-                    LZ6_LOG_PRICE("%d: TRY3 price=%d cur=%d litlen=%d getprice=%d\n", (int)(inr-source), price, cur, litlen, LZ6HC_get_price(litlen, 0, mlen - MINMATCH));
+                    price = opt[cur].price + OPT_PRICE(litlen, 0, mlen - MINMATCH);
+                    LZ6_LOG_PRICE("%d: TRY3 price=%d cur=%d litlen=%d getprice=%d\n", (int)(inr-source), price, cur, litlen, OPT_PRICE(litlen, 0, mlen - MINMATCH));
                 }
 
                 best_mlen = mlen;
@@ -1479,14 +1501,14 @@ static int LZ6HC_compress_optimal_price (
                 {
                     litlen = opt[cur].litlen;
                     if (cur != litlen)
-                        price = opt[cur - litlen].price + LZ6HC_get_price(litlen, 0, rmlen - MINMATCH);
+                        price = opt[cur - litlen].price + OPT_PRICE(litlen, 0, rmlen - MINMATCH);
                     else
-                        price = LZ6HC_get_price(llen + litlen, 0, rmlen - MINMATCH) - llen;
+                        price = OPT_PRICE(llen + litlen, 0, rmlen - MINMATCH) - OPT_LLEN(llen);
                 }
                 else
                 {
                     litlen = 0;
-                    price = opt[cur].price + LZ6HC_get_price(litlen, 0, rmlen - MINMATCH);
+                    price = opt[cur].price + OPT_PRICE(litlen, 0, rmlen - MINMATCH);
                 }
 
                 if ((size_t)rmlen > best_mlen) best_mlen = rmlen;
@@ -1561,14 +1583,14 @@ static int LZ6HC_compress_optimal_price (
                         litlen = opt[cur2].litlen;
 
                         if (cur2 != litlen)
-                            price = opt[cur2 - litlen].price + LZ6HC_get_price(litlen, eff_off, mlen - MINMATCH);
+                            price = opt[cur2 - litlen].price + OPT_PRICE(litlen, eff_off, mlen - MINMATCH);
                         else
-                            price = LZ6HC_get_price(llen + litlen, eff_off, mlen - MINMATCH) - llen;
+                            price = OPT_PRICE(llen + litlen, eff_off, mlen - MINMATCH) - OPT_LLEN(llen);
                     }
                     else
                     {
                         litlen = 0;
-                        price = opt[cur2].price + LZ6HC_get_price(litlen, eff_off, mlen - MINMATCH);
+                        price = opt[cur2].price + OPT_PRICE(litlen, eff_off, mlen - MINMATCH);
                     }
 
                     LZ6_LOG_PARSER("%d: Found2 pred=%d mlen=%d best_mlen=%d off=%d price=%d litlen=%d price[%d]=%d\n", (int)(inr-source), matches[i].back, mlen, best_mlen, matches[i].off, price, litlen, cur - litlen, opt[cur - litlen].price);
@@ -2157,7 +2179,9 @@ int LZ6HC_compress_sequences (void* state, const char* src, size_t srcSize,
     if (((size_t)(state)&(sizeof(void*)-1)) != 0) return 0;
     if (!cb) return 0;
     ctx = (LZ6HC_Data_Structure*)state;
-    LZ6HC_init(ctx, (const BYTE*)src);
+    { const LZ6HC_seqPrice* sp = ctx->seqPrice;   /* LZ6HC_init clears it */
+      LZ6HC_init(ctx, (const BYTE*)src);
+      ctx->seqPrice = sp; }
     ctx->emitSeq  = cb;
     ctx->emitOpaque = opaque;
     /* Pass dst=NULL/0 — encodeSequence skips the codeword write when emitSeq

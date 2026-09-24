@@ -264,6 +264,59 @@ static void fill_literals(seq_collector_t* s) {
     }
 }
 
+/* Entropy-aware parser prices from a finished parse: -log2 frequency of
+ * each ll / ml / offset symbol (the same rep-stack walk as the encoder),
+ * plus extra bits, and the order-0 entropy of the literals, in 1/16 bit.
+ * The optimal parser then re-parses with what the seq coder will really
+ * charge instead of the frame codec's codeword bytes. */
+static void build_seq_price(const seq_collector_t* sc, const uint8_t* src, LZ6HC_seqPrice* sp)
+{
+    unsigned llc[LL_CODES] = {0}, mlc[ML_CODES + 1] = {0}, ofc[OF_CODES + 3] = {0};
+    size_t lh[256] = {0};
+    size_t nlit = 0, abs = 0, nseq = sc->n;
+    int rp[3] = {0, 0, 0};
+    for (size_t i = 0; i < sc->n; i++) {
+        const size_t ll = (size_t)sc->lit_lens[i], ml = (size_t)sc->match_lens[i];
+        for (size_t k = 0; k < ll; k++) lh[src[abs + k]]++;
+        nlit += ll;
+        abs += ll + ml;
+        llc[ll_to_code((int)ll)]++;
+        if (ml == 0) { mlc[0]++; ofc[0]++; continue; }
+        mlc[ml_to_code((int)ml) + 1]++;
+        const int of = sc->offsets[i];
+        int ri = -1;
+        if (of == rp[0]) ri = 0; else if (of == rp[1]) ri = 1; else if (of == rp[2]) ri = 2;
+        if (ri < 0) {
+            ofc[of_to_code(of)]++;
+            if (of != rp[0]) { rp[2] = rp[1]; rp[1] = rp[0]; rp[0] = of; }
+        } else {
+            ofc[OF_CODES + ri]++;
+            if (ri > 0) { int t = rp[ri]; for (int k = ri; k > 0; k--) rp[k] = rp[k-1]; rp[0] = t; }
+        }
+    }
+#define SP_COST(cnt, tot, alpha) \
+    ((unsigned)(16.0 * log2(((double)(tot) + 0.5 * (alpha)) / ((double)(cnt) + 0.5)) + 0.5))
+    double h0 = 0;
+    for (int c = 0; c < 256; c++)
+        if (lh[c]) h0 -= (double)lh[c] * log2((double)lh[c] / (double)nlit);
+    sp->lit = nlit ? (unsigned)(16.0 * h0 / (double)nlit + 0.5) : 128;
+    if (sp->lit < 8) sp->lit = 8;
+    size_t nof = 0;
+    for (int c = 0; c < OF_CODES + 3; c++) nof += ofc[c];
+    for (int b = 0; b < OF_CODES; b++) sp->of[b] = SP_COST(ofc[b], nof, OF_CODES + 3) + 16u * (unsigned)b;
+    sp->rep0 = SP_COST(ofc[OF_CODES], nof, OF_CODES + 3);
+    for (int n = 0; n <= LZ6HC_SP_LEN; n++) {
+        const int c = ll_to_code(n);
+        sp->ll[n] = SP_COST(llc[c], nseq, LL_CODES) + 16u * (unsigned)LL_extra[c];
+    }
+    for (int n = 0; n <= LZ6HC_SP_LEN; n++) {
+        if (n < 3) { sp->ml[n] = 1u << 16; continue; }
+        const int c = ml_to_code(n);
+        sp->ml[n] = SP_COST(mlc[c + 1], nseq, ML_CODES + 1) + 16u * (unsigned)ML_extra[c];
+    }
+#undef SP_COST
+}
+
 /* ================= ENCODER ================= */
 
 /* ---- core block: lz6 matches + FSE/Huffman, no transforms ---- */
@@ -502,11 +555,49 @@ static size_t compress_normal(const char* src, size_t srcSize,
                               char* dst, size_t dstCap, int level) {
     /* Phase 1: lz6 match finding */
     size_t state_sz = (size_t)LZ6_sizeofStateHC();
+    seq_collector_t sc;
+    memset(&sc, 0, sizeof(sc));
+    sc.src = (const uint8_t*)src;
+    sc.lits = (uint8_t*)malloc(srcSize + 65536);
+    if (!sc.lits) return 0;
+
+    /* optimal levels (11-15): price the optimal parse with what the seq
+     * coder will charge (symbol statistics) instead of codeword bytes. The
+     * statistics come from a cheap pre-parse (level `pre`, own context,
+     * freed before the main context is allocated, so the peak memory is
+     * the larger of the two), so the optimal parse runs once; `passes`
+     * extra re-parses refine them. */
+    LZ6HC_seqPrice* sp = NULL;
+    int rc = 0;
+    if (level >= 11 && !getenv("LZ6_NO_SEQPRICE"))
+        sp = (LZ6HC_seqPrice*)malloc(sizeof(LZ6HC_seqPrice));
+    if (sp) {
+        int pre = getenv("LZ6_SEQPRICE_PRE") ? atoi(getenv("LZ6_SEQPRICE_PRE")) : 3;
+        int ok = 0;
+        if (pre > 0) {
+            void* hp = malloc(state_sz);
+            if (hp) {
+                memset(hp, 0, state_sz);
+                if (LZ6_alloc_mem_HC_seq((LZ6HC_Data_Structure*)hp, pre, srcSize)) {
+                    LZ6HC_reset_mem((LZ6HC_Data_Structure*)hp);
+                    ok = LZ6HC_compress_sequences(hp, src, srcSize, collect_seq, &sc) == 0 && sc.n > 0;
+                    LZ6_free_mem_HC(hp);
+                }
+                free(hp);
+            }
+        }
+        if (ok) build_seq_price(&sc, (const uint8_t*)src, sp);
+        else { free(sp); sp = NULL; }
+        sc.n = 0;
+        sc.lit_sum = 0;
+    }
+
     void* hc = malloc(state_sz);
-    if (!hc) return 0;
+    if (!hc) { free(sp); free(sc.lits); free(sc.lit_lens); free(sc.match_lens); free(sc.offsets); return 0; }
     memset(hc, 0, state_sz);
     if (!LZ6_alloc_mem_HC_seq((LZ6HC_Data_Structure*)hc, level, srcSize)) {
-        free(hc); return 0;   /* alloc returns 1 on success */
+        free(hc); free(sp); free(sc.lits); free(sc.lit_lens); free(sc.match_lens); free(sc.offsets);
+        return 0;   /* alloc returns 1 on success */
     }
     /* The alloc leaves the hash/chain tables uninitialized (LZ6HC_init only
      * zeroes them under LZ6_RESET_MEM, which production builds don't define),
@@ -514,12 +605,24 @@ static size_t compress_normal(const char* src, size_t srcSize,
      * entries make the match finder non-deterministic and can crash. Zero
      * them for a clean one-shot run. */
     LZ6HC_reset_mem((LZ6HC_Data_Structure*)hc);
-    seq_collector_t sc;
-    memset(&sc, 0, sizeof(sc));
-    sc.src = (const uint8_t*)src;
-    sc.lits = (uint8_t*)malloc(srcSize + 65536);
-    if (!sc.lits) { LZ6_free_mem_HC(hc); free(hc); return 0; }
-    int rc = LZ6HC_compress_sequences(hc, src, srcSize, collect_seq, &sc);
+    if (sp) LZ6HC_setSeqPrice(hc, sp);
+    rc = LZ6HC_compress_sequences(hc, src, srcSize, collect_seq, &sc);
+    if (sp) {
+        /* measured (8 AIT+Silesia files, L15): pre-parse L3 alone -3.6%,
+         * + one refinement pass -4.3% */
+        int passes = level >= 15 ? 1 : 0;
+        if (getenv("LZ6_SEQPRICE_PASSES")) passes = atoi(getenv("LZ6_SEQPRICE_PASSES"));
+        for (int ps = 0; ps < passes && !rc && sc.n > 0; ps++) {
+            build_seq_price(&sc, (const uint8_t*)src, sp);
+            sc.n = 0;
+            sc.lit_sum = 0;
+            LZ6HC_reset_mem((LZ6HC_Data_Structure*)hc);
+            LZ6HC_setSeqPrice(hc, sp);
+            rc = LZ6HC_compress_sequences(hc, src, srcSize, collect_seq, &sc);
+        }
+        LZ6HC_setSeqPrice(hc, NULL);
+        free(sp);
+    }
     LZ6_free_mem_HC(hc);   /* free internal hash tables (64MB with max hashLog) */
     free(hc);              /* free the state struct itself */
     if (rc) { free(sc.lits); free(sc.lit_lens); free(sc.match_lens); free(sc.offsets); return 0; }

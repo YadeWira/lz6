@@ -115,6 +115,22 @@ int LZ6_compress_HC_extStateHC(void* state, const char* src, char* dst, int srcS
    Returns 0 on success, 1 if the source is too small to compress, or any
    non-zero value returned by `cb`. */
 typedef int (*LZ6HC_seq_cb)(void* opaque, size_t lit_len, size_t match_len, size_t offset);
+
+/* Entropy-aware prices for the optimal parser (seq path). Units are 1/16
+ * bit. ll[n] / ml[n]: cost of coding a literal length n / match length n
+ * (symbol + extra bits), saturating at LZ6HC_SP_LEN; of[b]: new offset in
+ * bucket b (symbol + b raw bits); rep0: a rep-stack hit; lit: one literal.
+ * Installed with LZ6HC_setSeqPrice() before LZ6HC_compress_sequences();
+ * NULL (the default) keeps the frame codec's byte-codeword prices. */
+#define LZ6HC_SP_LEN 4200
+typedef struct LZ6HC_seqPrice_s {
+    unsigned lit;
+    unsigned rep0;
+    unsigned of[25];
+    unsigned ll[LZ6HC_SP_LEN + 1];
+    unsigned ml[LZ6HC_SP_LEN + 1];
+} LZ6HC_seqPrice;
+void LZ6HC_setSeqPrice(void* state, const LZ6HC_seqPrice* sp);
 int LZ6HC_compress_sequences(void* state, const char* src, size_t srcSize,
                               LZ6HC_seq_cb cb, void* opaque);
 
