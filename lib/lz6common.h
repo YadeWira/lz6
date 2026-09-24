@@ -365,38 +365,31 @@ static const LZ6HC_parameters LZ6HC_defaultParameters[LZ6HC_MAX_CLEVEL+1] =
  * codec (the frozen portable profile) keeps its exact output. */
 static const LZ6HC_parameters LZ6HC_seqParameters[LZ6HC_MAX_CLEVEL+1] =
 {
-    /* windLog, contentLog,  H, H3,  Snum, SL, SuffL, FS, Strategy */
+    /* Retuned 2026-09-24 as a strictly monotonic ladder (ratio and encode
+     * speed both fall at every step), measured single-core on a Silesia
+     * subset (dickens/samba/osdb/ooffice/xml) with the entropy-priced
+     * optimal parser. Levels 13-15 also re-parse with refined prices
+     * (seq_refine_passes in lz6seq.c): past ~64 searches the depth stops
+     * helping (256..1024 searches gave the same size) and the refinement
+     * passes are what move the ratio. Full Silesia, L1 -> L15: 33.52% ->
+     * 25.72%; AIT 42.31% -> 38.79%; every step smaller than the one before.
+     * windLog, contentLog,  H, H3,  Snum, SL, SuffL, FS, Strategy                   subset ratio / MB/s */
     {        0,          0,  0,  0,     0,  0,     0,  0, LZ6HC_fast             }, // level 0 - never used
-    { MAXD_LOG,   MAXD_LOG, 13,  0,     4,  6,     0,  0, LZ6HC_fast             }, // level 1
-    { MAXD_LOG,   MAXD_LOG, 13,  0,     2,  6,     0,  0, LZ6HC_fast             }, // level 2
-    { MAXD_LOG,   MAXD_LOG, 13,  0,     1,  5,     0,  0, LZ6HC_fast             }, // level 3
-    { MAXD_LOG,   MAXD_LOG, 14, 13,     1,  4,     0,  0, LZ6HC_price_fast       }, // level 4
-    { MAXD_LOG,   MAXD_LOG, 17, 13,     1,  4,     0,  0, LZ6HC_price_fast       }, // level 5
-    { MAXD_LOG,   MAXD_LOG, 15, 13,     1,  4,     0,  0, LZ6HC_lowest_price     }, // level 6
-    { MAXD_LOG,   MAXD_LOG, 17, 13,     1,  4,     0,  0, LZ6HC_lowest_price     }, // level 7
-    { MAXD_LOG,   MAXD_LOG, 19, 16,     1,  4,     0,  0, LZ6HC_lowest_price     }, // level 8
-    { MAXD_LOG,   MAXD_LOG, 23, 16,     3,  4,     0,  0, LZ6HC_lowest_price     }, // level 9
-    { MAXD_LOG,   MAXD_LOG, 23, 16,     8,  4,     0,  0, LZ6HC_lowest_price     }, // level 10
-    { MAXD_LOG, MAXD_LOG+1, 23, 16,    32,  4,    48,  1, LZ6HC_optimal_price_bt }, // level 11 — BT fs=1
-    { MAXD_LOG, MAXD_LOG+1, 23, 16,    64,  4,    48,  1, LZ6HC_optimal_price_bt }, // level 12 — BT fs=1
-    { MAXD_LOG, MAXD_LOG+1, 23, 16,    64,  4,    64,  2, LZ6HC_optimal_price_bt }, // level 13
-    { MAXD_LOG, MAXD_LOG+1, 23, 16,   128,  4,    64,  2, LZ6HC_optimal_price_bt }, // level 14
-    { MAXD_LOG, MAXD_LOG+1, 23, 16,  1024,  4,    64,  2, LZ6HC_optimal_price_bt }, // level 15
-    // Recalibrated 2026-06: sufficientLength sweet-spot is ~32 (higher HURTS ratio, against
-    // the old comment); searchNum scales the L11-14 chains ladder monotonically.
-    // L15 re-flipped to the binary-tree finder 2026-07 (post rep-fix + adaptive-window):
-    // measured vs chains-sn256 at L15, BT-sn1024-fs2 is smaller on dictionary/text corpora
-    // (corpus8 -1.9%, sil40 -0.8%) AND 4.6-6.7x faster to encode; on high-entropy binary
-    // content it is ~0.4-0.5% LARGER than L13/L14 chains — the two finders trade wins by
-    // content type and no strategy dominates, so strict per-file level monotonicity is not
-    // guaranteed at the L14->L15 step (use L14 for max ratio on binary-heavy data).
-    // BT saturates in searchNum (256..1024 near-identical output); fs=2 (InsertFull) buys
-    // a little more ratio everywhere at ~1.5x BT encode time — still far cheaper than chains.
-    // 2026-07-24 L13-14 also flipped to BT (fs=2): L13 +62% encode speed (2.1->3.4 MB/s),
-    // L14 +192% (1.3->3.8 MB/s) on sil40.dat, ratio within 0.05pp. L11-12 stay on chains:
-    // BT insertion overhead exceeds chain walk at searchNum<=64 (L11 -34% on sil40).
-//  {       10,         10, 10,  0,     0,  4,     0,  0, LZ6HC_fast          }, // min values
-//  {       24,         24, 28, 24, 1<<24,  7, 1<<24,  2, LZ6HC_optimal_price }, // max values
+    { MAXD_LOG,   MAXD_LOG, 13,  0,     4,  6,     0,  0, LZ6HC_fast             }, // level 1   33.3% / 36
+    { MAXD_LOG,   MAXD_LOG, 13,  0,     2,  6,     0,  0, LZ6HC_fast             }, // level 2   31.9% / 36
+    { MAXD_LOG,   MAXD_LOG, 13,  0,     1,  5,     0,  0, LZ6HC_fast             }, // level 3   31.5% / 33
+    { MAXD_LOG,   MAXD_LOG, 15, 13,     1,  4,     0,  0, LZ6HC_lowest_price     }, // level 4   29.8% / 19
+    { MAXD_LOG,   MAXD_LOG, 19, 16,     2,  4,     0,  0, LZ6HC_lowest_price     }, // level 5   28.9% / 18
+    { MAXD_LOG,   MAXD_LOG, 23, 16,     3,  4,     0,  0, LZ6HC_lowest_price     }, // level 6   28.5% / 16
+    { MAXD_LOG,   MAXD_LOG, 23, 16,     8,  4,     0,  0, LZ6HC_lowest_price     }, // level 7   27.7% / 14
+    { MAXD_LOG, MAXD_LOG+1, 23, 16,     8,  4,    32,  0, LZ6HC_optimal_price_bt }, // level 8   27.2% / 6.9
+    { MAXD_LOG, MAXD_LOG+1, 23, 16,     8,  4,    32,  1, LZ6HC_optimal_price_bt }, // level 9   26.8% / 5.2
+    { MAXD_LOG, MAXD_LOG+1, 23, 16,    16,  4,    48,  1, LZ6HC_optimal_price_bt }, // level 10  25.7% / 3.9
+    { MAXD_LOG, MAXD_LOG+1, 23, 16,    32,  4,    48,  1, LZ6HC_optimal_price_bt }, // level 11  25.6% / 3.6
+    { MAXD_LOG, MAXD_LOG+1, 23, 16,    64,  4,    64,  2, LZ6HC_optimal_price_bt }, // level 12  25.45% / 2.9
+    { MAXD_LOG, MAXD_LOG+1, 23, 16,    64,  4,    64,  2, LZ6HC_optimal_price_bt }, // level 13  25.30% / 1.6  (+1 refine)
+    { MAXD_LOG, MAXD_LOG+1, 23, 16,    64,  4,    64,  2, LZ6HC_optimal_price_bt }, // level 14  25.24% / 1.0  (+2 refine)
+    { MAXD_LOG, MAXD_LOG+1, 23, 16,    64,  4,    64,  2, LZ6HC_optimal_price_bt }, // level 15  25.22% / 0.8  (+3 refine)
 };
 
 

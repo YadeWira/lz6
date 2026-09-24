@@ -608,9 +608,10 @@ static size_t compress_normal(const char* src, size_t srcSize,
     if (sp) LZ6HC_setSeqPrice(hc, sp);
     rc = LZ6HC_compress_sequences(hc, src, srcSize, collect_seq, &sc);
     if (sp) {
-        /* measured (8 AIT+Silesia files, L15): pre-parse L3 alone -3.6%,
-         * + one refinement pass -4.3% */
-        int passes = level >= LZ6HC_MAX_CLEVEL ? 1 : 0;
+        /* refinement re-parses per seq level (see LZ6HC_seqParameters) */
+        static const int seq_refine_passes[LZ6HC_MAX_CLEVEL + 1] =
+            { 0, 0,0,0,0,0, 0,0,0,0,0, 0,0,1,2,3 };
+        int passes = seq_refine_passes[level < 1 ? 1 : level > LZ6HC_MAX_CLEVEL ? LZ6HC_MAX_CLEVEL : level];
         if (getenv("LZ6_SEQPRICE_PASSES")) passes = atoi(getenv("LZ6_SEQPRICE_PASSES"));
         for (int ps = 0; ps < passes && !rc && sc.n > 0; ps++) {
             build_seq_price(&sc, (const uint8_t*)src, sp);

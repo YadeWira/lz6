@@ -1,4 +1,18 @@
 v1.6.5-pre (in progress)
+- levels: the seq engine gets its own level table (the frame HC codec keeps
+  its table and output), retuned as a strictly monotonic ladder: every
+  level compresses better and slower than the one before, where the old
+  table had byte-identical pairs (L4=L5, L6=L7) and near-duplicates
+  (L8, L12, L14). L8-L10 now use the entropy-priced optimal parser with
+  cheap searches (the old gap: L10 13.7 MB/s -> L11 3.6 MB/s); L13-L15
+  add refinement re-parses (1/2/3), which measured better than deeper
+  searches (256-1024 searches gave the same size as 64).
+  Full Silesia, level: 1 33.52%, 2 32.00%, 3 32.00%, 4 30.37%, 5 29.59%,
+  6 29.21%, 7 28.50%, 8 27.69%, 9 27.40%, 10 26.39%, 11 26.18%,
+  12 25.94%, 13 25.78%, 14 25.74%, 15 25.72%.
+  Encode (single core, Silesia subset), MB/s: 37 37 33 19 17 16 14 7.1
+  5.4 4.3 4.0 3.2 1.6 1.0 0.8. Level 2 (the default seq level) is
+  unchanged; old L15 files decode as always (encoder-only change).
 - ratio/seq: the optimal parser (levels 11-15) now prices with what the
   seq coder charges instead of the frame codec's codeword bytes: -log2
   frequency of the ll/ml/offset symbols plus their extra bits, and the
