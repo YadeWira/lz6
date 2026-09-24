@@ -12,6 +12,12 @@ v1.6.5-pre (in progress)
   dickens -6%, reymont -6%, nci -5%, webster -4.7%, C -6%, B -4%.
   Decode gets faster too (fewer sequences): -8..9% cycles.
   Encode: L11 about the same speed, L15 ~2x slower (the refinement pass).
+  Tried and rejected: the same prices in the heuristic parsers of levels
+  4-10 (better_price / lowest_price split point): +2..3% larger at L6/L9,
+  neutral at L4. Those greedy/lazy parsers decide one sequence at a time,
+  and the byte model's 8-bit literal overprices literals in a way that
+  compensates for their short view; only the full DP gains from true
+  costs.
 
 v1.6.4-pre
 - fixed: the fast LZ encoder (-0, and the light-LZ fallback inside seq
