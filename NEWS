@@ -1,4 +1,4 @@
-v1.6.5-pre (in progress)
+v1.6.5-pre
 - levels: the seq engine gets its own level table (the frame HC codec keeps
   its table and output), retuned as a strictly monotonic ladder: every
   level compresses better and slower than the one before, where the old

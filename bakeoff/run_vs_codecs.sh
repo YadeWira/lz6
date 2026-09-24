@@ -51,7 +51,7 @@ bench_ait() {
 bench_silesia() {
     [ -d "$SILESIA" ] || { echo "no Silesia corpus at $SILESIA"; exit 1; }
     ( cd "$LB" && ./lzbench -t1,1 \
-        -elz4/lz5/lz5hc,1,6,15/lz6,1,2,3,5,9,11,15/lz6hc,15/lizard,30,49/zstd,1,5,19/misa77,-1,1,3/brotli,1,11/xz,1,9/zlib,1,6 \
+        -elz4/lz5/lz5hc,1,6,15/lz6,1,2,4,7,8,10,12,13,15/lz6hc,15/lizard,30,49/zstd,1,5,19/misa77,-1,1,3/brotli,1,11/xz,1,9/zlib,1,6 \
         "$SILESIA"/* ) > /tmp/vs_silesia_raw.txt 2>&1
     echo "Silesia -> /tmp/vs_silesia_raw.txt"
 }
