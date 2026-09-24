@@ -131,6 +131,8 @@ typedef struct LZ6HC_seqPrice_s {
     unsigned ml[LZ6HC_SP_LEN + 1];
 } LZ6HC_seqPrice;
 void LZ6HC_setSeqPrice(void* state, const LZ6HC_seqPrice* sp);
+/* 1 when seq level `level` runs the optimal (DP) parser */
+int LZ6HC_seqLevelIsOptimal(int level);
 int LZ6HC_compress_sequences(void* state, const char* src, size_t srcSize,
                               LZ6HC_seq_cb cb, void* opaque);
 

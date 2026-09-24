@@ -47,6 +47,7 @@
 #include "lz6common.h"
 #include "lz6.h"
 #include <stdio.h>
+#include <stdlib.h>
 #include <stdint.h>
 
 /* Software prefetch hint. A no-op where unsupported; prefetching a wild address
@@ -117,7 +118,20 @@ static int LZ6_alloc_mem_HC_wl(LZ6HC_Data_Structure* ctx, int compressionLevel,
     if (compressionLevel > g_maxCompressionLevel) ctx->compressionLevel = g_maxCompressionLevel;
     if (compressionLevel < 1) ctx->compressionLevel = LZ6HC_compressionLevel_default;
 
-    ctx->params = LZ6HC_defaultParameters[ctx->compressionLevel];
+    /* maxWindowLog >= 25 is the seq-codec allocation (LZ6_alloc_mem_HC_seq) */
+    ctx->params = (maxWindowLog >= 25 ? LZ6HC_seqParameters : LZ6HC_defaultParameters)[ctx->compressionLevel];
+#ifdef LZ6_SEQ_TUNING
+    /* experiment hook: LZ6_SEQPARAMS_LEVEL=L LZ6_SEQPARAMS=H:H3:SN:SL:SUF:FS:STRAT */
+    if (maxWindowLog >= 25 && getenv("LZ6_SEQPARAMS") && getenv("LZ6_SEQPARAMS_LEVEL")
+        && atoi(getenv("LZ6_SEQPARAMS_LEVEL")) == ctx->compressionLevel) {
+        unsigned h, h3, sn, sl, suf, fs, st;
+        if (sscanf(getenv("LZ6_SEQPARAMS"), "%u:%u:%u:%u:%u:%u:%u", &h, &h3, &sn, &sl, &suf, &fs, &st) == 7) {
+            ctx->params.hashLog = h; ctx->params.hashLog3 = h3; ctx->params.searchNum = sn;
+            ctx->params.searchLength = sl; ctx->params.sufficientLength = suf;
+            ctx->params.fullSearch = fs; ctx->params.strategy = (LZ6HC_strategy)st;
+        }
+    }
+#endif
     /* seq codec: the format carries offsets up to 2^25-1 (bucket 24), so a
      * bigger window is allowed there without touching the frame codec */
     if (maxWindowLog > (int)ctx->params.windowLog)
@@ -1213,6 +1227,20 @@ static inline size_t LZ6HC_sp_price(const LZ6HC_seqPrice* sp, size_t litlen, siz
 #define OPT_PRICE(l, o, m3) (ctx->seqPrice ? LZ6HC_sp_price(ctx->seqPrice, (l), (o), (m3)) : LZ6HC_get_price((l), (o), (m3)))
 #define OPT_LITONLY(n)      (ctx->seqPrice ? (size_t)ctx->seqPrice->lit * (n) + LZ6HC_spLL(ctx->seqPrice, (n)) : (size_t)LZ6_LIT_ONLY_COST(n))
 #define OPT_LLEN(n)         (ctx->seqPrice ? (size_t)ctx->seqPrice->lit * (n) : (size_t)(n))
+
+int LZ6HC_seqLevelIsOptimal(int level)
+{
+    if (level < 1) level = LZ6HC_compressionLevel_default;
+    if (level > g_maxCompressionLevel) level = g_maxCompressionLevel;
+#ifdef LZ6_SEQ_TUNING
+    if (getenv("LZ6_SEQPARAMS") && getenv("LZ6_SEQPARAMS_LEVEL") && atoi(getenv("LZ6_SEQPARAMS_LEVEL")) == level) {
+        unsigned v[7];
+        if (sscanf(getenv("LZ6_SEQPARAMS"), "%u:%u:%u:%u:%u:%u:%u", &v[0], &v[1], &v[2], &v[3], &v[4], &v[5], &v[6]) == 7)
+            return v[6] >= (unsigned)LZ6HC_optimal_price;
+    }
+#endif
+    return LZ6HC_seqParameters[level].strategy >= LZ6HC_optimal_price;
+}
 
 void LZ6HC_setSeqPrice(void* state, const LZ6HC_seqPrice* sp)
 {

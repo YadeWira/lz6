@@ -569,7 +569,7 @@ static size_t compress_normal(const char* src, size_t srcSize,
      * extra re-parses refine them. */
     LZ6HC_seqPrice* sp = NULL;
     int rc = 0;
-    if (level >= 11 && !getenv("LZ6_NO_SEQPRICE"))
+    if (LZ6HC_seqLevelIsOptimal(level) && !getenv("LZ6_NO_SEQPRICE"))
         sp = (LZ6HC_seqPrice*)malloc(sizeof(LZ6HC_seqPrice));
     if (sp) {
         int pre = getenv("LZ6_SEQPRICE_PRE") ? atoi(getenv("LZ6_SEQPRICE_PRE")) : 3;
@@ -610,7 +610,7 @@ static size_t compress_normal(const char* src, size_t srcSize,
     if (sp) {
         /* measured (8 AIT+Silesia files, L15): pre-parse L3 alone -3.6%,
          * + one refinement pass -4.3% */
-        int passes = level >= 15 ? 1 : 0;
+        int passes = level >= LZ6HC_MAX_CLEVEL ? 1 : 0;
         if (getenv("LZ6_SEQPRICE_PASSES")) passes = atoi(getenv("LZ6_SEQPRICE_PASSES"));
         for (int ps = 0; ps < passes && !rc && sc.n > 0; ps++) {
             build_seq_price(&sc, (const uint8_t*)src, sp);
