@@ -11,7 +11,7 @@ v1.6.5-pre (in progress)
   6 29.21%, 7 28.50%, 8 27.69%, 9 27.40%, 10 26.39%, 11 26.18%,
   12 25.94%, 13 25.78%, 14 25.74%, 15 25.72%.
   Encode (single core, Silesia subset), MB/s: 37 37 33 19 17 16 14 7.1
-  5.4 4.3 4.0 3.2 1.6 1.0 0.8. Level 2 (the default seq level) is
+  5.4 4.3 4.0 3.2 1.6 1.0 0.8. Level 2 (the seq level the README suggests) is
   unchanged; old L15 files decode as always (encoder-only change).
 - ratio/seq: the optimal parser (levels 11-15) now prices with what the
   seq coder charges instead of the frame codec's codeword bytes: -log2
