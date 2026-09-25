@@ -45,37 +45,35 @@ Measured with one harness ([lzbench], one thread, mem-to-mem, per file) on 2x Xe
 | codec | ratio | enc MB/s | dec MB/s |
 |---|---:|---:|---:|
 | uf-lzma2 -11 (asm decoder) | 22.88% | 1.2 | 118 |
-| zstd -19 | 24.96% | 2.6 | 736 |
-| **lz6 -15** | **25.72%** | 0.7 | **540** |
-| **lz6 -12** | **25.94%** | 2.5 | **559** |
-| **lz6 -8** | **27.69%** | 7.0 | **523** |
-| lizard -49 | 28.62% | 1.8 | 1,164 |
-| lz5 v1.5 HC -15 | 30.95% | 2.1 | 702 |
-| **lz6 -2** | **32.00%** | 39.3 | **469** |
-| zstd -1 | 34.55% | 345 | 1,180 |
-| lizard -30 | 40.47% | 321 | 1,224 |
-| misa77 -1 | 42.65% | 49.0 | 5,031 |
-| lz4 | 47.60% | 541 | 3,547 |
+| zstd -19 | 24.96% | 2.8 | 789 |
+| **lz6 -15** | **25.43%** | 0.7 | **557** |
+| **lz6 -12** | **25.65%** | 2.8 | **569** |
+| **lz6 -8** | **27.39%** | 8.3 | **524** |
+| lizard -49 | 28.62% | 1.9 | 1,200 |
+| lz5 v1.5 HC -15 | 30.95% | 2.2 | 741 |
+| **lz6 -2** | **31.85%** | **95.8** | **464** |
+| zstd -1 | 34.55% | 354 | 1,205 |
+| lizard -30 | 40.47% | 328 | 1,243 |
+| misa77 -1 | 42.65% | 51.1 | 5,149 |
+| lz4 | 47.60% | 543 | 3,617 |
 | memlz | 59.91% | 963 | 888 |
 
 **AIT A-H** (13 MB, 8 files)
 
 | codec | ratio | enc MB/s | dec MB/s |
 |---|---:|---:|---:|
-| **lz6 -15** | **38.79%** | 1.8 | **439** |
-| **lz6 -8** | **39.24%** | 11.7 | **422** |
-| **lz6 -2** | **41.33%** | 97.4 | **440** |
+| **lz6 -15** | **38.78%** | 1.7 | **432** |
+| **lz6 -8** | **39.20%** | 12.4 | **433** |
+| **lz6 -2** | **41.41%** | **141** | **435** |
 | uf-lzma2 -11 (asm decoder) | 52.64% | 2.2 | 65 |
-| zstd -19 | 55.97% | 5.3 | 1,066 |
-| lizard -49 | 61.21% | 5.5 | 1,544 |
-| lz5 v1.5 HC -15 | 65.49% | 2.2 | 992 |
-| misa77 -1 | 73.29% | 51.5 | 7,869 |
-| lz4 | 75.66% | 786 | 5,088 |
-| memlz | 81.64% | 1,872 | 1,713 |
+| zstd -19 | 55.97% | 5.5 | 1,089 |
+| lizard -49 | 61.21% | 5.5 | 1,553 |
+| lz5 v1.5 HC -15 | 65.49% | 2.2 | 994 |
+| misa77 -1 | 73.29% | 50.9 | 7,789 |
+| lz4 | 75.66% | 791 | 5,088 |
+| memlz | 81.64% | 1,873 | 1,713 |
 
-These are v1.6.5-pre release numbers. Since then (master, v1.6.6-pre in progress): the seq encoder is ~2.5x faster at levels 1-3 and 1.1-1.4x at 4-7 (full Silesia `-2`: ~40 -> ~70 MB/s), and offsets keep their low bits in the entropy coder: Silesia `-15` 25.72% -> 25.43% (0.47 points behind zstd -19), `-2` 32.07% -> 31.85%, for +1-3% decode cycles. See [NEWS](NEWS).
-
-On AIT most of lz6's lead comes from one file, D (glibc `random()` output, regenerated from its seed: 2 MB -> 7 bytes); without D, lz6 -15 is 45.76%, ahead of xz -9 and zstd -19 and behind brotli -11 and LZMA2. On Silesia lz6 -15 is 0.8 points behind zstd -19 and ahead of lizard, lz5 and misa77. Decode speed remains its weak axis: 1.3-3x below zstd and lizard. See also [bakeoff/COMPETITORS.md](bakeoff/COMPETITORS.md) and the [wiki](https://github.com/YadeWira/lz6/wiki/Benchmarks).
+On AIT most of lz6's lead comes from one file, D (glibc `random()` output, regenerated from its seed: 2 MB -> 7 bytes); without D, lz6 -15 is 45.74%, ahead of xz -9 and zstd -19 and behind brotli -11 and LZMA2. On Silesia lz6 -15 is 0.47 points behind zstd -19 and ahead of lizard, lz5 and misa77. Decode speed remains its weak axis: 1.4-3x below zstd and lizard. See also [bakeoff/COMPETITORS.md](bakeoff/COMPETITORS.md) and the [wiki](https://github.com/YadeWira/lz6/wiki/Benchmarks).
 
 ## Documentation
 
