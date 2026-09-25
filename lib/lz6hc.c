@@ -131,7 +131,8 @@ static int LZ6_alloc_mem_HC_wl(LZ6HC_Data_Structure* ctx, int compressionLevel,
             ctx->params.fullSearch = fs; ctx->params.strategy = (LZ6HC_strategy)st;
             /* the chain strategies insert every position into hashTable3:
              * a 0-bit table would shift by 32 (every real table row has >= 13) */
-            if (ctx->params.strategy >= LZ6HC_price_fast && ctx->params.hashLog3 < 8) ctx->params.hashLog3 = 8;
+            if (ctx->params.strategy >= LZ6HC_price_fast && ctx->params.strategy != LZ6HC_row
+                && ctx->params.hashLog3 < 8) ctx->params.hashLog3 = 8;
         }
     }
 #endif
@@ -225,7 +226,7 @@ void LZ6HC_reset_mem(LZ6HC_Data_Structure* ctx)
     /* the fast / price_fast strategies never read the chain table: leave
      * it untouched (a large unwritten allocation costs no page faults;
      * zeroing it was ~20% of level-2 encode time on 10-50 MB inputs) */
-    if (ctx->params.strategy >= LZ6HC_lowest_price)
+    if (ctx->params.strategy >= LZ6HC_lowest_price && ctx->params.strategy != LZ6HC_row)
         MEM_INIT(ctx->chainTable, 0, sizeof(U32) * ((size_t)1 << ctx->params.contentLog));
 }
 
@@ -1245,10 +1246,11 @@ int LZ6HC_seqLevelIsOptimal(int level)
     if (getenv("LZ6_SEQPARAMS") && getenv("LZ6_SEQPARAMS_LEVEL") && atoi(getenv("LZ6_SEQPARAMS_LEVEL")) == level) {
         unsigned v[7];
         if (sscanf(getenv("LZ6_SEQPARAMS"), "%u:%u:%u:%u:%u:%u:%u", &v[0], &v[1], &v[2], &v[3], &v[4], &v[5], &v[6]) == 7)
-            return v[6] >= (unsigned)LZ6HC_optimal_price;
+            return v[6] == (unsigned)LZ6HC_optimal_price || v[6] == (unsigned)LZ6HC_optimal_price_bt;
     }
 #endif
-    return LZ6HC_seqParameters[level].strategy >= LZ6HC_optimal_price;
+    return LZ6HC_seqParameters[level].strategy == LZ6HC_optimal_price
+        || LZ6HC_seqParameters[level].strategy == LZ6HC_optimal_price_bt;
 }
 
 void LZ6HC_setSeqPrice(void* state, const LZ6HC_seqPrice* sp)
@@ -2173,6 +2175,234 @@ static int LZ6HC_compress_fast (
 
 
 
+
+/* ---- row-hash match finder + lazy parser (LZ6HC_row, seq engine) ----
+ * zstd 1.5's "row" match finder, simplified: the hash picks a row of
+ * LZ6_ROW_SIZE positions; each slot also keeps an 8-bit tag (more hash
+ * bits), so a search compares all the row's tags at once (SWAR, portable)
+ * and only verifies slots whose tag matches. One cache miss yields up to
+ * 16 candidates, where a chain walk takes one miss per candidate.
+ * Params: hashLog = log2 of the rows' total slots before input-size
+ * scaling; searchLength = hashed bytes (4-7); searchNum = candidates
+ * verified per search; fullSearch = lazy depth (0 greedy, 1 lazy, 2). */
+#define LZ6_ROW_LOG  4
+#define LZ6_ROW_SIZE (1u << LZ6_ROW_LOG)
+
+typedef struct {
+    U32* pos;          /* [nrows][ROW_SIZE] positions (index from base) */
+    BYTE* tag;         /* [nrows][ROW_SIZE] tags */
+    BYTE* head;        /* [nrows] next slot to overwrite (ring) */
+    U32 rowsLog;
+    U32 mls;
+    U32 nextToUpdate;
+} LZ6HC_rows;
+
+FORCE_INLINE U64 LZ6HC_rowHash(const BYTE* p, U32 mls)
+{
+    static const U64 prime = 0xCF1BBCDCB7A56463ULL;
+    const U64 v = MEM_read64(p) << (64 - 8 * mls);   /* little-endian: low mls bytes */
+    return v * prime;
+}
+
+FORCE_INLINE void LZ6HC_rowInsert(LZ6HC_rows* r, const BYTE* base, U32 idx)
+{
+    const U64 h = LZ6HC_rowHash(base + idx, r->mls);
+    const size_t row = (size_t)(h >> (64 - r->rowsLog));
+    const BYTE t = (BYTE)(h >> (56 - r->rowsLog));
+    const U32 slot = (U32)(r->head[row] - 1) & (LZ6_ROW_SIZE - 1);
+    r->head[row] = (BYTE)slot;
+    r->pos[row * LZ6_ROW_SIZE + slot] = idx;
+    r->tag[row * LZ6_ROW_SIZE + slot] = t;
+}
+
+/* start the row fetch for a position we will search / insert soon */
+#define LZ6_ROW_AHEAD 8
+FORCE_INLINE void LZ6HC_rowPrefetch(const LZ6HC_rows* r, const BYTE* p)
+{
+    const size_t row = (size_t)(LZ6HC_rowHash(p, r->mls) >> (64 - r->rowsLog));
+    LZ6_PREFETCH(r->tag + row * LZ6_ROW_SIZE);
+    LZ6_PREFETCH(r->pos + row * LZ6_ROW_SIZE);
+    LZ6_PREFETCH(r->head + row);
+}
+
+FORCE_INLINE void LZ6HC_rowUpdate(LZ6HC_rows* r, const BYTE* base, U32 target)
+{
+    U32 idx = r->nextToUpdate;
+    /* after a very long match, only index its tail (zstd caps it too) */
+    if (target - idx > 384) idx = target - 96;
+    for (; idx < target; idx++) {
+        LZ6HC_rowPrefetch(r, base + idx + LZ6_ROW_AHEAD);
+        LZ6HC_rowInsert(r, base, idx);
+    }
+    r->nextToUpdate = target;
+}
+
+#if defined(__SSE2__)
+#  include <emmintrin.h>
+#endif
+/* bit i set when byte i of x is zero (exact, no false positives) */
+FORCE_INLINE U64 LZ6HC_zeroBytes(U64 x)
+{
+    const U64 m = 0x7F7F7F7F7F7F7F7FULL;
+    return ~(((x & m) + m) | x | m);
+}
+
+/* best match at ip among the row's tag hits (newest first); returns its
+ * length (0 if none >= 4) and sets *off */
+FORCE_INLINE size_t LZ6HC_rowSearch(LZ6HC_Data_Structure* ctx, LZ6HC_rows* r,
+                                    const BYTE* ip, const BYTE* iLimit, U32* off)
+{
+    const BYTE* const base = ctx->base;
+    const U32 cur = (U32)(ip - base);
+    const U32 maxDist = (1u << ctx->params.windowLog) - 1;
+    const U32 low = (cur - ctx->dictLimit > maxDist) ? cur - maxDist : ctx->dictLimit;
+    LZ6HC_rowUpdate(r, base, cur);
+    LZ6HC_rowPrefetch(r, ip + LZ6_ROW_AHEAD);
+    const U64 h = LZ6HC_rowHash(ip, r->mls);
+    const size_t row = (size_t)(h >> (64 - r->rowsLog));
+    const BYTE t = (BYTE)(h >> (56 - r->rowsLog));
+    const BYTE* const tg = r->tag + row * LZ6_ROW_SIZE;
+    const U32* const ps = r->pos + row * LZ6_ROW_SIZE;
+#if defined(__SSE2__)
+    U32 mask = (U32)_mm_movemask_epi8(_mm_cmpeq_epi8(_mm_loadu_si128((const __m128i*)tg), _mm_set1_epi8((char)t)));
+#else
+    const U64 rep = 0x0101010101010101ULL * t;
+    const U64 z0 = LZ6HC_zeroBytes(MEM_read64(tg) ^ rep), z1 = LZ6HC_zeroBytes(MEM_read64(tg + 8) ^ rep);
+    /* compact the high bits of each byte into a 16-bit hit mask */
+    U32 mask = (U32)(((z0 >> 7) * 0x0102040810204080ULL) >> 56) | ((U32)(((z1 >> 7) * 0x0102040810204080ULL) >> 56) << 8);
+#endif
+    /* rotate so bit 0 is the newest slot (head) */
+    const U32 hd = r->head[row];
+    mask = ((mask >> hd) | (mask << (LZ6_ROW_SIZE - hd))) & 0xFFFFu;
+    U32 tries = ctx->params.searchNum ? ctx->params.searchNum : 1;
+    size_t best = 0;
+    while (mask && tries) {
+        const U32 k = (U32)__builtin_ctz(mask);
+        mask &= mask - 1;
+        const U32 m = ps[(k + hd) & (LZ6_ROW_SIZE - 1)];
+        if (m < low || m >= cur) continue;
+        tries--;
+        const BYTE* const mp = base + m;
+        if (MEM_read32(mp) != MEM_read32(ip) || mp[best] != ip[best]) continue;
+        const size_t l = MEM_count(ip + 4, mp + 4, iLimit) + 4;
+        if (l > best) { best = l; *off = cur - m; if (ip + l >= iLimit) break; }
+    }
+    /* the row now owns ip too */
+    LZ6HC_rowInsert(r, base, cur);
+    r->nextToUpdate = cur + 1;
+    return best;
+}
+
+FORCE_INLINE U32 LZ6HC_highbit32(U32 v) { return 31u - (U32)__builtin_clz(v | 1u); }
+
+static int LZ6HC_compress_row (
+    LZ6HC_Data_Structure* ctx,
+    const char* source,
+    char* dest,
+    int inputSize,
+    int maxOutputSize,
+    limitedOutput_directive limit)
+{
+    const BYTE* ip = (const BYTE*)source;
+    const BYTE* anchor = ip;
+    const BYTE* const iend = ip + inputSize;
+    const BYTE* const mflimit = iend - MFLIMIT;
+    const BYTE* const matchlimit = iend - LASTLITERALS;
+    const BYTE* const base = ctx->base;
+    const BYTE* const lowPrefixPtr = base + ctx->dictLimit;
+    BYTE* op = (BYTE*)dest;
+    BYTE* const oend = op + maxOutputSize;
+    const U32 depth = ctx->params.fullSearch;
+
+    /* rows sized to the input (~ one slot per 4 bytes) but capped at
+     * 2^hashLog slots: every position is inserted, so a table that
+     * outgrows the caches makes each insert a miss */
+    LZ6HC_rows r;
+    U32 slotsLog = LZ6HC_ceilLog2((size_t)inputSize) >= 2 ? LZ6HC_ceilLog2((size_t)inputSize) - 2 : 0;
+    if (slotsLog > ctx->params.hashLog) slotsLog = ctx->params.hashLog;
+    if (slotsLog > 24) slotsLog = 24;
+    if (slotsLog < LZ6_ROW_LOG + 4) slotsLog = LZ6_ROW_LOG + 4;
+    r.rowsLog = slotsLog - LZ6_ROW_LOG;
+    r.mls = ctx->params.searchLength < 4 ? 4 : ctx->params.searchLength > 7 ? 7 : ctx->params.searchLength;
+    r.pos = (U32*)calloc((size_t)1 << slotsLog, sizeof(U32));
+    r.tag = (BYTE*)calloc((size_t)1 << slotsLog, 1);
+    r.head = (BYTE*)calloc((size_t)1 << r.rowsLog, 1);
+    r.nextToUpdate = (U32)(ip - base);
+    if (!r.pos || !r.tag || !r.head) { free(r.pos); free(r.tag); free(r.head); return 0; }
+
+    ctx->inputBuffer = (const BYTE*)source;
+    ctx->outputBuffer = (const BYTE*)dest;
+    ctx->end += inputSize;
+
+    ip++;
+    while (ip < mflimit) {
+        size_t ml = 0; U32 off = 0;
+        const BYTE* start = ip;
+        /* rep0 at ip+1 first (zstd): a hit there costs almost nothing */
+        if (ctx->last_off && (size_t)(ip + 1 - lowPrefixPtr) >= ctx->last_off
+            && MEM_read32(ip + 1) == MEM_read32(ip + 1 - ctx->last_off)) {
+            ml = MEM_count(ip + 1 + 4, ip + 1 - ctx->last_off + 4, matchlimit) + 4;
+            off = ctx->last_off; start = ip + 1;
+        }
+        {
+            U32 o2 = 0;
+            const size_t l2 = LZ6HC_rowSearch(ctx, &r, ip, matchlimit, &o2);
+            /* a new offset has to beat the rep by its cost (~log2 bits) */
+            if (l2 > ml && (ml == 0 || (int)(l2 * 4) - (int)LZ6HC_highbit32(o2) > (int)(ml * 4) + 1)) {
+                ml = l2; off = o2; start = ip;
+            }
+        }
+        if (ml < 4) {
+            ip += ((size_t)(ip - anchor) >> 8) + 1;   /* accelerate through incompressible runs */
+            continue;
+        }
+        /* lazy: a better match one or two bytes later wins */
+        for (U32 d = 0; d < depth && start + 1 < mflimit; d++) {
+            const BYTE* const nip = start + 1;
+            U32 o2 = 0;
+            size_t l2 = 0;
+            if (off != ctx->last_off && ctx->last_off && (size_t)(nip - lowPrefixPtr) >= ctx->last_off
+                && MEM_read32(nip) == MEM_read32(nip - ctx->last_off)) {
+                l2 = MEM_count(nip + 4, nip - ctx->last_off + 4, matchlimit) + 4;
+                o2 = ctx->last_off;
+            }
+            {
+                U32 o3 = 0;
+                const size_t l3 = LZ6HC_rowSearch(ctx, &r, nip, matchlimit, &o3);
+                if (l3 > l2) { l2 = l3; o2 = o3; }
+            }
+            const int gain2 = (int)(l2 * 4) - (int)LZ6HC_highbit32(o2 == ctx->last_off ? 1 : o2);
+            const int gain1 = (int)(ml * 4) - (int)LZ6HC_highbit32(off == ctx->last_off ? 1 : off) + 4;
+            if (l2 >= 4 && gain2 > gain1) { ml = l2; off = o2; start = nip; }
+            else break;
+        }
+        /* catch up: extend the match backwards over pending literals */
+        {
+            const BYTE* m = start - off;
+            while (start > anchor && m > lowPrefixPtr && start[-1] == m[-1]) { start--; m--; ml++; }
+        }
+        ip = start;
+        if (LZ6HC_encodeSequence(ctx, &ip, &op, &anchor, (int)ml, ip - off, limit, oend)) {
+            free(r.pos); free(r.tag); free(r.head); return 0;
+        }
+    }
+    free(r.pos); free(r.tag); free(r.head);
+
+    {   /* last literals */
+        int lastRun = (int)(iend - anchor);
+        if (ctx->emitSeq) {
+            if (ctx->emitSeq(ctx->emitOpaque, (size_t)lastRun, 0, 0)) return 0;
+        } else {
+            if ((limit) && (((char*)op - dest) + lastRun + 1 + ((lastRun+255-RUN_MASK)/255) > (U32)maxOutputSize)) return 0;
+            if (lastRun>=(int)RUN_MASK) { *op++=(RUN_MASK<<ML_BITS); lastRun-=RUN_MASK; for(; lastRun > 254 ; lastRun-=255) *op++ = 255; *op++ = (BYTE) lastRun; }
+            else *op++ = (BYTE)(lastRun<<ML_BITS);
+            memcpy(op, anchor, iend - anchor);
+            op += iend-anchor;
+        }
+    }
+    return (int)(((char*)op) - dest);
+}
+
 static int LZ6HC_compress_generic (void* ctxvoid, const char* source, char* dest, int inputSize, int maxOutputSize, limitedOutput_directive limit)
 {
     LZ6HC_Data_Structure* ctx = (LZ6HC_Data_Structure*) ctxvoid;
@@ -2186,6 +2416,8 @@ static int LZ6HC_compress_generic (void* ctxvoid, const char* source, char* dest
         return LZ6HC_compress_price_fast(ctx, source, dest, inputSize, maxOutputSize, limit);
     case LZ6HC_lowest_price:
         return LZ6HC_compress_lowest_price(ctx, source, dest, inputSize, maxOutputSize, limit);
+    case LZ6HC_row:
+        return LZ6HC_compress_row(ctx, source, dest, inputSize, maxOutputSize, limit);
     case LZ6HC_optimal_price:
     case LZ6HC_optimal_price_bt:
         return LZ6HC_compress_optimal_price(ctx, (const BYTE* )source, dest, inputSize, maxOutputSize, limit);

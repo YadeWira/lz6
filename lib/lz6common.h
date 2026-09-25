@@ -239,7 +239,11 @@ FORCE_INLINE size_t LZ6HC_more_profitable(size_t best_off, size_t best_common, s
 *  HC Types
 ***************************************/
 /** from faster to stronger */
-typedef enum { LZ6HC_fast, LZ6HC_price_fast, LZ6HC_lowest_price, LZ6HC_optimal_price, LZ6HC_optimal_price_bt } LZ6HC_strategy;
+/* LZ6HC_row (seq engine only): row-hash match finder + lazy parser, see
+ * LZ6HC_compress_row in lz6hc.c. Appended last so the numeric values of the
+ * other strategies (tuning hook) stay the same; compare strategies by name,
+ * not by order, where row matters. */
+typedef enum { LZ6HC_fast, LZ6HC_price_fast, LZ6HC_lowest_price, LZ6HC_optimal_price, LZ6HC_optimal_price_bt, LZ6HC_row } LZ6HC_strategy;
 
 typedef struct
 {
