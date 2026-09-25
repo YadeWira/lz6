@@ -128,43 +128,52 @@ size_t huf_build_header(const unsigned* counts, int maxSym,
 
 /* Encode syms[0..n) with the lengths in hdr (huf_build_header output).
  * Writes [4B total][stream] at `out`; the caller appends this after the
- * 257-byte header. Returns bytes written (4 + stream), or 0 on error. */
+ * 257-byte header. Returns bytes written (4 + stream), or 0 on error.
+ * Codes are <= 16 bits, so a 64-bit accumulator flushed 32 bits at a
+ * time (big-endian = the MSB-first byte order) never overflows. */
+#define HUF_ENCODE_BODY                                                      \
+{                                                                           \
+    const uint8_t* len = hdr + 1;                                           \
+    uint16_t code[256];                                                     \
+    canonical_codes(len, 255, code);                                        \
+    if (out_cap < 4 + 2 * n + 1) {  /* tight buffer: size the stream first */ \
+        size_t tb = 0;                                                      \
+        for (size_t i = 0; i < n; i++) tb += len[syms[i]];                  \
+        if (out_cap < 4 + (tb ? (tb + 7) / 8 : 1)) return 0;                \
+    }                                                                       \
+    uint8_t* p = out + 4;                                                   \
+    uint64_t acc = 0;                                                       \
+    unsigned nbits = 0;                                                     \
+    size_t total = 0;                                                       \
+    for (size_t i = 0; i < n; i++) {                                        \
+        unsigned s = syms[i], l = len[s];                                   \
+        acc = (acc << l) | code[s];                                         \
+        nbits += l;                                                         \
+        if (nbits >= 32) {                                                  \
+            nbits -= 32;                                                    \
+            uint32_t v = (uint32_t)(acc >> nbits);                          \
+            p[0] = (uint8_t)(v >> 24); p[1] = (uint8_t)(v >> 16);           \
+            p[2] = (uint8_t)(v >> 8);  p[3] = (uint8_t)v;                   \
+            p += 4; total += 32;                                            \
+        }                                                                   \
+    }                                                                       \
+    total += nbits;                                                         \
+    while (nbits >= 8) { nbits -= 8; *p++ = (uint8_t)(acc >> nbits); }      \
+    if (nbits > 0) *p++ = (uint8_t)(acc << (8 - nbits));                    \
+    out[0] = (uint8_t)(total);                                              \
+    out[1] = (uint8_t)(total >> 8);                                         \
+    out[2] = (uint8_t)(total >> 16);                                        \
+    out[3] = (uint8_t)(total >> 24);                                        \
+    return 4 + (size_t)(p - (out + 4));                                     \
+}
+
 size_t huf_encode_stream(const uint8_t* hdr, const unsigned* syms, size_t n,
                          uint8_t* out, size_t out_cap)
-{
-    int k = hdr[0];
-    const uint8_t* len = hdr + 1;
-    (void)k;
-    uint16_t code[256];
-    canonical_codes(len, 255, code);
+HUF_ENCODE_BODY
 
-    size_t total = 0;
-    for (size_t i = 0; i < n; i++) total += len[syms[i]];
-    size_t nbytes = (total + 7) / 8;
-    if (nbytes == 0) nbytes = 1;
-    if (out_cap < nbytes + 4) return 0;
-
-    out[0] = (uint8_t)(total);
-    out[1] = (uint8_t)(total >> 8);
-    out[2] = (uint8_t)(total >> 16);
-    out[3] = (uint8_t)(total >> 24);
-
-    uint8_t* p = out + 4;
-    uint32_t acc = 0;
-    int nbits = 0;
-    for (size_t i = 0; i < n; i++) {
-        int s = (int)syms[i];
-        int l = len[s];
-        acc = (acc << l) | code[s];
-        nbits += l;
-        while (nbits >= 8) {
-            nbits -= 8;
-            *p++ = (uint8_t)(acc >> nbits);
-        }
-    }
-    if (nbits > 0) *p++ = (uint8_t)(acc << (8 - nbits));
-    return 4 + (size_t)(p - (out + 4));
-}
+size_t huf_encode_stream8(const uint8_t* hdr, const uint8_t* syms, size_t n,
+                          uint8_t* out, size_t out_cap)
+HUF_ENCODE_BODY
 
 /* ------------------------------------------------------------------ */
 /* Decode                                                              */

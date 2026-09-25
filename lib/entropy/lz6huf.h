@@ -38,6 +38,9 @@ size_t huf_build_header(const unsigned* counts, int maxSym,
  * bytes written (4+stream), or 0 on error. */
 size_t huf_encode_stream(const uint8_t* hdr, const unsigned* syms, size_t n,
                          uint8_t* out, size_t out_cap);
+/* Same, over byte symbols. */
+size_t huf_encode_stream8(const uint8_t* hdr, const uint8_t* syms, size_t n,
+                          uint8_t* out, size_t out_cap);
 
 /* Decode `n` symbols from `in` = [header][stream] as produced by
  * huf_build_header + huf_encode_stream. Returns bytes consumed, or 0

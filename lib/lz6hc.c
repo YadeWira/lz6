@@ -153,14 +153,16 @@ static int LZ6_alloc_mem_HC_wl(LZ6HC_Data_Structure* ctx, int compressionLevel,
      * chain candidates, so they degrade when hash buckets saturate on
      * large inputs — L2's hashLog 13 leaves ~12k positions per bucket at
      * 100MB (widening 13->23+ recovers 2.4MB / 2.3pts on a 100MB Silesia
-     * slice). Scale the main hash with the input size (density <= ~2),
-     * capped at 2^26 (256MB table). The BT strategies (L11-15) search
+     * slice). Scale the main hash with the input size (density <= ~16),
+     * capped at 2^23 (32MB table). Density 16 rather than 2: the table
+     * is random-access, and 8x smaller made L1-3 24-28% and L4-5 ~15%
+     * faster for +0.1pt on Silesia. The BT strategies (L8-15) search
      * deeper and measured WORSE with a widened table; the frame codec
      * (maxWindowLog 24) stays byte-identical. */
     if (maxWindowLog >= 25 &&
         ctx->params.strategy <= LZ6HC_lowest_price) {
         U32 sizeLog = LZ6HC_ceilLog2(maxSrcSize);
-        U32 widened = sizeLog > 26 ? 26 : sizeLog;
+        U32 widened = (sizeLog > 26 ? 26 : sizeLog > 3 ? sizeLog : 3) - 3;
         if (widened > ctx->params.hashLog) ctx->params.hashLog = widened;
     }
 
@@ -217,7 +219,11 @@ void LZ6HC_reset_mem(LZ6HC_Data_Structure* ctx)
 {
     if (!ctx) return;
     MEM_INIT(ctx->hashTable, 0, sizeof(U32) * (((size_t)1 << ctx->params.hashLog3) + ((size_t)1 << ctx->params.hashLog)));
-    MEM_INIT(ctx->chainTable, 0, sizeof(U32) * ((size_t)1 << ctx->params.contentLog));
+    /* the fast / price_fast strategies never read the chain table: leave
+     * it untouched (a large unwritten allocation costs no page faults;
+     * zeroing it was ~20% of level-2 encode time on 10-50 MB inputs) */
+    if (ctx->params.strategy >= LZ6HC_lowest_price)
+        MEM_INIT(ctx->chainTable, 0, sizeof(U32) * ((size_t)1 << ctx->params.contentLog));
 }
 
 static void LZ6HC_init (LZ6HC_Data_Structure* ctx, const BYTE* start)
@@ -2074,6 +2080,9 @@ static int LZ6HC_compress_fast (
     while (ip < mflimit)
     {
         HashPos = &HashTable[LZ6HC_hashPtr(ip, ctx->params.hashLog, ctx->params.searchLength)];
+        /* start the next probe's hash-table miss now (output-neutral, -3..4% cycles at L2) */
+        if (ip + accel < mflimit)
+            LZ6_PREFETCH(&HashTable[LZ6HC_hashPtr(ip + accel, ctx->params.hashLog, ctx->params.searchLength)]);
         ml = LZ6HC_FindMatchFastest (ctx, *HashPos, ip, matchlimit, (&ref));
         *HashPos =  (U32)(ip - base);
         if (!ml) { ip+=accel; continue; }

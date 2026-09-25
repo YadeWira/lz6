@@ -463,6 +463,26 @@ static inline void tbw_add(tbw_t* w, uint32_t v, unsigned nb)
         w->acc >>= 8; w->n -= 8;
     }
 }
+/* accumulate without flushing: the caller keeps w->n + nb <= 64 and calls
+ * tbw_flush, which needs 8 bytes of room (checked once per sequence) */
+static inline void tbw_put(tbw_t* w, uint32_t v, unsigned nb)
+{
+    w->acc |= (uint64_t)(v & (uint32_t)((1ull << nb) - 1)) << w->n;
+    w->n += nb;
+}
+static inline void tbw_flush(tbw_t* w)
+{
+    const unsigned nbytes = w->n >> 3;
+    uint64_t a = w->acc;
+#if defined(__BYTE_ORDER__) && __BYTE_ORDER__ == __ORDER_BIG_ENDIAN__
+    for (int i = 0; i < 8; i++) w->p[i] = (uint8_t)(a >> (8 * i));
+#else
+    memcpy(w->p, &a, 8);   /* little-endian store */
+#endif
+    w->p += nbytes;
+    w->acc = a >> (8 * nbytes);   /* n <= 63, so nbytes <= 7 */
+    w->n &= 7;
+}
 static inline void tbw_close(tbw_t* w)
 {
     tbw_add(w, 1, 1);
@@ -485,7 +505,7 @@ static inline void tans_cencode(tans_cstate* st, const tans_ctable* ct, tbw_t* w
 {
     const tans_symtt tt = ct->tt[s];
     const uint32_t nbOut = (st->value + tt.deltaNbBits) >> 16;
-    tbw_add(w, st->value, nbOut);
+    tbw_put(w, st->value, nbOut);
     st->value = ct->stateTable[(st->value >> nbOut) + (uint32_t)tt.deltaFindState];
 }
 static inline void tans_cflush(tans_cstate* st, const tans_ctable* ct, tbw_t* w)
@@ -651,29 +671,34 @@ static size_t compress_normal(const char* src, size_t srcSize,
      * pick whichever is smaller. */
     int lit_count = (int)sc.lit_built;
     if (lit_count > 0) {
-        unsigned* lit_syms = (unsigned*)malloc((size_t)lit_count * sizeof(unsigned));
-        if (!lit_syms) { free(sc.lits); free(sc.lit_lens); free(sc.match_lens); free(sc.offsets); return 0; }
-        for (int i = 0; i < lit_count; i++) lit_syms[i] = sc.lits[i];
+        /* the rANS coders take 32-bit symbols: widen only when one runs
+         * (4 bytes per literal of page-faulted memory at L1-3 otherwise) */
+        unsigned* lit_syms = NULL;
         size_t lit_cap = (size_t)lit_count * 2 + 4096;  /* fse_encode writes backwards; needs ~1.5n */
         uint8_t* lit_buf = (uint8_t*)malloc(lit_cap);
         uint8_t* huf_buf = (uint8_t*)malloc(lit_cap);
-        if (!lit_buf || !huf_buf) { free(lit_buf); free(huf_buf); free(lit_syms); free(sc.lits); free(sc.lit_lens); free(sc.match_lens); free(sc.offsets); return 0; }
+        if (!lit_buf || !huf_buf) { free(lit_buf); free(huf_buf); free(sc.lits); free(sc.lit_lens); free(sc.match_lens); free(sc.offsets); return 0; }
         /* huffman first: cheap encode, fast table decode. FSE is only
          * tried when huffman fails (pathological tree) — its encode is
          * ~2x more expensive, so skipping it when huffman works is a
          * Weissman win. */
         unsigned hcounts[256] = {0};
-        for (int i = 0; i < lit_count; i++) hcounts[lit_syms[i]]++;
+        for (int i = 0; i < lit_count; i++) hcounts[sc.lits[i]]++;
         int hk = 0;
         size_t hhdr = huf_build_header(hcounts, 255, huf_buf, lit_cap, &hk);
         size_t hsz = 0;
         /* k<=12 keeps table decode (4096 entries); only deeper trees fall
          * back to FSE. The old k<=10 gate skipped huffman for most text. */
         if (hhdr > 0 && hk <= 12) {
-            size_t hstr = huf_encode_stream(huf_buf, lit_syms, (size_t)lit_count, huf_buf + hhdr, lit_cap - hhdr);
+            size_t hstr = huf_encode_stream8(huf_buf, sc.lits, (size_t)lit_count, huf_buf + hhdr, lit_cap - hhdr);
             if (hstr > 0) hsz = hhdr + hstr;
         }
         size_t lit_sz = 0;
+        if (hsz == 0 || (lit_count >= 65536 && level >= 4)) {
+            lit_syms = (unsigned*)malloc((size_t)lit_count * sizeof(unsigned));
+            if (!lit_syms) { free(lit_buf); free(huf_buf); free(sc.lits); free(sc.lit_lens); free(sc.match_lens); free(sc.offsets); return 0; }
+            for (int i = 0; i < lit_count; i++) lit_syms[i] = sc.lits[i];
+        }
         /* FSE vs Huffman: huffman's encode is ~2x cheaper and its decode
          * ~2x faster (table walk), so it wins any near-tie. Run FSE only
          * when huffman is absent/pathological. */
@@ -1000,20 +1025,26 @@ static size_t compress_normal(const char* src, size_t srcSize,
         tans_cinit(&sLL, &cts[0], ll_syms[last]);
         tans_cinit(&sML, &cts[1], ml_syms[last]);
         tans_cinit(&sOF, &cts[2], of_syms[last]);
+        /* bits per sequence: states 3 x <= 12, ll + ml extras <= 2 x 24,
+         * offset residual <= 24 -- one flush after each group keeps the
+         * 64-bit accumulator (<= 7 bits left over) from overflowing */
         for (int n = last; n >= 0; n--) {
+            if (w.end - w.p < 32) { w.err = 1; break; }
             if (n < last) {
                 tans_cencode(&sOF, &cts[2], &w, of_syms[n]);
                 tans_cencode(&sML, &cts[1], &w, ml_syms[n]);
                 tans_cencode(&sLL, &cts[0], &w, ll_syms[n]);
+                tbw_flush(&w);
             }
             const unsigned lc = ll_syms[n];
-            tbw_add(&w, (uint32_t)(sc.lit_lens[n] - LL_base[lc]), (unsigned)LL_extra[lc]);
+            tbw_put(&w, (uint32_t)(sc.lit_lens[n] - LL_base[lc]), (unsigned)LL_extra[lc]);
             if (ml_syms[n] > 0) {
                 const unsigned mr = ml_syms[n] - 1;
-                tbw_add(&w, (uint32_t)(sc.match_lens[n] - ML_base[mr]), (unsigned)ML_extra[mr]);
+                tbw_put(&w, (uint32_t)(sc.match_lens[n] - ML_base[mr]), (unsigned)ML_extra[mr]);
+                tbw_flush(&w);
                 const unsigned oc = of_syms[n];
-                if (oc < OF_CODES) tbw_add(&w, (uint32_t)(sc.offsets[n] - OF_base[oc]), oc);
-            }
+                if (oc < OF_CODES) { tbw_put(&w, (uint32_t)(sc.offsets[n] - OF_base[oc]), oc); tbw_flush(&w); }
+            } else tbw_flush(&w);
         }
         tans_cflush(&sML, &cts[1], &w);
         tans_cflush(&sOF, &cts[2], &w);
@@ -1084,19 +1115,43 @@ oom:
  * stream but each lane compresses well on its own. Split the input into
  * `stride` lanes, compress the low-entropy lanes with the normal block,
  * store the incompressible lanes raw. */
-static unsigned lane_entropy256(const uint8_t* src, size_t n, int stride, int lane) {
-    uint32_t hist[256];
+static void lane_hist(const uint8_t* src, size_t n, int stride, uint32_t hist[4][256]) {
+    size_t i = 0;
+    if (stride == 4)
+        for (; i + 4 <= n; i += 4) {
+            hist[0][src[i]]++; hist[1][src[i + 1]]++; hist[2][src[i + 2]]++; hist[3][src[i + 3]]++;
+        }
+    for (; i < n; i++) hist[i % (size_t)stride][src[i]]++;
+}
+
+/* Per-lane order-0 entropy (x256) of `stride` interleaved lanes. Inputs
+ * over 1MB are sampled (16 evenly spaced 64KB chunks, stride-aligned):
+ * the values only gate the plane trial, and full passes cost ~4% of L2
+ * encode time. Lanes with < 256 samples report 0. */
+static void lane_entropy256(const uint8_t* src, size_t n, int stride, unsigned ent[4]) {
+    uint32_t hist[4][256];
     memset(hist, 0, sizeof(hist));
-    size_t cnt = 0;
-    for (size_t i = (size_t)lane; i < n; i += (size_t)stride) { hist[src[i]]++; cnt++; }
-    if (cnt < 256) return 0;
-    uint64_t H = 0;
-    for (int b = 0; b < 256; b++) {
-        if (!hist[b]) continue;
-        double pr = (double)hist[b] / (double)cnt;
-        H += (uint64_t)(-pr * log2(pr) * 256.0);
+    const size_t chunk = 65536, nchunks = 16;
+    if (n <= chunk * nchunks) lane_hist(src, n, stride, hist);
+    else
+        for (size_t k = 0; k < nchunks; k++) {
+            size_t off = (n / nchunks) * k;
+            off -= off % (size_t)stride;
+            lane_hist(src + off, chunk, stride, hist);
+        }
+    for (int l = 0; l < stride; l++) {
+        uint32_t cnt = 0;
+        for (int b = 0; b < 256; b++) cnt += hist[l][b];
+        ent[l] = 0;
+        if (cnt < 256) continue;
+        uint64_t H = 0;
+        for (int b = 0; b < 256; b++) {
+            if (!hist[l][b]) continue;
+            double pr = (double)hist[l][b] / (double)cnt;
+            H += (uint64_t)(-pr * log2(pr) * 256.0);
+        }
+        ent[l] = (unsigned)H;
     }
-    return (unsigned)H;
 }
 
 /* Returns bytes written to dst, or 0 if the plane transform does not help.
@@ -1109,20 +1164,22 @@ static size_t plane_encode(const uint8_t* src, size_t srcSize,
     if (decisive_out) *decisive_out = 0;
     int stride = 0;
     unsigned lane_ent[4] = {0, 0, 0, 0};
-    if ((srcSize % 4) == 0) {
-        stride = 4;
-        for (int i = 0; i < 4; i++) lane_ent[i] = lane_entropy256(src, srcSize, 4, i);
-    } else if ((srcSize % 2) == 0) {
-        stride = 2;
-        lane_ent[0] = lane_entropy256(src, srcSize, 2, 0);
-        lane_ent[1] = lane_entropy256(src, srcSize, 2, 1);
-    }
+    if ((srcSize % 4) == 0) stride = 4;
+    else if ((srcSize % 2) == 0) stride = 2;
     if (!stride) return 0;
+    lane_entropy256(src, srcSize, stride, lane_ent);
     /* The win comes from lane skew: at least one lane must be very
      * compressible (H < 5 b/B) while others stay near-incompressible. */
     unsigned min_ent = 0xFFFFFFFFu;
     for (int i = 0; i < stride; i++) if (lane_ent[i] < min_ent) min_ent = lane_ent[i];
+    unsigned max_ent = 0;
+    for (int i = 0; i < stride; i++) if (lane_ent[i] > max_ent) max_ent = lane_ent[i];
     if (min_ent >= 5 * 256) return 0;
+    /* ...and the lanes must differ: equal lanes (text: every lane of a
+     * novel sits at ~4.4 b/B) only mean a costly trial encode that loses.
+     * Measured on Silesia + AIT: plane wins at spread >= 3.1 b/B (F,
+     * x-ray, E/G/mr) and loses at <= 2.3 (sao, mozilla, dickens). */
+    if (max_ent - min_ent < 27 * 256 / 10) return 0;
     if (dstCap < 5 + (size_t)stride) return 0;
     if (decisive_out && min_ent <= 2 * 256) *decisive_out = 1;
 
@@ -1891,9 +1948,10 @@ size_t LZ6_decompress_seq(const char* src, size_t srcSize,
     if (flags & 0x08) {  /* byte-plane block */
         const uint8_t* q = p + 1;
         if (srcSize < 6) return 0;
-        int isize = (int)q[0] | ((int)q[1] << 8) | ((int)q[2] << 16) | ((int)q[3] << 24);
+        const uint32_t usize = (uint32_t)q[0] | ((uint32_t)q[1] << 8) | ((uint32_t)q[2] << 16) | ((uint32_t)q[3] << 24);
         q += 4;
-        if (isize < 0 || (size_t)isize > dstCap) return 0;
+        if (usize > (uint32_t)INT_MAX || (size_t)usize > dstCap) return 0;
+        const int isize = (int)usize;
         int stride = (flags & 3) == 2 ? 4 : 2;
         /* the encoder only planes stride-divisible blocks; a remainder
          * would leave the tail unwritten yet report it as decoded */

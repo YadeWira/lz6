@@ -166,7 +166,7 @@ static size_t LZ6HC_hash6Ptr(const void* p, U32 h) { return LZ6HC_hash6(MEM_read
 static size_t LZ6HC_hash7(U64 u, U32 h) { return (size_t)((u * prime7bytes) << (64-56) >> (64-h)) ; }
 static size_t LZ6HC_hash7Ptr(const void* p, U32 h) { return LZ6HC_hash7(MEM_read64(p), h); }
 
-static size_t LZ6HC_hashPtr(const void* p, U32 hBits, U32 mls)
+FORCE_INLINE size_t LZ6HC_hashPtr(const void* p, U32 hBits, U32 mls)
 {
     switch(mls)
     {
@@ -375,21 +375,21 @@ static const LZ6HC_parameters LZ6HC_seqParameters[LZ6HC_MAX_CLEVEL+1] =
      * 25.72%; AIT 42.31% -> 38.79%; every step smaller than the one before.
      * windLog, contentLog,  H, H3,  Snum, SL, SuffL, FS, Strategy                   subset ratio / MB/s */
     {        0,          0,  0,  0,     0,  0,     0,  0, LZ6HC_fast             }, // level 0 - never used
-    { MAXD_LOG,   MAXD_LOG, 13,  0,     4,  6,     0,  0, LZ6HC_fast             }, // level 1   33.3% / 36
-    { MAXD_LOG,   MAXD_LOG, 13,  0,     2,  6,     0,  0, LZ6HC_fast             }, // level 2   31.9% / 36
-    { MAXD_LOG,   MAXD_LOG, 13,  0,     1,  5,     0,  0, LZ6HC_fast             }, // level 3   31.5% / 33
-    { MAXD_LOG,   MAXD_LOG, 15, 13,     1,  4,     0,  0, LZ6HC_lowest_price     }, // level 4   29.8% / 19
-    { MAXD_LOG,   MAXD_LOG, 19, 16,     2,  4,     0,  0, LZ6HC_lowest_price     }, // level 5   28.9% / 18
-    { MAXD_LOG,   MAXD_LOG, 23, 16,     3,  4,     0,  0, LZ6HC_lowest_price     }, // level 6   28.5% / 16
-    { MAXD_LOG,   MAXD_LOG, 23, 16,     8,  4,     0,  0, LZ6HC_lowest_price     }, // level 7   27.7% / 14
-    { MAXD_LOG, MAXD_LOG+1, 23, 16,     8,  4,    32,  0, LZ6HC_optimal_price_bt }, // level 8   27.2% / 6.9
-    { MAXD_LOG, MAXD_LOG+1, 23, 16,     8,  4,    32,  1, LZ6HC_optimal_price_bt }, // level 9   26.8% / 5.2
-    { MAXD_LOG, MAXD_LOG+1, 23, 16,    16,  4,    48,  1, LZ6HC_optimal_price_bt }, // level 10  25.7% / 3.9
-    { MAXD_LOG, MAXD_LOG+1, 23, 16,    32,  4,    48,  1, LZ6HC_optimal_price_bt }, // level 11  25.6% / 3.6
-    { MAXD_LOG, MAXD_LOG+1, 23, 16,    64,  4,    64,  2, LZ6HC_optimal_price_bt }, // level 12  25.45% / 2.9
-    { MAXD_LOG, MAXD_LOG+1, 23, 16,    64,  4,    64,  2, LZ6HC_optimal_price_bt }, // level 13  25.30% / 1.6  (+1 refine)
-    { MAXD_LOG, MAXD_LOG+1, 23, 16,    64,  4,    64,  2, LZ6HC_optimal_price_bt }, // level 14  25.24% / 1.0  (+2 refine)
-    { MAXD_LOG, MAXD_LOG+1, 23, 16,    64,  4,    64,  2, LZ6HC_optimal_price_bt }, // level 15  25.22% / 0.8  (+3 refine)
+    { MAXD_LOG,   MAXD_LOG, 13,  0,     4,  6,     0,  0, LZ6HC_fast             }, // level 1   33.45% / 106
+    { MAXD_LOG,   MAXD_LOG, 13,  0,     2,  6,     0,  0, LZ6HC_fast             }, // level 2   31.98% / 102
+    { MAXD_LOG,   MAXD_LOG, 13,  0,     1,  5,     0,  0, LZ6HC_fast             }, // level 3   31.52% / 89
+    { MAXD_LOG,   MAXD_LOG, 15, 13,     1,  4,     0,  0, LZ6HC_lowest_price     }, // level 4   29.83% / 27
+    { MAXD_LOG,   MAXD_LOG, 19, 16,     2,  4,     0,  0, LZ6HC_lowest_price     }, // level 5   28.90% / 25
+    { MAXD_LOG,   MAXD_LOG, 23, 16,     3,  4,     0,  0, LZ6HC_lowest_price     }, // level 6   28.47% / 22
+    { MAXD_LOG,   MAXD_LOG, 23, 16,     8,  4,     0,  0, LZ6HC_lowest_price     }, // level 7   27.74% / 17
+    { MAXD_LOG, MAXD_LOG+1, 23, 16,     8,  4,    32,  0, LZ6HC_optimal_price_bt }, // level 8   27.15% / 8.5
+    { MAXD_LOG, MAXD_LOG+1, 23, 16,     8,  4,    32,  1, LZ6HC_optimal_price_bt }, // level 9   26.78% / 6.0
+    { MAXD_LOG, MAXD_LOG+1, 23, 16,    16,  4,    48,  1, LZ6HC_optimal_price_bt }, // level 10  25.74% / 4.4
+    { MAXD_LOG, MAXD_LOG+1, 23, 16,    32,  4,    48,  1, LZ6HC_optimal_price_bt }, // level 11  25.56% / 4.2
+    { MAXD_LOG, MAXD_LOG+1, 23, 16,    64,  4,    64,  2, LZ6HC_optimal_price_bt }, // level 12  25.45% / 3.4
+    { MAXD_LOG, MAXD_LOG+1, 23, 16,    64,  4,    64,  2, LZ6HC_optimal_price_bt }, // level 13  25.30% / 1.8  (+1 refine)
+    { MAXD_LOG, MAXD_LOG+1, 23, 16,    64,  4,    64,  2, LZ6HC_optimal_price_bt }, // level 14  25.24% / 1.2  (+2 refine)
+    { MAXD_LOG, MAXD_LOG+1, 23, 16,    64,  4,    64,  2, LZ6HC_optimal_price_bt }, // level 15  25.21% / 0.9  (+3 refine)
 };
 
 

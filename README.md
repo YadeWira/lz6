@@ -73,6 +73,8 @@ Measured with one harness ([lzbench], one thread, mem-to-mem, per file) on 2x Xe
 | lz4 | 75.66% | 786 | 5,088 |
 | memlz | 81.64% | 1,872 | 1,713 |
 
+These are v1.6.5-pre release numbers. Since then (master, v1.6.6-pre in progress) the seq encoder is ~2.5x faster at levels 1-3 and 1.1-1.4x at 4-7 for ≤0.1 points of ratio (full Silesia `-2`: ~40 -> ~70 MB/s); decode is unchanged. See [NEWS](NEWS).
+
 On AIT most of lz6's lead comes from one file, D (glibc `random()` output, regenerated from its seed: 2 MB -> 7 bytes); without D, lz6 -15 is 45.76%, ahead of xz -9 and zstd -19 and behind brotli -11 and LZMA2. On Silesia lz6 -15 is 0.8 points behind zstd -19 and ahead of lizard, lz5 and misa77. Decode speed remains its weak axis: 1.3-3x below zstd and lizard. See also [bakeoff/COMPETITORS.md](bakeoff/COMPETITORS.md) and the [wiki](https://github.com/YadeWira/lz6/wiki/Benchmarks).
 
 ## Documentation
