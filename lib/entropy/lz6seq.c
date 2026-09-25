@@ -370,7 +370,6 @@ static void build_seq_price(const seq_collector_t* sc, const uint8_t* src, LZ6HC
 #define TANS_MAX_LOG 12
 #define TANS_MIN_LOG 5
 
-typedef struct { uint16_t newState; uint8_t sym; uint8_t nbBits; } tans_dentry;
 typedef struct { int32_t deltaFindState; uint32_t deltaNbBits; } tans_symtt;
 typedef struct {
     int log;
@@ -449,8 +448,16 @@ static void tans_build_ctable(tans_ctable* ct, const uint16_t* norm, int maxSym,
     }
 }
 
-/* returns 0 on a corrupt table */
-static int tans_build_dtable(tans_dentry* dt, const uint16_t* norm, int maxSym, int log)
+/* Sequence decode entry (zstd's ZSTD_seqSymbol): the tANS state step plus
+ * the symbol's value base and extra-bit count, so stage A computes a field
+ * as base + read(nbExtra) with no per-symbol table lookups or branches.
+ * Offset rep codes carry SEQ_REP | index in base. */
+#define SEQ_REP 0x80000000u
+typedef struct { uint16_t next; uint8_t nbBits; uint8_t nbExtra; uint32_t base; } seq_dentry;
+enum { SEQ_T_LL, SEQ_T_ML, SEQ_T_OF };
+
+
+static void seq_build_dtable(seq_dentry* dt, const uint16_t* norm, int maxSym, int log, int kind)
 {
     const unsigned size = 1u << log;
     uint8_t sym_at[1 << TANS_MAX_LOG];
@@ -461,11 +468,18 @@ static int tans_build_dtable(tans_dentry* dt, const uint16_t* norm, int maxSym, 
         const unsigned s = sym_at[u];
         const uint32_t x = next[s]++;
         const unsigned nb = (unsigned)log - tans_highbit(x);
-        dt[u].sym = (uint8_t)s;
         dt[u].nbBits = (uint8_t)nb;
-        dt[u].newState = (uint16_t)((x << nb) - size);
+        dt[u].next = (uint16_t)((x << nb) - size);
+        uint32_t base; unsigned extra;
+        if (kind == SEQ_T_LL) { base = (uint32_t)LL_base[s]; extra = (unsigned)LL_extra[s]; }
+        else if (kind == SEQ_T_ML) {
+            /* symbol 0 = no match: ml 0, no extra bits */
+            base = s ? (uint32_t)ML_base[s - 1] : 0; extra = s ? (unsigned)ML_extra[s - 1] : 0;
+        } else if (s < OF_CODES) { base = (uint32_t)OF_base[s]; extra = OF_extra[s]; }
+        else { base = SEQ_REP | (uint32_t)(s - OF_CODES); extra = 0; }
+        dt[u].base = base;
+        dt[u].nbExtra = (uint8_t)extra;
     }
-    return 1;
 }
 
 /* table header: [log:1][maxSym:1] then the normalised counts 0..maxSym,
@@ -1075,7 +1089,7 @@ static size_t compress_normal(const char* src, size_t srcSize,
     if (sc_cnt > 0) {
         static const int alpha[3] = { LL_CODES - 1, ML_CODES, OF_CODES + 2 };
         const char* envn[3] = { "LZ6_TLOG_LL", "LZ6_TLOG_ML", "LZ6_TLOG_OF" };
-        static const int deflog[3] = { 11, 11, 11 };
+        static const int deflog[3] = { 10, 10, 11 };   /* 8-byte decode entries: 32KB of tables, L1-resident */
         unsigned* syms[3] = { ll_syms, ml_syms, of_syms };
         for (int t = 0; t < 3; t++) {
             unsigned cnt[TANS_MAX_SYMS];
@@ -1796,13 +1810,13 @@ LZ6SEQ_FORCE_INLINE size_t decode_normal_body(const char* src, size_t srcSize,
 
     /* sequence section: three tANS tables + one backward bitstream */
     uint8_t* litbuf = NULL;        /* both freed on every exit below */
-    tans_dentry* dts = NULL;
+    seq_dentry* dts = NULL;
     tbr_t br;
     memset(&br, 0, sizeof(br));
     unsigned lgs[3] = { 0, 0, 0 };
     if (sc > 0) {
         static const int alpha[3] = { LL_CODES - 1, ML_CODES, OF_CODES + 2 };
-        dts = (tans_dentry*)malloc(3 * ((size_t)1 << TANS_MAX_LOG) * sizeof(tans_dentry));
+        dts = (seq_dentry*)malloc(3 * ((size_t)1 << TANS_MAX_LOG) * sizeof(seq_dentry));
         if (!dts) goto fail;
         for (int t = 0; t < 3; t++) {
             uint16_t norm[TANS_MAX_SYMS];
@@ -1810,7 +1824,7 @@ LZ6SEQ_FORCE_INLINE size_t decode_normal_body(const char* src, size_t srcSize,
             size_t hl = tans_read_header(p, (size_t)(end - p), alpha[t], norm, &ms, &lg);
             if (hl == 0) goto fail;
             p += hl;
-            tans_build_dtable(dts + ((size_t)t << TANS_MAX_LOG), norm, ms, lg);
+            seq_build_dtable(dts + ((size_t)t << TANS_MAX_LOG), norm, ms, lg, t);
             lgs[t] = (unsigned)lg;
         }
         if ((size_t)(end - p) < 4) goto fail;
@@ -1841,9 +1855,9 @@ LZ6SEQ_FORCE_INLINE size_t decode_normal_body(const char* src, size_t srcSize,
     uint8_t* const ostart = (uint8_t*)dst;
     uint8_t* const oend = ostart + isize;
     uint8_t* o = ostart;
-    const tans_dentry* const dLL = dts;
-    const tans_dentry* const dML = dts + ((size_t)1 << TANS_MAX_LOG);
-    const tans_dentry* const dOF = dts + ((size_t)2 << TANS_MAX_LOG);
+    const seq_dentry* const dLL = dts;
+    const seq_dentry* const dML = dts + ((size_t)1 << TANS_MAX_LOG);
+    const seq_dentry* const dOF = dts + ((size_t)2 << TANS_MAX_LOG);
     size_t sLL = 0, sML = 0, sOF = 0;
     if (sc > 0) {
         sLL = tbr_read(&br, lgs[0]);
@@ -1861,122 +1875,125 @@ LZ6SEQ_FORCE_INLINE size_t decode_normal_body(const char* src, size_t srcSize,
     size_t vpos = 0;   /* output position after the sequences read so far */
     int nread = 0, nexec = 0;
     int done_read = sc == 0;
-    for (;;) {
-        if (!done_read && nread - nexec < SEQ_AHEAD) {
-            /* ---- stage A: read sequence `nread` ---- */
-            const tans_dentry eL = dLL[sLL], eM = dML[sML], eO = dOF[sOF];
-            const unsigned c0 = eL.sym, c1 = eM.sym, osym = eO.sym;
-            const unsigned lx = (unsigned)LL_extra[c0];
-            const unsigned mx = c1 > 0 ? (unsigned)ML_extra[c1 - 1] : 0;
-            const unsigned ox = (c1 > 0 && osym < OF_CODES) ? OF_extra[osym] : 0;
-            const int more = nread + 1 < sc;
-            /* the whole sequence's bits are known from the three entries:
-             * one refill covers them unless they exceed 56 (rare) */
-            const unsigned need = ox + mx + lx + (more ? (unsigned)eL.nbBits + eM.nbBits + eO.nbBits : 0u);
-            const int split = need > 56;
-            tbr_reload_fast(&br);
-            size_t ml = 0, md = 0;
-            if (c1 > 0) {
-                /* offset symbol: codes 0..OF_CODES-1 (see OF_DIRECT /
-                 * OF_LOW), rep stack entries above */
-                if (osym < OF_CODES) {
-                    md = (size_t)OF_base[osym] + (tbr_read(&br, ox) << OF_LOW);
-                    if (md != (size_t)rp[0]) { rp[2] = rp[1]; rp[1] = rp[0]; rp[0] = (int)md; }
-                    if (split) tbr_reload(&br);
-                } else {
-                    const unsigned ri = osym - OF_CODES;
-                    if (ri > 2) goto fail;
-                    md = (size_t)rp[ri];
-                    if (ri > 0) {
-                        int t = rp[ri];
-                        for (unsigned k = ri; k > 0; k--) rp[k] = rp[k-1];
-                        rp[0] = t;
-                    }
-                }
-                ml = (size_t)ML_base[c1 - 1] + tbr_read(&br, mx);
-            }
-            size_t ll = (size_t)LL_base[c0] + tbr_read(&br, lx);
-            if (more) {
-                if (split) tbr_reload(&br);
-                sLL = eL.newState + tbr_read(&br, eL.nbBits);
-                sML = eM.newState + tbr_read(&br, eM.nbBits);
-                sOF = eO.newState + tbr_read(&br, eO.nbBits);
-            }
-            const int slot = nread & (SEQ_AHEAD - 1);
-            ring[slot].ll = ll; ring[slot].ml = ml; ring[slot].md = md;
-            vpos += ll;
-            if (md <= vpos && vpos <= (size_t)isize) {
-                /* two lines: most matches straddle a line boundary */
-                LZ6SEQ_PREFETCH(ostart + (vpos - md));
-                LZ6SEQ_PREFETCH(ostart + (vpos - md) + 64);
-            }
-            vpos += ml;
-            nread++;
-            if (ml == 0 || nread == sc) done_read = 1;
-            continue;
-        }
-        if (nexec == nread) break;
-
-        /* ---- stage B: execute sequence `nexec` ---- */
-        const int slot = nexec & (SEQ_AHEAD - 1);
-        const size_t ll = ring[slot].ll, ml = ring[slot].ml, md = ring[slot].md;
-        nexec++;
-
-        /* literals */
-        if ((size_t)(lit_end - lit_ptr) < ll || (size_t)(oend - o) < ll) goto fail;
-        if ((size_t)(oend - o) >= ll + 16 && (size_t)(lit_hard - lit_ptr) >= ll + 16) {
-            uint8_t* d = o;
-            const uint8_t* s = lit_ptr;
-            uint8_t* const de = o + ll;
-            do { memcpy(d, s, 16); d += 16; s += 16; } while (d < de);
-        } else {
-            memcpy(o, lit_ptr, ll);
-        }
-        o += ll;
-        lit_ptr += ll;
-        if (ml == 0) break;
-
-        /* match */
-        if (md < 1 || md > (size_t)(o - ostart) || (size_t)(oend - o) < ml) goto fail;
-        const uint8_t* m = o - md;
-        if ((size_t)(oend - o) >= ml + 16) {
-            /* wide copy: may write up to 15 bytes past the match end, all
-             * inside the output and overwritten by what follows */
-            uint8_t* d = o;
-            uint8_t* const de = o + ml;
-            if (md >= 16) {
-                do { memcpy(d, m, 16); d += 16; m += 16; } while (d < de);
-            } else {
-                if (md < 8) {
-                    /* spread the first 8 bytes so the source then trails
-                     * the cursor by >= 8 (zstd's overlapCopy8) */
-                    static const unsigned dec32[8] = { 0, 1, 2, 1, 4, 4, 4, 4 };
-                    static const unsigned dec64[8] = { 8, 8, 8, 7, 8, 9, 10, 11 };
-                    d[0] = m[0]; d[1] = m[1]; d[2] = m[2]; d[3] = m[3];
-                    m += dec32[md];
-                    memcpy(d + 4, m, 4);
-                    m -= dec64[md];
-                } else {
-                    memcpy(d, m, 8);
-                }
-                d += 8; m += 8;
-                while (d < de) { memcpy(d, m, 8); d += 8; m += 8; }
-            }
-        } else if (md == 1) {
-            memset(o, o[-1], ml);
-        } else if (md >= ml) {
-            memcpy(o, m, ml);
-        } else {
-            memcpy(o, m, md);
-            size_t filled = md;
-            while (filled + filled <= ml) {
-                memcpy(o + filled, o, filled);
-                filled += filled;
-            }
-            if (filled < ml) memcpy(o + filled, o, ml - filled);
-        }
-        o += ml;
-    }
+    /* Stage A reads sequence `nread` (and sets done_read after the last
+     * one); stage B executes sequence `nexec`. Steady state runs one of
+     * each per iteration with no scheduling branch (zstd's prefetch loop):
+     * fill the ring, then A+B, then drain. */
+#define LZ6SEQ_STAGE_A do { \
+    /* ---- stage A: read sequence `nread` ---- */                                        \
+    const seq_dentry eL = dLL[sLL], eM = dML[sML], eO = dOF[sOF];                         \
+    const int more = nread + 1 < sc;                                                      \
+    /* the whole sequence's bits are known from the three entries:                        \
+     * one refill covers them unless they exceed 56 (rare). A                             \
+     * literals-only sequence (ml symbol 0) has no offset bits; its                       \
+     * of symbol is code 0 in a valid stream, nbExtra 0. */                               \
+    const unsigned need = (unsigned)eO.nbExtra + eM.nbExtra + eL.nbExtra                  \
+                        + (more ? (unsigned)eL.nbBits + eM.nbBits + eO.nbBits : 0u);      \
+    const int split = need > 56;                                                          \
+    tbr_reload_fast(&br);                                                                 \
+    size_t ml = 0, md = 0;                                                                \
+    if (eM.base) {   /* ML_base >= 3: a match */                                          \
+        if (!(eO.base & SEQ_REP)) {                                                       \
+            md = (size_t)eO.base + (tbr_read(&br, eO.nbExtra) << OF_LOW);                 \
+            if (md != (size_t)rp[0]) { rp[2] = rp[1]; rp[1] = rp[0]; rp[0] = (int)md; }   \
+            if (split) tbr_reload(&br);                                                   \
+        } else {                                                                          \
+            const unsigned ri = eO.base & 3u;   /* <= 2: the header caps the alphabet */  \
+            md = (size_t)rp[ri];                                                          \
+            if (ri > 0) {                                                                 \
+                int t = rp[ri];                                                           \
+                for (unsigned k = ri; k > 0; k--) rp[k] = rp[k-1];                        \
+                rp[0] = t;                                                                \
+            }                                                                             \
+        }                                                                                 \
+        ml = (size_t)eM.base + tbr_read(&br, eM.nbExtra);                                 \
+    }                                                                                     \
+    size_t ll = (size_t)eL.base + tbr_read(&br, eL.nbExtra);                              \
+    if (more) {                                                                           \
+        if (split) tbr_reload(&br);                                                       \
+        sLL = eL.next + tbr_read(&br, eL.nbBits);                                         \
+        sML = eM.next + tbr_read(&br, eM.nbBits);                                         \
+        sOF = eO.next + tbr_read(&br, eO.nbBits);                                         \
+    }                                                                                     \
+    const int slot = nread & (SEQ_AHEAD - 1);                                             \
+    ring[slot].ll = ll; ring[slot].ml = ml; ring[slot].md = md;                           \
+    vpos += ll;                                                                           \
+    if (md <= vpos && vpos <= (size_t)isize) {                                            \
+        /* two lines: most matches straddle a line boundary */                            \
+        LZ6SEQ_PREFETCH(ostart + (vpos - md));                                            \
+        LZ6SEQ_PREFETCH(ostart + (vpos - md) + 64);                                       \
+    }                                                                                     \
+    vpos += ml;                                                                           \
+    nread++;                                                                              \
+    if (ml == 0 || nread == sc) done_read = 1;                                            \
+} while (0)
+#define LZ6SEQ_STAGE_B do { \
+    /* ---- stage B: execute sequence `nexec` ---- */                                \
+    const int slot = nexec & (SEQ_AHEAD - 1);                                        \
+    const size_t ll = ring[slot].ll, ml = ring[slot].ml, md = ring[slot].md;         \
+    nexec++;                                                                         \
+                                                                                     \
+    /* literals */                                                                   \
+    if ((size_t)(lit_end - lit_ptr) < ll || (size_t)(oend - o) < ll) goto fail;      \
+    if ((size_t)(oend - o) >= ll + 16 && (size_t)(lit_hard - lit_ptr) >= ll + 16) {  \
+        uint8_t* d = o;                                                              \
+        const uint8_t* s = lit_ptr;                                                  \
+        uint8_t* const de = o + ll;                                                  \
+        do { memcpy(d, s, 16); d += 16; s += 16; } while (d < de);                   \
+    } else {                                                                         \
+        memcpy(o, lit_ptr, ll);                                                      \
+    }                                                                                \
+    o += ll;                                                                         \
+    lit_ptr += ll;                                                                   \
+    if (ml == 0) goto seq_done;   /* the literals-only last sequence */              \
+                                                                                     \
+    /* match */                                                                      \
+    if (md < 1 || md > (size_t)(o - ostart) || (size_t)(oend - o) < ml) goto fail;   \
+    const uint8_t* m = o - md;                                                       \
+    if ((size_t)(oend - o) >= ml + 16) {                                             \
+        /* wide copy: may write up to 15 bytes past the match end, all               \
+         * inside the output and overwritten by what follows */                      \
+        uint8_t* d = o;                                                              \
+        uint8_t* const de = o + ml;                                                  \
+        if (md >= 16) {                                                              \
+            do { memcpy(d, m, 16); d += 16; m += 16; } while (d < de);               \
+        } else {                                                                     \
+            if (md < 8) {                                                            \
+                /* spread the first 8 bytes so the source then trails                \
+                 * the cursor by >= 8 (zstd's overlapCopy8) */                       \
+                static const unsigned dec32[8] = { 0, 1, 2, 1, 4, 4, 4, 4 };         \
+                static const unsigned dec64[8] = { 8, 8, 8, 7, 8, 9, 10, 11 };       \
+                d[0] = m[0]; d[1] = m[1]; d[2] = m[2]; d[3] = m[3];                  \
+                m += dec32[md];                                                      \
+                memcpy(d + 4, m, 4);                                                 \
+                m -= dec64[md];                                                      \
+            } else {                                                                 \
+                memcpy(d, m, 8);                                                     \
+            }                                                                        \
+            d += 8; m += 8;                                                          \
+            while (d < de) { memcpy(d, m, 8); d += 8; m += 8; }                      \
+        }                                                                            \
+    } else if (md == 1) {                                                            \
+        memset(o, o[-1], ml);                                                        \
+    } else if (md >= ml) {                                                           \
+        memcpy(o, m, ml);                                                            \
+    } else {                                                                         \
+        memcpy(o, m, md);                                                            \
+        size_t filled = md;                                                          \
+        while (filled + filled <= ml) {                                              \
+            memcpy(o + filled, o, filled);                                           \
+            filled += filled;                                                        \
+        }                                                                            \
+        if (filled < ml) memcpy(o + filled, o, ml - filled);                         \
+    }                                                                                \
+    o += ml;                                                                         \
+} while (0)
+    while (!done_read && nread < SEQ_AHEAD - 1) LZ6SEQ_STAGE_A;   /* A then B keeps <= SEQ_AHEAD in flight */
+    while (!done_read) { LZ6SEQ_STAGE_A; LZ6SEQ_STAGE_B; }
+    while (nexec < nread) LZ6SEQ_STAGE_B;
+seq_done:
+#undef LZ6SEQ_STAGE_A
+#undef LZ6SEQ_STAGE_B
     if (sc > 0 && !tbr_exact(&br)) goto fail;
     size_t op = (size_t)(o - ostart);
 
