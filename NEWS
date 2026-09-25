@@ -1,4 +1,4 @@
-v1.6.7-pre (unreleased)
+v1.6.7-pre
 - levels/encode: L3-L5 use a new row-hash match finder (LZ6HC_row, zstd
   1.5-style: rows of 16 positions with 8-bit tags compared at once, SSE2
   or portable SWAR; prefetch 8 positions ahead; rep0-first lazy parser,
