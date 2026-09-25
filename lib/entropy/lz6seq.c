@@ -26,7 +26,25 @@
 /* ---- symbol tables (match ozip's ozf3.c) ---- */
 #define LL_CODES 36
 #define ML_CODES 36
-#define OF_CODES 25   /* offset buckets: floor(log2(offset)) 0..24 */
+/* offsets: values below 2^OF_DIRECT get one code each; above, bucket
+ * b = floor(log2(offset)) is split by the offset's low OF_LOW bits into
+ * 2^OF_LOW codes, and the bits between the leading one and the low bits
+ * are raw. The low bits carry the alignment of structured data (record
+ * strides, 4/8-byte fields: mozilla, sao, osdb), which a raw residual
+ * throws away; in the symbol they cost nothing extra to decode.
+ * Code c: offset = OF_base[c] + (raw(OF_extra[c]) << OF_LOW). */
+#ifndef OF_DIRECT
+#define OF_DIRECT 5
+#endif
+#ifndef OF_LOW
+#define OF_LOW 3
+#endif
+#define OF_BUCKETS 25
+#define OF_CODES ((1 << OF_DIRECT) - 1 + (OF_BUCKETS - OF_DIRECT) * (1 << OF_LOW))
+#define TANS_MAX_SYMS 256   /* the header stores maxSym in one byte */
+#if OF_CODES + 3 > TANS_MAX_SYMS || OF_LOW > OF_DIRECT
+#error "offset alphabet too large"
+#endif
 
 static const int LL_extra[LL_CODES] = {
  0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,
@@ -46,19 +64,17 @@ static const int ML_base[ML_CODES] = {
  19,21,23,25,27,31,35,39,43,51,59,67,83,99,115,131,
  163,195,227,259
 };
-static const int OF_base[OF_CODES] = {
- 1,2,4,8,16,32,64,128,256,512,1024,2048,4096,8192,16384,32768,
- 65536,131072,262144,524288,1048576,2097152,4194304,8388608,16777216
-};
+static int OF_base[OF_CODES];
+static uint8_t OF_extra[OF_CODES];
+static int OF_first[OF_BUCKETS];   /* first code of each bucket */
 
 static int ll_to_code(int v) { for (int c=LL_CODES-1;c>=0;c--) if(v>=LL_base[c])return c; return 0; }
 static int ml_to_code(int v) { for (int c=ML_CODES-1;c>=0;c--) if(v>=ML_base[c])return c; return 0; }
-static int of_to_code(int v) { for (int c=OF_CODES-1;c>=0;c--) if(v>=OF_base[c])return c; return 0; }
 
 /* Direct-lookup fast paths for the per-sequence symbol coding (these run
  * 3x per sequence and the linear scans were ~10% of the whole bench).
  * ll/ml values beyond the table ranges fall back to the linear scan;
- * of_to_code(v) == floor(log2(v)) for v >= 1, computed with CLZ. */
+ * of_code maps an offset (>= 1) to its code via the bucket (CLZ). */
 #define LL_TAB_MAX 512
 #define ML_TAB_MAX 1024
 static uint8_t ll_tab[LL_TAB_MAX + 1];
@@ -68,7 +84,14 @@ static int code_tabs_ready = 0;
 static void code_tabs_init(void) {
     for (int v = 0; v <= LL_TAB_MAX; v++) ll_tab[v] = (uint8_t)ll_to_code(v);
     for (int v = 0; v <= ML_TAB_MAX; v++) ml_tab[v] = (uint8_t)ml_to_code(v);
-    (void)of_to_code;   /* fallback path, unused when CLZ is available */
+    for (int b = 0, c = 0; b < OF_BUCKETS; b++) {
+        const int direct = b < OF_DIRECT;
+        OF_first[b] = c;
+        for (int j = 0; j < (1 << (direct ? b : OF_LOW)); j++, c++) {
+            OF_base[c] = (1 << b) + j;
+            OF_extra[c] = (uint8_t)(direct ? 0 : b - OF_LOW);
+        }
+    }
     code_tabs_ready = 1;
 }
 
@@ -80,13 +103,19 @@ static inline int ml_code(int v) {
     if (v <= ML_TAB_MAX) return ml_tab[v];
     return ml_to_code(v);
 }
-static inline int of_code(int v) {
+static inline int of_bucket(int v) {
 #if defined(__GNUC__)
     /* of >= 1 always (match offsets): floor(log2(v)) == 31 - clz(v) */
     return 31 - __builtin_clz((unsigned)v);
 #else
-    return of_to_code(v);
+    int b = 0;
+    while ((v >> b) > 1) b++;
+    return b;
 #endif
+}
+static inline int of_code(int v) {
+    if (v < (1 << OF_DIRECT)) return v - 1;
+    return OF_first[of_bucket(v)] + (v & ((1 << OF_LOW) - 1));
 }
 
 /* ---- glibc random() TYPE_3 (additive, DEG=31) reimplementation ----
@@ -287,7 +316,7 @@ static void build_seq_price(const seq_collector_t* sc, const uint8_t* src, LZ6HC
         int ri = -1;
         if (of == rp[0]) ri = 0; else if (of == rp[1]) ri = 1; else if (of == rp[2]) ri = 2;
         if (ri < 0) {
-            ofc[of_to_code(of)]++;
+            ofc[of_code(of)]++;
             if (of != rp[0]) { rp[2] = rp[1]; rp[1] = rp[0]; rp[0] = of; }
         } else {
             ofc[OF_CODES + ri]++;
@@ -303,7 +332,20 @@ static void build_seq_price(const seq_collector_t* sc, const uint8_t* src, LZ6HC
     if (sp->lit < 8) sp->lit = 8;
     size_t nof = 0;
     for (int c = 0; c < OF_CODES + 3; c++) nof += ofc[c];
-    for (int b = 0; b < OF_CODES; b++) sp->of[b] = SP_COST(ofc[b], nof, OF_CODES + 3) + 16u * (unsigned)b;
+    /* the parser prices a new offset by (bucket, low 3 bits): the
+     * frequency-weighted cost of the codes in that cell plus raw bits */
+    for (int b = 0; b < OF_BUCKETS; b++)
+        for (int l = 0; l < 8; l++) {
+            double w = 0, sum = 0;
+            for (int v = 0; v < (1 << (b < OF_DIRECT ? b : OF_LOW)); v++) {
+                const int c = OF_first[b] + v;
+                if ((OF_base[c] & 7) != l) continue;   /* b < 3: the offset itself */
+                const double f = (double)ofc[c] + 0.01;
+                w += f;
+                sum += f * (SP_COST(ofc[c], nof, OF_CODES + 3) + 16.0 * OF_extra[c]);
+            }
+            sp->of[b * 8 + l] = w > 0 ? (unsigned)(sum / w + 0.5) : 16u * (unsigned)(b + 4);
+        }
     sp->rep0 = SP_COST(ofc[OF_CODES], nof, OF_CODES + 3);
     for (int n = 0; n <= LZ6HC_SP_LEN; n++) {
         const int c = ll_to_code(n);
@@ -333,7 +375,7 @@ typedef struct { int32_t deltaFindState; uint32_t deltaNbBits; } tans_symtt;
 typedef struct {
     int log;
     uint16_t stateTable[1 << TANS_MAX_LOG];
-    tans_symtt tt[64];
+    tans_symtt tt[TANS_MAX_SYMS];
 } tans_ctable;
 
 static inline unsigned tans_highbit(uint32_t v) { return 31u - (unsigned)__builtin_clz(v); }
@@ -383,7 +425,7 @@ static void tans_build_ctable(tans_ctable* ct, const uint16_t* norm, int maxSym,
 {
     const unsigned size = 1u << log;
     uint8_t sym_at[1 << TANS_MAX_LOG];
-    unsigned cumul[65];
+    unsigned cumul[TANS_MAX_SYMS + 1];
     tans_spread(norm, maxSym, log, sym_at);
     cumul[0] = 0;
     for (int s = 0; s <= maxSym; s++) cumul[s + 1] = cumul[s] + norm[s];
@@ -412,7 +454,7 @@ static int tans_build_dtable(tans_dentry* dt, const uint16_t* norm, int maxSym, 
 {
     const unsigned size = 1u << log;
     uint8_t sym_at[1 << TANS_MAX_LOG];
-    uint32_t next[64];
+    uint32_t next[TANS_MAX_SYMS];
     tans_spread(norm, maxSym, log, sym_at);
     for (int s = 0; s <= maxSym; s++) next[s] = norm[s];
     for (unsigned u = 0; u < size; u++) {
@@ -426,13 +468,24 @@ static int tans_build_dtable(tans_dentry* dt, const uint16_t* norm, int maxSym, 
     return 1;
 }
 
-/* table header: [log:1][maxSym:1][norm:2 x (maxSym+1)] */
+/* table header: [log:1][maxSym:1] then the normalised counts 0..maxSym,
+ * each a varint (v < 128: one byte; else 0x80 | (v & 127), v >> 7); a zero
+ * count is followed by one byte of further zeros (0..255) */
 static size_t tans_write_header(uint8_t* out, const uint16_t* norm, int maxSym, int log)
 {
-    out[0] = (uint8_t)log;
-    out[1] = (uint8_t)maxSym;
-    for (int s = 0; s <= maxSym; s++) { out[2 + 2*s] = (uint8_t)norm[s]; out[3 + 2*s] = (uint8_t)(norm[s] >> 8); }
-    return 2 + 2 * (size_t)(maxSym + 1);
+    uint8_t* p = out;
+    *p++ = (uint8_t)log;
+    *p++ = (uint8_t)maxSym;
+    for (int s = 0; s <= maxSym; s++) {
+        const unsigned v = norm[s];
+        if (v == 0) {
+            int run = 0;
+            while (s + 1 <= maxSym && norm[s + 1] == 0 && run < 255) { s++; run++; }
+            *p++ = 0; *p++ = (uint8_t)run;
+        } else if (v < 128) *p++ = (uint8_t)v;
+        else { *p++ = (uint8_t)(0x80 | (v & 127)); *p++ = (uint8_t)(v >> 7); }
+    }
+    return (size_t)(p - out);
 }
 
 static size_t tans_read_header(const uint8_t* in, size_t len, int alphaMax,
@@ -441,13 +494,29 @@ static size_t tans_read_header(const uint8_t* in, size_t len, int alphaMax,
     if (len < 2) return 0;
     const int lg = in[0], ms = in[1];
     if (lg < TANS_MIN_LOG || lg > TANS_MAX_LOG || ms > alphaMax) return 0;
-    const size_t hl = 2 + 2 * (size_t)(ms + 1);
-    if (len < hl) return 0;
+    size_t q = 2;
     unsigned sum = 0;
-    for (int s = 0; s <= ms; s++) { norm[s] = (uint16_t)(in[2 + 2*s] | (in[3 + 2*s] << 8)); sum += norm[s]; }
+    for (int s = 0; s <= ms; s++) {
+        if (q >= len) return 0;
+        unsigned v = in[q++];
+        if (v == 0) {
+            if (q >= len) return 0;
+            const int run = in[q++];
+            if (s + run > ms) return 0;
+            for (int k = 0; k <= run; k++) norm[s + k] = 0;
+            s += run;
+            continue;
+        }
+        if (v & 0x80) {
+            if (q >= len) return 0;
+            v = (v & 127) | ((unsigned)in[q++] << 7);
+        }
+        if (v > (1u << lg)) return 0;
+        norm[s] = (uint16_t)v; sum += v;
+    }
     if (sum != (1u << lg)) return 0;
     *maxSym = ms; *log = lg;
-    return hl;
+    return q;
 }
 
 /* forward bit writer for a backward-read stream: LSB-first, closed by a
@@ -648,6 +717,18 @@ static size_t compress_normal(const char* src, size_t srcSize,
     free(hc);              /* free the state struct itself */
     if (rc) { free(sc.lits); free(sc.lit_lens); free(sc.match_lens); free(sc.offsets); return 0; }
     fill_literals(&sc);
+#ifdef LZ6_SEQ_DUMP
+    if (getenv("LZ6_SEQ_DUMP")) {   /* experiment hook: raw (ll, ml, offset) triples */
+        FILE* df = fopen(getenv("LZ6_SEQ_DUMP"), "ab");
+        if (df) {
+            for (size_t i = 0; i < sc.n; i++) {
+                int32_t t[3] = { sc.lit_lens[i], sc.match_lens[i], sc.offsets[i] };
+                fwrite(t, sizeof(t), 1, df);
+            }
+            fclose(df);
+        }
+    }
+#endif
     int sc_cnt = (int)sc.n;
 
     /* Phase 2: build the block into a temp buffer (so we can fall back
@@ -984,8 +1065,8 @@ static size_t compress_normal(const char* src, size_t srcSize,
     }
 
     /* sequence section: three tANS tables, then ONE backward bitstream with
-     * the ll/ml/of states and every extra bit (offsets are bucket + raw
-     * bits, zstd style). Written last sequence first so the decoder reads
+     * the ll/ml/of states and every extra bit (offsets: a code for the
+     * small value or the bucket + low 3 bits, plus raw middle bits). Written last sequence first so the decoder reads
      * sequence 0 first; within a sequence the decoder reads the offset
      * bits, ml bits, ll bits, then the ll/ml/of state updates.
      *   [ll table][ml table][of table][bits len:4][8 pad bytes][bits] */
@@ -994,10 +1075,10 @@ static size_t compress_normal(const char* src, size_t srcSize,
     if (sc_cnt > 0) {
         static const int alpha[3] = { LL_CODES - 1, ML_CODES, OF_CODES + 2 };
         const char* envn[3] = { "LZ6_TLOG_LL", "LZ6_TLOG_ML", "LZ6_TLOG_OF" };
-        static const int deflog[3] = { 11, 11, 10 };
+        static const int deflog[3] = { 11, 11, 11 };
         unsigned* syms[3] = { ll_syms, ml_syms, of_syms };
         for (int t = 0; t < 3; t++) {
-            unsigned cnt[64];
+            unsigned cnt[TANS_MAX_SYMS];
             memset(cnt, 0, sizeof(cnt));
             for (int i = 0; i < sc_cnt; i++) cnt[syms[t][i]]++;
             int ms = 0;
@@ -1007,10 +1088,10 @@ static size_t compress_normal(const char* src, size_t srcSize,
             if (ev) lg = atoi(ev);
             if (lg < TANS_MIN_LOG) lg = TANS_MIN_LOG;
             if (lg > TANS_MAX_LOG) lg = TANS_MAX_LOG;
-            uint16_t norm[64];
+            uint16_t norm[TANS_MAX_SYMS];
             if (!tans_normalize(cnt, ms, lg, norm)) goto oom;
             tans_build_ctable(&cts[t], norm, ms, lg);
-            if ((size_t)(blk_cap - (size_t)(p - blk)) < 2 + 2 * 64) goto oom;
+            if ((size_t)(blk_cap - (size_t)(p - blk)) < 2 + 2 * TANS_MAX_SYMS) goto oom;
             p += tans_write_header(p, norm, ms, lg);
         }
         sz_tabs = (size_t)(p - blk) - sz_tabs_start;
@@ -1043,7 +1124,7 @@ static size_t compress_normal(const char* src, size_t srcSize,
                 tbw_put(&w, (uint32_t)(sc.match_lens[n] - ML_base[mr]), (unsigned)ML_extra[mr]);
                 tbw_flush(&w);
                 const unsigned oc = of_syms[n];
-                if (oc < OF_CODES) { tbw_put(&w, (uint32_t)(sc.offsets[n] - OF_base[oc]), oc); tbw_flush(&w); }
+                if (oc < OF_CODES) { tbw_put(&w, (uint32_t)(sc.offsets[n] - OF_base[oc]) >> OF_LOW, OF_extra[oc]); tbw_flush(&w); }
             } else tbw_flush(&w);
         }
         tans_cflush(&sML, &cts[1], &w);
@@ -1724,7 +1805,7 @@ LZ6SEQ_FORCE_INLINE size_t decode_normal_body(const char* src, size_t srcSize,
         dts = (tans_dentry*)malloc(3 * ((size_t)1 << TANS_MAX_LOG) * sizeof(tans_dentry));
         if (!dts) goto fail;
         for (int t = 0; t < 3; t++) {
-            uint16_t norm[64];
+            uint16_t norm[TANS_MAX_SYMS];
             int ms, lg;
             size_t hl = tans_read_header(p, (size_t)(end - p), alpha[t], norm, &ms, &lg);
             if (hl == 0) goto fail;
@@ -1787,7 +1868,7 @@ LZ6SEQ_FORCE_INLINE size_t decode_normal_body(const char* src, size_t srcSize,
             const unsigned c0 = eL.sym, c1 = eM.sym, osym = eO.sym;
             const unsigned lx = (unsigned)LL_extra[c0];
             const unsigned mx = c1 > 0 ? (unsigned)ML_extra[c1 - 1] : 0;
-            const unsigned ox = (c1 > 0 && osym < OF_CODES) ? osym : 0;
+            const unsigned ox = (c1 > 0 && osym < OF_CODES) ? OF_extra[osym] : 0;
             const int more = nread + 1 < sc;
             /* the whole sequence's bits are known from the three entries:
              * one refill covers them unless they exceed 56 (rare) */
@@ -1796,10 +1877,10 @@ LZ6SEQ_FORCE_INLINE size_t decode_normal_body(const char* src, size_t srcSize,
             tbr_reload_fast(&br);
             size_t ml = 0, md = 0;
             if (c1 > 0) {
-                /* offset symbol: buckets 0..OF_CODES-1 (bucket + raw bits),
-                 * rep stack entries above */
+                /* offset symbol: codes 0..OF_CODES-1 (see OF_DIRECT /
+                 * OF_LOW), rep stack entries above */
                 if (osym < OF_CODES) {
-                    md = (size_t)OF_base[osym] + tbr_read(&br, ox);
+                    md = (size_t)OF_base[osym] + (tbr_read(&br, ox) << OF_LOW);
                     if (md != (size_t)rp[0]) { rp[2] = rp[1]; rp[1] = rp[0]; rp[0] = (int)md; }
                     if (split) tbr_reload(&br);
                 } else {
@@ -1943,6 +2024,7 @@ static size_t decode_normal(const char* src, size_t srcSize, char* dst, size_t d
 size_t LZ6_decompress_seq(const char* src, size_t srcSize,
                           char* dst, size_t dstCap) {
     const uint8_t* p = (const uint8_t*)src;
+    if (!code_tabs_ready) code_tabs_init();
     if (srcSize < 5) return 0;
     int flags = p[0];
     if (flags & 0x08) {  /* byte-plane block */

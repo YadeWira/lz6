@@ -118,15 +118,16 @@ typedef int (*LZ6HC_seq_cb)(void* opaque, size_t lit_len, size_t match_len, size
 
 /* Entropy-aware prices for the optimal parser (seq path). Units are 1/16
  * bit. ll[n] / ml[n]: cost of coding a literal length n / match length n
- * (symbol + extra bits), saturating at LZ6HC_SP_LEN; of[b]: new offset in
- * bucket b (symbol + b raw bits); rep0: a rep-stack hit; lit: one literal.
+ * (symbol + extra bits), saturating at LZ6HC_SP_LEN; of[b*8 + (offset & 7)]:
+ * new offset in bucket b = floor(log2(offset)) with those low 3 bits (symbol
+ * + raw bits); rep0: a rep-stack hit; lit: one literal.
  * Installed with LZ6HC_setSeqPrice() before LZ6HC_compress_sequences();
  * NULL (the default) keeps the frame codec's byte-codeword prices. */
 #define LZ6HC_SP_LEN 4200
 typedef struct LZ6HC_seqPrice_s {
     unsigned lit;
     unsigned rep0;
-    unsigned of[25];
+    unsigned of[25 * 8];
     unsigned ll[LZ6HC_SP_LEN + 1];
     unsigned ml[LZ6HC_SP_LEN + 1];
 } LZ6HC_seqPrice;

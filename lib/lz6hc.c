@@ -1227,7 +1227,7 @@ static inline size_t LZ6HC_sp_price(const LZ6HC_seqPrice* sp, size_t litlen, siz
 {
     unsigned oc;
     if (offset == 0) oc = sp->rep0;
-    else { unsigned b = 31u - (unsigned)__builtin_clz((unsigned)offset); oc = sp->of[b < 25 ? b : 24]; }
+    else { unsigned b = 31u - (unsigned)__builtin_clz((unsigned)offset); oc = sp->of[(b < 25 ? b : 24) * 8 + (offset & 7)]; }
     return (size_t)sp->lit * litlen + LZ6HC_spLL(sp, litlen) + LZ6HC_spML(sp, mlen3 + MINMATCH) + oc;
 }
 #define OPT_PRICE(l, o, m3) (ctx->seqPrice ? LZ6HC_sp_price(ctx->seqPrice, (l), (o), (m3)) : LZ6HC_get_price((l), (o), (m3)))
