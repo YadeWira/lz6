@@ -7,7 +7,9 @@ v1.6.7-pre
   L3 29.14% (30.71), L4 28.50% (28.87), L5 28.06% (28.32); AIT L3-L5
   -0.1..-1.5%. Encode, Silesia subset: L3 57, L4 45, L5 38 MB/s (were
   67, 22, 21). The price pre-parse of L8-L15 got its own parameter row,
-  so those levels are byte-identical to before.
+  so those levels no longer depend on L3 (byte-identical to the L3-L7
+  retune below; vs v1.6.6-pre they moved by <= 0.1 point, from the smaller
+  decode tables and that retune's pre-parse).
   Table sizing matters: sized to the input (up to 2^24 slots) the rows
   ran at 22 MB/s whatever the search depth, every insert a cache miss;
   capped at 2^22-2^23 slots and prefetched, 45-58 MB/s.
