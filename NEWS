@@ -1,4 +1,18 @@
 v1.6.7-pre (unreleased)
+- levels: L3-L7 retuned from a sweep of the existing parsers. L3 moves
+  from the fast parser to price_fast; L4-L7 use lowest_price with 6-byte
+  hashes (was 4) and 1/2/4/8 candidates, and a 2^15 base hash (the
+  density-aware widening sizes it for large inputs; the old 2^23 rows
+  zeroed 32 MB even for small ones). Every level is smaller and no slower
+  than before. Full Silesia L3 31.75% -> 30.71%, L4 30.04 -> 28.87,
+  L5 29.26 -> 28.32, L6 28.89 -> 27.90, L7 28.19 -> 27.60; AIT L3-L7
+  -0.4..-0.9%. Encode (one core, Silesia subset) L1-L8: 95 88 67 22 21 17
+  14 6.2 MB/s.
+  L3 is also the optimal levels' price pre-parse: Silesia L8-L12 gain
+  ~0.1 point, L15 unchanged (25.45%); AIT L8-L15 lose 0.03-0.05. A
+  level-4 pre-parse was about as good but makes L8 ~17% slower.
+- fixed (experiment hook only): LZ6_SEQPARAMS with H3=0 on the chain
+  strategies shifted a 32-bit hash by 32 and wrote outside hashTable3.
 - perf/seq decode: -5% cycles (Silesia L2 8.27 -> 7.8 cyc/B, L12 6.87 ->
   6.53). Sequence decode entries carry the value base and extra-bit count
   (zstd's seqSymbol), so ll/ml/offset need no per-symbol table lookups or

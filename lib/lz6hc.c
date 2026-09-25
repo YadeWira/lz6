@@ -129,6 +129,9 @@ static int LZ6_alloc_mem_HC_wl(LZ6HC_Data_Structure* ctx, int compressionLevel,
             ctx->params.hashLog = h; ctx->params.hashLog3 = h3; ctx->params.searchNum = sn;
             ctx->params.searchLength = sl; ctx->params.sufficientLength = suf;
             ctx->params.fullSearch = fs; ctx->params.strategy = (LZ6HC_strategy)st;
+            /* the chain strategies insert every position into hashTable3:
+             * a 0-bit table would shift by 32 (every real table row has >= 13) */
+            if (ctx->params.strategy >= LZ6HC_price_fast && ctx->params.hashLog3 < 8) ctx->params.hashLog3 = 8;
         }
     }
 #endif

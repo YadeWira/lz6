@@ -371,17 +371,21 @@ static const LZ6HC_parameters LZ6HC_seqParameters[LZ6HC_MAX_CLEVEL+1] =
      * optimal parser. Levels 13-15 also re-parse with refined prices
      * (seq_refine_passes in lz6seq.c): past ~64 searches the depth stops
      * helping (256..1024 searches gave the same size) and the refinement
-     * passes are what move the ratio. Full Silesia, L1 -> L15: 33.52% ->
-     * 25.72%; AIT 42.31% -> 38.79%; every step smaller than the one before.
+     * passes are what move the ratio. 2026-09-25: L3-L7 retuned from a
+     * sweep of the existing parsers (L3 price_fast; L4-L7 lowest_price
+     * with 6-byte hashes and 1/2/4/8 candidates: every level smaller and no
+     * slower than before). L3 is also the optimal levels' price pre-parse.
+     * Full Silesia, L1 -> L15: 33.43% -> 25.45%; AIT 42.40% -> 38.83%;
+     * every step smaller than the one before.
      * windLog, contentLog,  H, H3,  Snum, SL, SuffL, FS, Strategy                   subset ratio / MB/s */
     {        0,          0,  0,  0,     0,  0,     0,  0, LZ6HC_fast             }, // level 0 - never used
-    { MAXD_LOG,   MAXD_LOG, 13,  0,     4,  6,     0,  0, LZ6HC_fast             }, // level 1   33.45% / 106
-    { MAXD_LOG,   MAXD_LOG, 13,  0,     2,  6,     0,  0, LZ6HC_fast             }, // level 2   31.98% / 102
-    { MAXD_LOG,   MAXD_LOG, 13,  0,     1,  5,     0,  0, LZ6HC_fast             }, // level 3   31.52% / 89
-    { MAXD_LOG,   MAXD_LOG, 15, 13,     1,  4,     0,  0, LZ6HC_lowest_price     }, // level 4   29.83% / 27
-    { MAXD_LOG,   MAXD_LOG, 19, 16,     2,  4,     0,  0, LZ6HC_lowest_price     }, // level 5   28.90% / 25
-    { MAXD_LOG,   MAXD_LOG, 23, 16,     3,  4,     0,  0, LZ6HC_lowest_price     }, // level 6   28.47% / 22
-    { MAXD_LOG,   MAXD_LOG, 23, 16,     8,  4,     0,  0, LZ6HC_lowest_price     }, // level 7   27.74% / 17
+    { MAXD_LOG,   MAXD_LOG, 13,  0,     4,  6,     0,  0, LZ6HC_fast             }, // level 1   33.42% / 95
+    { MAXD_LOG,   MAXD_LOG, 13,  0,     2,  6,     0,  0, LZ6HC_fast             }, // level 2   31.95% / 88
+    { MAXD_LOG,   MAXD_LOG, 15, 13,     1,  6,     0,  0, LZ6HC_price_fast       }, // level 3   30.38% / 67
+    { MAXD_LOG,   MAXD_LOG, 15, 13,     1,  6,     0,  0, LZ6HC_lowest_price     }, // level 4   28.44% / 22
+    { MAXD_LOG,   MAXD_LOG, 15, 13,     2,  6,     0,  0, LZ6HC_lowest_price     }, // level 5   27.84% / 21
+    { MAXD_LOG,   MAXD_LOG, 15, 13,     4,  6,     0,  0, LZ6HC_lowest_price     }, // level 6   27.44% / 17
+    { MAXD_LOG,   MAXD_LOG, 15, 13,     8,  6,     0,  0, LZ6HC_lowest_price     }, // level 7   27.19% / 14
     { MAXD_LOG, MAXD_LOG+1, 23, 16,     8,  4,    32,  0, LZ6HC_optimal_price_bt }, // level 8   27.15% / 8.5
     { MAXD_LOG, MAXD_LOG+1, 23, 16,     8,  4,    32,  1, LZ6HC_optimal_price_bt }, // level 9   26.78% / 6.0
     { MAXD_LOG, MAXD_LOG+1, 23, 16,    16,  4,    48,  1, LZ6HC_optimal_price_bt }, // level 10  25.74% / 4.4
