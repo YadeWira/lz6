@@ -115,11 +115,13 @@ static int LZ6_alloc_mem_HC_wl(LZ6HC_Data_Structure* ctx, int compressionLevel,
 {
     ctx->compressionLevel = compressionLevel;
     ctx->seqPrice = NULL;
+    const int preparse = (compressionLevel == LZ6HC_SEQ_PRE_LEVEL && maxWindowLog >= 25);
     if (compressionLevel > g_maxCompressionLevel) ctx->compressionLevel = g_maxCompressionLevel;
     if (compressionLevel < 1) ctx->compressionLevel = LZ6HC_compressionLevel_default;
 
     /* maxWindowLog >= 25 is the seq-codec allocation (LZ6_alloc_mem_HC_seq) */
     ctx->params = (maxWindowLog >= 25 ? LZ6HC_seqParameters : LZ6HC_defaultParameters)[ctx->compressionLevel];
+    if (preparse) { ctx->params = LZ6HC_seqPreParameters; ctx->compressionLevel = 0; }
 #ifdef LZ6_SEQ_TUNING
     /* experiment hook: LZ6_SEQPARAMS_LEVEL=L LZ6_SEQPARAMS=H:H3:SN:SL:SUF:FS:STRAT */
     if (maxWindowLog >= 25 && getenv("LZ6_SEQPARAMS") && getenv("LZ6_SEQPARAMS_LEVEL")
@@ -2182,9 +2184,11 @@ static int LZ6HC_compress_fast (
  * bits), so a search compares all the row's tags at once (SWAR, portable)
  * and only verifies slots whose tag matches. One cache miss yields up to
  * 16 candidates, where a chain walk takes one miss per candidate.
- * Params: hashLog = log2 of the rows' total slots before input-size
- * scaling; searchLength = hashed bytes (4-7); searchNum = candidates
- * verified per search; fullSearch = lazy depth (0 greedy, 1 lazy, 2). */
+ * Params: sufficientLength = log2 cap on the rows' total slots (the rows
+ * scale with the input below it); hashLog only sizes the context's own
+ * hash table, unused here, so keep it small (it is zeroed per call);
+ * searchLength = hashed bytes (4-7); searchNum = candidates verified per
+ * search; fullSearch = lazy depth (0 greedy, 1 lazy, 2). */
 #define LZ6_ROW_LOG  4
 #define LZ6_ROW_SIZE (1u << LZ6_ROW_LOG)
 
@@ -2215,6 +2219,8 @@ FORCE_INLINE void LZ6HC_rowInsert(LZ6HC_rows* r, const BYTE* base, U32 idx)
     r->tag[row * LZ6_ROW_SIZE + slot] = t;
 }
 
+FORCE_INLINE U32 LZ6HC_highbit32(U32 v) { return 31u - (U32)__builtin_clz(v | 1u); }
+
 /* start the row fetch for a position we will search / insert soon */
 #define LZ6_ROW_AHEAD 8
 FORCE_INLINE void LZ6HC_rowPrefetch(const LZ6HC_rows* r, const BYTE* p)
@@ -2225,13 +2231,14 @@ FORCE_INLINE void LZ6HC_rowPrefetch(const LZ6HC_rows* r, const BYTE* p)
     LZ6_PREFETCH(r->head + row);
 }
 
-FORCE_INLINE void LZ6HC_rowUpdate(LZ6HC_rows* r, const BYTE* base, U32 target)
+FORCE_INLINE void LZ6HC_rowUpdate(LZ6HC_rows* r, const BYTE* base, U32 target, const BYTE* iLimit)
 {
     U32 idx = r->nextToUpdate;
     /* after a very long match, only index its tail (zstd caps it too) */
     if (target - idx > 384) idx = target - 96;
     for (; idx < target; idx++) {
-        LZ6HC_rowPrefetch(r, base + idx + LZ6_ROW_AHEAD);
+        /* the hash reads 8 bytes: prefetch only where they exist */
+        if (base + idx + LZ6_ROW_AHEAD + 8 <= iLimit) LZ6HC_rowPrefetch(r, base + idx + LZ6_ROW_AHEAD);
         LZ6HC_rowInsert(r, base, idx);
     }
     r->nextToUpdate = target;
@@ -2256,8 +2263,8 @@ FORCE_INLINE size_t LZ6HC_rowSearch(LZ6HC_Data_Structure* ctx, LZ6HC_rows* r,
     const U32 cur = (U32)(ip - base);
     const U32 maxDist = (1u << ctx->params.windowLog) - 1;
     const U32 low = (cur - ctx->dictLimit > maxDist) ? cur - maxDist : ctx->dictLimit;
-    LZ6HC_rowUpdate(r, base, cur);
-    LZ6HC_rowPrefetch(r, ip + LZ6_ROW_AHEAD);
+    LZ6HC_rowUpdate(r, base, cur, iLimit);
+    if (ip + LZ6_ROW_AHEAD + 8 <= iLimit) LZ6HC_rowPrefetch(r, ip + LZ6_ROW_AHEAD);
     const U64 h = LZ6HC_rowHash(ip, r->mls);
     const size_t row = (size_t)(h >> (64 - r->rowsLog));
     const BYTE t = (BYTE)(h >> (56 - r->rowsLog));
@@ -2276,6 +2283,7 @@ FORCE_INLINE size_t LZ6HC_rowSearch(LZ6HC_Data_Structure* ctx, LZ6HC_rows* r,
     mask = ((mask >> hd) | (mask << (LZ6_ROW_SIZE - hd))) & 0xFFFFu;
     U32 tries = ctx->params.searchNum ? ctx->params.searchNum : 1;
     size_t best = 0;
+    int bestGain = 0;
     while (mask && tries) {
         const U32 k = (U32)__builtin_ctz(mask);
         mask &= mask - 1;
@@ -2285,7 +2293,10 @@ FORCE_INLINE size_t LZ6HC_rowSearch(LZ6HC_Data_Structure* ctx, LZ6HC_rows* r,
         const BYTE* const mp = base + m;
         if (MEM_read32(mp) != MEM_read32(ip) || mp[best] != ip[best]) continue;
         const size_t l = MEM_count(ip + 4, mp + 4, iLimit) + 4;
-        if (l > best) { best = l; *off = cur - m; if (ip + l >= iLimit) break; }
+        /* by gain, not length: a slightly longer match much farther away
+         * costs more offset bits, and a cache miss per match to decode */
+        const int g = (int)(l * 4) - (int)LZ6HC_highbit32(cur - m);
+        if (g > bestGain || best == 0) { best = l; bestGain = g; *off = cur - m; if (ip + l >= iLimit) break; }
     }
     /* the row now owns ip too */
     LZ6HC_rowInsert(r, base, cur);
@@ -2293,7 +2304,6 @@ FORCE_INLINE size_t LZ6HC_rowSearch(LZ6HC_Data_Structure* ctx, LZ6HC_rows* r,
     return best;
 }
 
-FORCE_INLINE U32 LZ6HC_highbit32(U32 v) { return 31u - (U32)__builtin_clz(v | 1u); }
 
 static int LZ6HC_compress_row (
     LZ6HC_Data_Structure* ctx,
@@ -2319,7 +2329,10 @@ static int LZ6HC_compress_row (
      * outgrows the caches makes each insert a miss */
     LZ6HC_rows r;
     U32 slotsLog = LZ6HC_ceilLog2((size_t)inputSize) >= 2 ? LZ6HC_ceilLog2((size_t)inputSize) - 2 : 0;
-    if (slotsLog > ctx->params.hashLog) slotsLog = ctx->params.hashLog;
+    {
+        const U32 cap = ctx->params.sufficientLength ? ctx->params.sufficientLength : 20;
+        if (slotsLog > cap) slotsLog = cap;
+    }
     if (slotsLog > 24) slotsLog = 24;
     if (slotsLog < LZ6_ROW_LOG + 4) slotsLog = LZ6_ROW_LOG + 4;
     r.rowsLog = slotsLog - LZ6_ROW_LOG;

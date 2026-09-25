@@ -1,4 +1,22 @@
 v1.6.7-pre (unreleased)
+- levels/encode: L3-L5 use a new row-hash match finder (LZ6HC_row, zstd
+  1.5-style: rows of 16 positions with 8-bit tags compared at once, SSE2
+  or portable SWAR; prefetch 8 positions ahead; rep0-first lazy parser,
+  candidates ranked by 4*length - log2(offset)). Same or better ratio than
+  the chain parsers at up to 2x the speed. Full Silesia (was):
+  L3 29.14% (30.71), L4 28.50% (28.87), L5 28.06% (28.32); AIT L3-L5
+  -0.1..-1.5%. Encode, Silesia subset: L3 57, L4 45, L5 38 MB/s (were
+  67, 22, 21). The price pre-parse of L8-L15 got its own parameter row,
+  so those levels are byte-identical to before.
+  Table sizing matters: sized to the input (up to 2^24 slots) the rows
+  ran at 22 MB/s whatever the search depth, every insert a cache miss;
+  capped at 2^22-2^23 slots and prefetched, 45-58 MB/s.
+- perf/decode (L4-L7): Huffman now also wins near-ties against the
+  order-1 literal coders (within 3%). mozilla at L4-L7 chose 256-context
+  order-1 literals for a 1% smaller literal stream and decoded 2.6x
+  slower; Silesia L4-L6 decode 10.2-10.6 -> 6.7-7.0 cyc/B. This also
+  fixes the L4-L7 decode regression of the L3-L7 retune below (measured
+  only for encode speed when it went in). L6/L7 +0.02 points.
 - levels: L3-L7 retuned from a sweep of the existing parsers. L3 moves
   from the fast parser to price_fast; L4-L7 use lowest_price with 6-byte
   hashes (was 4) and 1/2/4/8 candidates, and a 2^15 base hash (the

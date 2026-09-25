@@ -675,9 +675,11 @@ static size_t compress_normal(const char* src, size_t srcSize,
     if (LZ6HC_seqLevelIsOptimal(level) && !getenv("LZ6_NO_SEQPRICE"))
         sp = (LZ6HC_seqPrice*)malloc(sizeof(LZ6HC_seqPrice));
     if (sp) {
-        int pre = getenv("LZ6_SEQPRICE_PRE") ? atoi(getenv("LZ6_SEQPRICE_PRE")) : 3;
+        /* the pre-parse has its own parameter row; LZ6_SEQPRICE_PRE=L uses
+         * level L instead (experiments), 0 disables it */
+        int pre = getenv("LZ6_SEQPRICE_PRE") ? atoi(getenv("LZ6_SEQPRICE_PRE")) : LZ6HC_SEQ_PRE_LEVEL;
         int ok = 0;
-        if (pre > 0) {
+        if (pre != 0) {
             void* hp = malloc(state_sz);
             if (hp) {
                 memset(hp, 0, state_sz);
@@ -997,10 +999,12 @@ static size_t compress_normal(const char* src, size_t srcSize,
         if (getenv("LZ6_SEQ_VERBOSE"))
             fprintf(stderr, "seq: lit compete hsz=%zu lit_sz=%zu ctx_sz=%zu (mode16=%d) lit_count=%d\n",
                     hsz, lit_sz, ctx_sz, ctx_mode16, lit_count);
-        if (hsz > 0 && (ctx_sz == 0 || hsz <= ctx_sz) &&
+        if (hsz > 0 && (ctx_sz == 0 || (size_t)hsz <= ctx_sz + ctx_sz / 32) &&
             (lit_sz == 0 || (size_t)hsz <= lit_sz + (size_t)lit_sz / 50)) {
-            /* Huffman wins ties and near-ties (within 2%): its table
-             * decode is faster than FSE/rANS renormalization. */
+            /* Huffman wins ties and near-ties (within 2% of order-0, 3% of
+             * order-1): its table decode is faster than rANS
+             * renormalization, and order-1 decodes ~2.5x slower (mozilla:
+             * a 1.0% smaller literal stream cost 2.6x the decode time). */
             w8(&p, 5);  /* lit_mode=huffman */
             p += wvlq(p, lit_count);
             p += wvlq(p, (int)hsz);
