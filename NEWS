@@ -1,3 +1,14 @@
+v1.6.7-pre (unreleased)
+- perf/seq decode: -5% cycles (Silesia L2 8.27 -> 7.8 cyc/B, L12 6.87 ->
+  6.53). Sequence decode entries carry the value base and extra-bit count
+  (zstd's seqSymbol), so ll/ml/offset need no per-symbol table lookups or
+  branches; the two-stage pipeline runs fill / steady A+B / drain with no
+  scheduling branch; LL/ML tables default to log 10 so the 8-byte entries
+  stay in L1 (+0.02-0.05% size). Format unchanged.
+  Tried and rejected: reading all of a sequence's bits at once (-9%
+  instructions, +4-6% cycles: a longer dependency chain); a single-check
+  fast path in stage B (+7-9%, code size).
+
 v1.6.6-pre
 - ratio/seq: offsets keep their low 3 bits in the entropy-coded symbol.
   Offsets 1..31 get one code each; above, the code is the bucket
