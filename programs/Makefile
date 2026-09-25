@@ -44,6 +44,9 @@ FFLAGS   ?= -fomit-frame-pointer -fstrict-aliasing -fforce-addr -ffast-math
 WFLAGS   ?= -Wall -Wextra -Wundef -Wshadow -Wcast-align -Wcast-qual -Wstrict-prototypes -pedantic -Wno-variadic-macros
 CPPFLAGS := -I$(LZ6DIR) -DXXH_NAMESPACE=LZ6_ 
 FLAGS    := $(CFLAGS) $(CPPFLAGS) $(WFLAGS) $(LDFLAGS) $(MOREFLAGS)
+# 32-bit seq codec objects: the *_32 targets compile everything else in one
+# -O3 command line, and the seq codec miscompiles at -O3
+ENTROPY32 := lz6fse_32.o lz6rc_32.o lz6seq_32.o lz6huf_32.o
 
 
 # Define *.exe as extension for Windows systems
@@ -81,8 +84,8 @@ seqframetest: $(LZ6DIR)/lz6.o $(LZ6DIR)/lz6hc.o $(LZ6DIR)/lz6frame.o $(LZ6DIR)/x
 blockwalk: $(LZ6DIR)/lz6.o $(LZ6DIR)/lz6hc.o $(LZ6DIR)/xxhash.o $(LZ6DIR)/entropy/lz6fse.o $(LZ6DIR)/entropy/lz6rc.o $(LZ6DIR)/entropy/lz6seq.o $(LZ6DIR)/entropy/lz6huf.o blockwalk.o
 	$(CC) $(FLAGS) $^ -o $@$(EXT) -lm
 
-lz6_32: $(LZ6DIR)/lz6.c $(LZ6DIR)/lz6hc.c $(LZ6DIR)/lz6frame.c $(LZ6DIR)/xxhash.c bench.c lz6io.c lz6cli.c
-	$(CC) -m32 $(FLAGS) $^ -o $@$(EXT)
+lz6_32: $(LZ6DIR)/lz6.c $(LZ6DIR)/lz6hc.c $(LZ6DIR)/lz6frame.c $(LZ6DIR)/xxhash.c bench.c lz6io.c lz6cli.c $(ENTROPY32)
+	$(CC) -m32 $(FLAGS) $^ -o $@$(EXT) -lm
 
 fullbench: $(LZ6DIR)/lz6.o $(LZ6DIR)/lz6hc.o $(LZ6DIR)/lz6frame.o $(LZ6DIR)/xxhash.o fullbench.o
 	$(CC) $(FLAGS) $^ -o $@$(EXT)
@@ -93,7 +96,7 @@ fullbench32: $(LZ6DIR)/lz6.c $(LZ6DIR)/lz6hc.c $(LZ6DIR)/lz6frame.c $(LZ6DIR)/xx
 frametest: $(LZ6DIR)/lz6frame.o $(LZ6DIR)/lz6.o $(LZ6DIR)/lz6hc.o $(LZ6DIR)/xxhash.o $(LZ6DIR)/entropy/lz6fse.o $(LZ6DIR)/entropy/lz6rc.o $(LZ6DIR)/entropy/lz6seq.o $(LZ6DIR)/entropy/lz6huf.o frametest.c
 	$(CC) $(FLAGS) $^ -o $@$(EXT) -lm
 
-frametest32: $(LZ6DIR)/lz6frame.c $(LZ6DIR)/lz6.c $(LZ6DIR)/lz6hc.c $(LZ6DIR)/xxhash.c $(LZ6DIR)/entropy/lz6fse.c $(LZ6DIR)/entropy/lz6rc.c $(LZ6DIR)/entropy/lz6seq.c $(LZ6DIR)/entropy/lz6huf.c frametest.c
+frametest32: $(LZ6DIR)/lz6frame.c $(LZ6DIR)/lz6.c $(LZ6DIR)/lz6hc.c $(LZ6DIR)/xxhash.c $(ENTROPY32) frametest.c
 	$(CC) -m32 $(FLAGS) $^ -o $@$(EXT) -lm
 
 datagen : datagen.o datagencli.c
@@ -103,6 +106,9 @@ datagen : datagen.o datagencli.c
 	$(CC) $(FLAGS) $< -c -o $@
 
 # The seq codec (lz6fse/lz6seq) miscompiles under -O3 — build at -O2.
+# 32-bit builds get their own -m32 -O2 objects (see ENTROPY32).
+%_32.o: $(LZ6DIR)/entropy/%.c
+	$(CC) -m32 -O2 $(CPPFLAGS) -std=c99 -Wall $< -c -o $@
 $(LZ6DIR)/entropy/lz6fse.o: $(LZ6DIR)/entropy/lz6fse.c
 	$(CC) -O2 $(CPPFLAGS) -std=c99 -Wall $< -c -o $@
 $(LZ6DIR)/entropy/lz6seq.o: $(LZ6DIR)/entropy/lz6seq.c
