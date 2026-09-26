@@ -656,6 +656,109 @@ static int tbr_exact(const tbr_t* r)
     return consumed == (size_t)(r->end - r->start - 8) * 8;
 }
 
+/* ---- fast1: single-pass fast parser (zstd "fast"-style) ----
+ * Writes sequences and literals straight into the collector (no HC
+ * context, no callback, no second literal pass): one small hash table of
+ * 2^hlog positions over mls-byte hashes, no lazy matching, a rep0 check
+ * one byte ahead, an accelerating step through literal runs, and matches
+ * only within 2^wlog bytes so verifying a candidate stays in cache. */
+static inline uint32_t fast1_hash(const uint8_t* p, unsigned mls, unsigned hlog)
+{
+    uint64_t v;
+    memcpy(&v, p, 8);
+    return (uint32_t)(((v << (64 - 8 * mls)) * 0xCF1BBCDCB7A56463ULL) >> (64 - hlog));
+}
+static inline uint32_t fast1_r32(const uint8_t* p) { uint32_t v; memcpy(&v, p, 4); return v; }
+static inline size_t fast1_count(const uint8_t* a, const uint8_t* b, const uint8_t* lim)
+{
+    const uint8_t* const a0 = a;
+    while (a + 8 <= lim) {
+        uint64_t x, y;
+        memcpy(&x, a, 8); memcpy(&y, b, 8);
+        const uint64_t d = x ^ y;
+        if (d) return (size_t)(a - a0) + ((unsigned)__builtin_ctzll(d) >> 3);
+        a += 8; b += 8;
+    }
+    while (a < lim && *a == *b) { a++; b++; }
+    return (size_t)(a - a0);
+}
+
+static int fast1_parse(seq_collector_t* sc, const uint8_t* src, size_t n,
+                       unsigned hlog, unsigned mls, unsigned wlog)
+{
+    const size_t cap = n / 4 + 16;
+    sc->lit_lens = (int*)malloc(cap * sizeof(int));
+    sc->match_lens = (int*)malloc(cap * sizeof(int));
+    sc->offsets = (int*)malloc(cap * sizeof(int));
+    uint32_t* ht = (uint32_t*)calloc((size_t)1 << hlog, sizeof(uint32_t));
+    if (!sc->lit_lens || !sc->match_lens || !sc->offsets || !ht) { free(ht); return 1; }
+    sc->cap = cap;
+    size_t ns = 0, nl = 0;
+    const uint8_t* ip = src;
+    const uint8_t* anchor = src;
+    const uint8_t* const iend = src + n;
+    const uint8_t* const ilimit = n > 16 ? iend - 16 : src;   /* hash reads 8 bytes */
+    const uint8_t* const mlimit = n > 8 ? iend - 8 : src;     /* match end: last bytes stay literals */
+    const size_t wmax = ((size_t)1 << wlog) - 1;
+    size_t rep = 0;
+    unsigned miss = 0;
+#define FAST1_EMIT(mstart, ml, off) do {                                    \
+        const size_t ll_ = (size_t)((mstart) - anchor);                    \
+        memcpy(sc->lits + nl, anchor, ll_); nl += ll_;                     \
+        sc->lit_lens[ns] = (int)ll_; sc->match_lens[ns] = (int)(ml);       \
+        sc->offsets[ns] = (int)(off); ns++;                                 \
+    } while (0)
+    if (n > 16) ip++;
+    while (ip < ilimit) {
+        const size_t pos = (size_t)(ip - src);
+        const uint32_t h = fast1_hash(ip, mls, hlog);
+        const uint32_t cand = ht[h];
+        ht[h] = (uint32_t)pos + 1;
+        const uint8_t* mstart;
+        size_t ml, off;
+        if (rep && pos + 1 >= rep && fast1_r32(ip + 1 - rep) == fast1_r32(ip + 1)) {
+            mstart = ip + 1; off = rep;
+            ml = 4 + fast1_count(mstart + 4, mstart + 4 - off, mlimit);
+        } else if (cand && pos - (cand - 1) <= wmax && fast1_r32(src + cand - 1) == fast1_r32(ip)) {
+            const uint8_t* m = src + cand - 1;
+            mstart = ip; off = (size_t)(ip - m);
+            ml = 4 + fast1_count(ip + 4, m + 4, mlimit);
+            while (mstart > anchor && m > src && mstart[-1] == m[-1]) { mstart--; m--; ml++; }
+        } else {
+            ip += 1 + (miss++ >> 6);   /* accelerate through literal runs */
+            continue;
+        }
+        miss = 0;
+        FAST1_EMIT(mstart, ml, off);
+        rep = off;
+        ip = anchor = mstart + ml;
+        /* index two positions inside the match for later matches */
+        if (ip < ilimit) {
+            ht[fast1_hash(ip - 2, mls, hlog)] = (uint32_t)(ip - 2 - src) + 1;
+            ht[fast1_hash(mstart + 1, mls, hlog)] = (uint32_t)(mstart + 1 - src) + 1;
+        }
+        /* immediate rep0 right after the match */
+        while (ip < ilimit && fast1_r32(ip) == fast1_r32(ip - rep)) {
+            const size_t rl = 4 + fast1_count(ip + 4, ip + 4 - rep, mlimit);
+            FAST1_EMIT(ip, rl, rep);
+            ip = anchor = ip + rl;
+        }
+        if (ns + 2 >= cap) break;   /* cannot happen with 4-byte minimum matches; guard */
+    }
+#undef FAST1_EMIT
+    /* last literals: a literals-only sequence */
+    {
+        const size_t ll = (size_t)(iend - anchor);
+        memcpy(sc->lits + nl, anchor, ll); nl += ll;
+        sc->lit_lens[ns] = (int)ll; sc->match_lens[ns] = 0; sc->offsets[ns] = 0; ns++;
+    }
+    sc->n = ns;
+    sc->lit_sum = nl;
+    sc->lit_built = nl;
+    free(ht);
+    return 0;
+}
+
 static size_t compress_normal(const char* src, size_t srcSize,
                               char* dst, size_t dstCap, int level) {
     /* Phase 1: lz6 match finding */
@@ -699,6 +802,17 @@ static size_t compress_normal(const char* src, size_t srcSize,
         sc.lit_sum = 0;
     }
 
+#ifdef LZ6_SEQ_TUNING
+    if (level == 1 && getenv("LZ6_FAST1")) {
+        const unsigned h = getenv("LZ6_F1_H") ? (unsigned)atoi(getenv("LZ6_F1_H")) : 16;
+        const unsigned m = getenv("LZ6_F1_M") ? (unsigned)atoi(getenv("LZ6_F1_M")) : 6;
+        const unsigned w = getenv("LZ6_F1_W") ? (unsigned)atoi(getenv("LZ6_F1_W")) : 20;
+        if (fast1_parse(&sc, (const uint8_t*)src, srcSize, h, m, w)) {
+            free(sc.lits); free(sc.lit_lens); free(sc.match_lens); free(sc.offsets); return 0;
+        }
+        goto parsed;
+    }
+#endif
     void* hc = malloc(state_sz);
     if (!hc) { free(sp); free(sc.lits); free(sc.lit_lens); free(sc.match_lens); free(sc.offsets); return 0; }
     memset(hc, 0, state_sz);
@@ -735,6 +849,9 @@ static size_t compress_normal(const char* src, size_t srcSize,
     free(hc);              /* free the state struct itself */
     if (rc) { free(sc.lits); free(sc.lit_lens); free(sc.match_lens); free(sc.offsets); return 0; }
     fill_literals(&sc);
+#ifdef LZ6_SEQ_TUNING
+parsed:
+#endif
 #ifdef LZ6_SEQ_DUMP
     if (getenv("LZ6_SEQ_DUMP")) {   /* experiment hook: raw (ll, ml, offset) triples */
         FILE* df = fopen(getenv("LZ6_SEQ_DUMP"), "ab");
