@@ -1,4 +1,12 @@
 v1.6.8-pre (unreleased)
+- fixed: O(n^2) time in the binary-tree match finder (HC L13-L15, seq
+  L12-L15) on a long repetitive run that does not reach the end of the
+  input: every tree insert compared the candidate up to the end of the
+  buffer, although any length past LZ6_OPT_NUM only triggers a break. The
+  comparison now stops at LZ6_OPT_NUM+1 bytes: output byte-identical, and
+  1 MB of a 326-byte pattern plus 16 other bytes goes from 27 s to 0.25 s
+  (HC L13-L15), 109 s to 0.9 s (seq L15). Reported by zpaq-std. Present
+  since the LZ5 lineage (a8e1b51 has it too).
 - perf/encode (L1-L2): the fast parser's input-scaled hash table is capped
   at 2^20 entries (was up to 2^23): it is bound by hash-table misses.
   Full Silesia encode +18-20% (L1 81-89 -> 96-106 MB/s, L2 80-83 -> 95-100),

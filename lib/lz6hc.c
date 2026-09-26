@@ -328,6 +328,12 @@ FORCE_INLINE void LZ6HC_BinTree_InsertFull(LZ6HC_Data_Structure* ctx, const BYTE
         delta0 = delta1 = idx - matchIndex;
         nbAttempts = ctx->params.searchNum;
         *HashPos = idx;
+        /* a match longer than LZ6_OPT_NUM only triggers the break below, so
+         * counting past OPT_NUM+1 bytes changes nothing -- but it made every
+         * insert inside a long repeat compare up to the end of the input:
+         * O(n^2) on a repetitive run that does not reach the end (1 MB took
+         * 27 s at L13-L15; reported by zpaq-std). Same output, bounded cost. */
+        const BYTE* const cmpLimit = (size_t)(iHighLimit - ip) > LZ6_OPT_NUM + 1 ? ip + LZ6_OPT_NUM + 1 : iHighLimit;
 
   //      while ((matchIndex >= dictLimit) && (matchIndex < idx) && (idx - matchIndex) < MAX_DISTANCE && nbAttempts)
         while ((matchIndex < current) && (matchIndex < idx) && (matchIndex>=lowLimit) && (nbAttempts))
@@ -339,7 +345,7 @@ FORCE_INLINE void LZ6HC_BinTree_InsertFull(LZ6HC_Data_Structure* ctx, const BYTE
                 match = base + matchIndex;
                 if (MEM_read24(match) == MEM_read24(ip))
                 {
-                    mlt = MINMATCH + MEM_count(ip+MINMATCH, match+MINMATCH, iHighLimit);
+                    mlt = MINMATCH + MEM_count(ip+MINMATCH, match+MINMATCH, cmpLimit);
 
                     if (mlt > LZ6_OPT_NUM) break;
                 }
@@ -350,10 +356,10 @@ FORCE_INLINE void LZ6HC_BinTree_InsertFull(LZ6HC_Data_Structure* ctx, const BYTE
                 if (MEM_read32(match) == MEM_read32(ip))
                 {
                     const BYTE* vLimit = ip + (dictLimit - matchIndex);
-                    if (vLimit > iHighLimit) vLimit = iHighLimit;
+                    if (vLimit > cmpLimit) vLimit = cmpLimit;
                     mlt = MEM_count(ip+MINMATCH, match+MINMATCH, vLimit) + MINMATCH;
-                    if ((ip+mlt == vLimit) && (vLimit < iHighLimit))
-                        mlt += MEM_count(ip+mlt, base+dictLimit, iHighLimit);
+                    if ((ip+mlt == vLimit) && (vLimit < cmpLimit))
+                        mlt += MEM_count(ip+mlt, base+dictLimit, cmpLimit);
 
                     if (mlt > LZ6_OPT_NUM) break;
                 }
