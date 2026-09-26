@@ -192,10 +192,10 @@ size_t huf_decode(const uint8_t* in, size_t in_len, size_t n, uint8_t* out)
 /* Streaming decode API: parse the header + build the lookup table once,
  * then decode literal chunks on demand (inline into the sequence loop).
  * huf_dec_init returns the consumed header+stream length, 0 on error. */
-size_t huf_dec_init(huf_dstate* s, const uint8_t* in, size_t in_len)
+size_t huf_dec_tables(huf_dstate* s, const uint8_t* in, size_t in_len)
 {
     memset(s, 0, sizeof(*s));
-    if (in_len < 261) return 0;
+    if (in_len < 257) return 0;
     int k = in[0];
     if (k == 0 || k > HUF_MAX_TABLE_BITS) return 0;
     const uint8_t* len = in + 1;
@@ -203,12 +203,6 @@ size_t huf_dec_init(huf_dstate* s, const uint8_t* in, size_t in_len)
      * over HUF_MAX_CODE_BITS is corrupt and would write out of bounds */
     for (int s2 = 0; s2 <= 255; s2++)
         if (len[s2] > HUF_MAX_CODE_BITS) return 0;
-    uint32_t total = (uint32_t)in[257] | ((uint32_t)in[258] << 8) |
-                     ((uint32_t)in[259] << 16) | ((uint32_t)in[260] << 24);
-    const uint8_t* stream = in + 261;
-    size_t nbytes = (total + 7) / 8;
-    if (in_len < 261 + nbytes) return 0;
-
     /* canonical table for the walk (codes longer than k) */
     int* cnt = s->cnt;
     uint8_t* sorted = s->sorted;
@@ -277,7 +271,17 @@ size_t huf_dec_init(huf_dstate* s, const uint8_t* in, size_t in_len)
     s->k = k;
     s->table = table;
     s->table2 = table2;
-    s->base = stream;
+    return 257;
+}
+
+size_t huf_dec_init(huf_dstate* s, const uint8_t* in, size_t in_len)
+{
+    if (in_len < 261 || huf_dec_tables(s, in, in_len) == 0) return 0;
+    uint32_t total = (uint32_t)in[257] | ((uint32_t)in[258] << 8) |
+                     ((uint32_t)in[259] << 16) | ((uint32_t)in[260] << 24);
+    size_t nbytes = (total + 7) / 8;
+    if (in_len - 261 < nbytes) { huf_dec_free(s); return 0; }
+    s->base = in + 261;
     s->nbytes = nbytes;
     s->bitpos = 0;
     return 261 + nbytes;
@@ -375,6 +379,96 @@ int huf_dec_n(huf_dstate* s, uint8_t* out, size_t n)
     }
     s->bitpos = bitpos;
     return 0;
+}
+
+/* ---- 4 interleaved streams (zstd HUF 4X) ----
+ * Literals split in 4 segments of ceil(n/4) (the last one shorter), each an
+ * independent MSB-first stream [total bits:4][bytes] with the same code
+ * table. Four independent bit positions let the core decode 4 symbols at a
+ * time instead of one after another. */
+size_t huf_encode4_8(const uint8_t* hdr, const uint8_t* syms, size_t n,
+                     uint8_t* out, size_t out_cap)
+{
+    const size_t seg = (n + 3) / 4;
+    uint8_t* p = out;
+    for (int j = 0; j < 4; j++) {
+        const size_t start = (size_t)j * seg < n ? (size_t)j * seg : n;
+        const size_t len = n - start < seg ? n - start : seg;
+        const size_t r = huf_encode_stream8(hdr, syms + start, len, p, out_cap - (size_t)(p - out));
+        if (r == 0) return 0;
+        p += r;
+    }
+    return (size_t)(p - out);
+}
+
+size_t huf_decode4(const huf_dstate* t, const uint8_t* in, size_t in_len,
+                   uint8_t* out, size_t n)
+{
+    huf_dstate st[4];
+    size_t pos[4];
+    uint8_t *o[4], *oe[4];
+    const size_t seg = (n + 3) / 4;
+    size_t q = 0;
+    for (int j = 0; j < 4; j++) {
+        if (in_len - q < 4) return 0;
+        const uint32_t total = (uint32_t)in[q] | ((uint32_t)in[q+1] << 8) |
+                               ((uint32_t)in[q+2] << 16) | ((uint32_t)in[q+3] << 24);
+        const size_t nb = (total + 7) / 8;
+        q += 4;
+        if (in_len - q < nb) return 0;
+        st[j] = *t;                    /* shares the tables */
+        st[j].base = in + q;
+        st[j].nbytes = nb;
+        pos[j] = 0;
+        const size_t start = (size_t)j * seg < n ? (size_t)j * seg : n;
+        o[j] = out + start;
+        oe[j] = out + start + (n - start < seg ? n - start : seg);
+        q += nb;
+    }
+    const int k = t->k;
+    const uint32_t* const table2 = t->table2;
+    /* interleaved core, with each stream's state in scalars so it stays in
+     * registers (arrays indexed by stream number went through memory and
+     * made this loop slower than one stream) */
+    const uint8_t *b0 = st[0].base, *b1 = st[1].base, *b2 = st[2].base, *b3 = st[3].base;
+    size_t p0 = 0, p1 = 0, p2 = 0, p3 = 0;
+    uint8_t *o0 = o[0], *o1 = o[1], *o2 = o[2], *o3 = o[3];
+    if (st[0].nbytes >= 8 && st[1].nbytes >= 8 && st[2].nbytes >= 8 && st[3].nbytes >= 8) {
+        const size_t l0 = st[0].nbytes - 8, l1 = st[1].nbytes - 8, l2 = st[2].nbytes - 8, l3 = st[3].nbytes - 8;
+        while ((p0 >> 3) <= l0 && (p1 >> 3) <= l1 && (p2 >> 3) <= l2 && (p3 >> 3) <= l3
+               && oe[0] - o0 >= 8 && oe[1] - o1 >= 8 && oe[2] - o2 >= 8 && oe[3] - o3 >= 8) {
+            uint64_t w0 = huf_read_be64(b0 + (p0 >> 3)) << (p0 & 7);
+            uint64_t w1 = huf_read_be64(b1 + (p1 >> 3)) << (p1 & 7);
+            uint64_t w2 = huf_read_be64(b2 + (p2 >> 3)) << (p2 & 7);
+            uint64_t w3 = huf_read_be64(b3 + (p3 >> 3)) << (p3 & 7);
+            unsigned longc = 0;   /* bit j: stream j stopped at a long code */
+            /* up to 4 lookups x 2 symbols per stream (<= 48 bits of a >= 57-bit window) */
+#define HUF4_STEP(J) do { if (!(longc & (1u << J))) {                            \
+                const uint32_t e = table2[w##J >> (64 - k)];                    \
+                const unsigned c = e >> 20, l = (e >> 16) & 15;                  \
+                if (c == 0) longc |= 1u << J;                                    \
+                else { o##J[0] = (uint8_t)e; o##J[1] = (uint8_t)(e >> 8);        \
+                       o##J += c; w##J <<= l; p##J += l; } } } while (0)
+            for (int r = 0; r < 4; r++) { HUF4_STEP(0); HUF4_STEP(1); HUF4_STEP(2); HUF4_STEP(3); }
+#undef HUF4_STEP
+            if (longc) {
+                /* a code longer than the table: the bounded single-symbol
+                 * path (the stream emitted < 8 symbols, so o < oe) */
+                if (longc & 1u) { if (huf_dec_one(&st[0], &p0, o0)) return 0; o0++; }
+                if (longc & 2u) { if (huf_dec_one(&st[1], &p1, o1)) return 0; o1++; }
+                if (longc & 4u) { if (huf_dec_one(&st[2], &p2, o2)) return 0; o2++; }
+                if (longc & 8u) { if (huf_dec_one(&st[3], &p3, o3)) return 0; o3++; }
+            }
+        }
+    }
+    pos[0] = p0; pos[1] = p1; pos[2] = p2; pos[3] = p3;
+    o[0] = o0; o[1] = o1; o[2] = o2; o[3] = o3;
+    /* tails (and short streams) one stream at a time */
+    for (int j = 0; j < 4; j++) {
+        st[j].bitpos = pos[j];
+        if (oe[j] > o[j] && huf_dec_n(&st[j], o[j], (size_t)(oe[j] - o[j]))) return 0;
+    }
+    return q;
 }
 
 void huf_dec_free(huf_dstate* s)

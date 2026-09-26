@@ -33,6 +33,8 @@
  * strides, 4/8-byte fields: mozilla, sao, osdb), which a raw residual
  * throws away; in the symbol they cost nothing extra to decode.
  * Code c: offset = OF_base[c] + (raw(OF_extra[c]) << OF_LOW). */
+#define LZ6_HUF4_MIN 4096   /* literals below this use the 1-stream Huffman mode 5 */
+
 #ifndef OF_DIRECT
 #define OF_DIRECT 5
 #endif
@@ -786,8 +788,13 @@ static size_t compress_normal(const char* src, size_t srcSize,
         size_t hsz = 0;
         /* k<=12 keeps table decode (4096 entries); only deeper trees fall
          * back to FSE. The old k<=10 gate skipped huffman for most text. */
+        /* 4 interleaved streams (lit_mode 7) from LZ6_HUF4_MIN literals:
+         * ~12 bytes more, decoded ~4 symbols at a time */
+        const int huf4 = lit_count >= LZ6_HUF4_MIN;
         if (hhdr > 0 && hk <= 12) {
-            size_t hstr = huf_encode_stream8(huf_buf, sc.lits, (size_t)lit_count, huf_buf + hhdr, lit_cap - hhdr);
+            size_t hstr = huf4
+                ? huf_encode4_8(huf_buf, sc.lits, (size_t)lit_count, huf_buf + hhdr, lit_cap - hhdr)
+                : huf_encode_stream8(huf_buf, sc.lits, (size_t)lit_count, huf_buf + hhdr, lit_cap - hhdr);
             if (hstr > 0) hsz = hhdr + hstr;
         }
         size_t lit_sz = 0;
@@ -1005,7 +1012,7 @@ static size_t compress_normal(const char* src, size_t srcSize,
              * order-1): its table decode is faster than rANS
              * renormalization, and order-1 decodes ~2.5x slower (mozilla:
              * a 1.0% smaller literal stream cost 2.6x the decode time). */
-            w8(&p, 5);  /* lit_mode=huffman */
+            w8(&p, huf4 ? 7 : 5);  /* lit_mode=huffman (4 streams / 1 stream) */
             p += wvlq(p, lit_count);
             p += wvlq(p, (int)hsz);
             if ((size_t)(p - blk) + hsz > blk_cap) { free(ctx_buf); free(lit_buf); free(huf_buf); free(lit_syms); free(sc.lits); free(sc.lit_lens); free(sc.match_lens); free(sc.offsets); return 0; }
@@ -1484,6 +1491,14 @@ size_t LZ6_compress_seq(const char* src, size_t srcSize,
 #define LIT_RAW     0
 #define LIT_FSE0    1
 #define LIT_HUF     5
+#define LIT_HUF4    7
+#if defined(__GNUC__)
+#  define LZ6SEQ_NOINLINE __attribute__((noinline))
+#elif defined(_MSC_VER)
+#  define LZ6SEQ_NOINLINE __declspec(noinline)
+#else
+#  define LZ6SEQ_NOINLINE
+#endif
 #define LIT_FSE1_6  6
 #define LIT_FSE1_3  3
 
@@ -1491,7 +1506,7 @@ typedef struct {
     int kind;
     /* LIT_RAW */
     const uint8_t *rp, *rend;
-    /* LIT_HUF */
+    /* LIT_HUF, LIT_HUF4 (tables only; its 4 streams at [rp, rend)) */
     huf_dstate huf;
     /* LIT_FSE0 */
     fse_dtable ft;
@@ -1585,6 +1600,22 @@ static int o1_dec_checked(const fse_ctx_table* t, uint32_t* x,
     return 0;
 }
 
+/* LIT_HUF4 header: [csize:vlq][k][256 lengths][4 x ([total:4][stream])].
+ * Out of line on purpose: an extra inlined branch in the decoder's setup
+ * changed GCC's register allocation of the whole function and cost the
+ * sequence loop ~12% (measured on identical input streams). */
+static LZ6SEQ_NOINLINE int lit_init_huf4(lit_dec_t* L, const uint8_t** pp, const uint8_t* end)
+{
+    const uint8_t* p = *pp;
+    int lit_csize = rvlq(&p, end);
+    if (lit_csize < 0 || (size_t)(end - p) < (size_t)lit_csize) return 0;
+    if (huf_dec_tables(&L->huf, p, (size_t)lit_csize) == 0) return 0;
+    L->rp = p + 257;   /* the LIT_RAW fields, reused: no struct growth */
+    L->rend = p + lit_csize;
+    *pp = p + lit_csize;
+    return 1;
+}
+
 /* decode all n literals into out (non-raw modes). Decoding the whole
  * stream in one tight loop instead of per-sequence chunks keeps the
  * coder state in registers and lets the sequence loop copy literals
@@ -1595,6 +1626,10 @@ static int lit_decode_all(lit_dec_t* L, uint8_t* out, size_t n)
     switch (L->kind) {
     case LIT_HUF:
         return huf_dec_n(&L->huf, out, n);
+    case LIT_HUF4:
+        /* the streams must be consumed exactly */
+        return huf_decode4(&L->huf, L->rp, (size_t)(L->rend - L->rp), out, n)
+               == (size_t)(L->rend - L->rp) ? 0 : -1;
     case LIT_FSE0: {
         const fse_dtable* t = &L->ft;
         const unsigned mask = t->M - 1;
@@ -1747,6 +1782,8 @@ LZ6SEQ_FORCE_INLINE size_t decode_normal_body(const char* src, size_t srcSize,
         if (lit_csize < 0 || (size_t)(end - p) < (size_t)lit_csize) return 0;
         if (huf_dec_init(&L.huf, p, (size_t)lit_csize) == 0) return 0;
         p += lit_csize;
+    } else if (lit_mode == LIT_HUF4) {
+        if (!lit_init_huf4(&L, &p, end)) return 0;
     } else if (lit_mode == LIT_FSE1_6) {
         /* [L_bits:1][16 tables][4B slen][x:4][stream] */
         int lit_csize = rvlq(&p, end);

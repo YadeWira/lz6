@@ -1,3 +1,18 @@
+v1.6.8-pre (unreleased)
+- perf/seq decode: Huffman literals in 4 interleaved streams (lit_mode 7,
+  zstd's HUF 4X) from 4096 literals up: one code table, the literals split
+  in 4 equal segments coded as independent MSB-first streams, decoded in
+  one loop with each stream's state in registers. Silesia decode cycles
+  (one core): L1 -12.5%, L2 -13.6%, L5 -11%, L12 -9.5%; size +12 bytes
+  per block. BREAKS THE SEQ BLOCK FORMAT (a new literal mode; blocks with
+  fewer literals keep mode 5).
+  Two traps on the way, both measured: (1) with the four streams' state in
+  arrays indexed by stream, the loop went through memory and was 8-10%
+  slower than one stream; (2) the new mode's setup code, inlined into the
+  decoder, changed GCC's register allocation of the whole function and
+  cost the sequence loop ~12% on identical input -- it now lives in a
+  noinline helper and the decoder's state struct did not grow.
+
 v1.6.7-pre
 - levels/encode: L3-L5 use a new row-hash match finder (LZ6HC_row, zstd
   1.5-style: rows of 16 positions with 8-bit tags compared at once, SSE2

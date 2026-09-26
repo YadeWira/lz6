@@ -48,6 +48,12 @@ size_t huf_encode_stream8(const uint8_t* hdr, const uint8_t* syms, size_t n,
 size_t huf_decode(const uint8_t* in, size_t in_len, size_t n,
                   uint8_t* out);
 
+/* 4 interleaved streams sharing one code table (hdr from huf_build_header):
+ * [4 x ([total bits:4][MSB-first stream])], segments of ceil(n/4) symbols.
+ * Returns bytes written, 0 on error. */
+size_t huf_encode4_8(const uint8_t* hdr, const uint8_t* syms, size_t n,
+                     uint8_t* out, size_t out_cap);
+
 /* Streaming decode: init once, decode chunks on demand (literals are
  * decoded inline into the sequence loop). */
 typedef struct {
@@ -67,6 +73,12 @@ typedef struct {
 size_t huf_dec_init(huf_dstate* s, const uint8_t* in, size_t in_len);
 int huf_dec_n(huf_dstate* s, uint8_t* out, size_t n);   /* 0 ok, -1 error */
 void huf_dec_free(huf_dstate* s);
+/* header only (k + 256 code lengths): builds the tables; returns 257 or 0 */
+size_t huf_dec_tables(huf_dstate* s, const uint8_t* in, size_t in_len);
+/* decode n symbols from the 4-stream layout with tables from
+ * huf_dec_tables; returns bytes consumed from in, 0 on error */
+size_t huf_decode4(const huf_dstate* t, const uint8_t* in, size_t in_len,
+                   uint8_t* out, size_t n);
 
 #ifdef __cplusplus
 }
