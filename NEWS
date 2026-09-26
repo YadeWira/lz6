@@ -1,4 +1,14 @@
 v1.6.8-pre (unreleased)
+- perf/encode (L1-L2): the fast parser's input-scaled hash table is capped
+  at 2^20 entries (was up to 2^23): it is bound by hash-table misses.
+  Full Silesia encode +18-20% (L1 81-89 -> 96-106 MB/s, L2 80-83 -> 95-100),
+  size L1 33.43% -> 33.68%, L2 31.86% -> 32.03%; AIT unchanged (its files
+  are below the cap). L3-L15 byte-identical.
+  Measured and not taken: a tiny table plus no lazy matching reaches only
+  ~140 MB/s (Silesia subset) at 43% -- the rest of the per-byte cost is
+  the multi-pass pipeline (sequence arrays, symbol conversion, entropy
+  stages), not the match search. zstd -1-class speed needs a single-pass
+  fast encoder.
 - perf/seq decode: Huffman literals in 4 interleaved streams (lit_mode 7,
   zstd's HUF 4X) from 4096 literals up: one code table, the literals split
   in 4 equal segments coded as independent MSB-first streams, decoded in
