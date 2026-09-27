@@ -82,6 +82,42 @@ static int build_lengths(const unsigned* counts, int maxSym, uint8_t* len)
     return maxd;
 }
 
+/* Limit code lengths to L bits and keep the code COMPLETE (Kraft sum
+ * exactly 2^L: the canonical assignment below needs it). Clamp, then
+ * lengthen the rarest symbols until the sum fits, then shorten the most
+ * frequent ones while it stays <= 2^L. Returns 0 if the sum did not
+ * close exactly (the caller then falls back). */
+static int limit_lengths(const unsigned* counts, int maxSym, uint8_t* len, int L)
+{
+    int idx[256], n = 0;
+    for (int i = 0; i <= maxSym; i++) if (len[i]) idx[n++] = i;
+    if (n < 2) return 1;
+    for (int i = 1; i < n; i++) {   /* ascending count, ties by symbol */
+        const int v = idx[i];
+        int j = i - 1;
+        while (j >= 0 && counts[idx[j]] > counts[v]) { idx[j + 1] = idx[j]; j--; }
+        idx[j + 1] = v;
+    }
+    const long full = 1L << L;
+    long K = 0;
+    for (int i = 0; i < n; i++) {
+        if (len[idx[i]] > L) len[idx[i]] = (uint8_t)L;
+        K += 1L << (L - len[idx[i]]);
+    }
+    while (K > full) {
+        int moved = 0;
+        for (int i = 0; i < n && K > full; i++)
+            if (len[idx[i]] < L) { K -= 1L << (L - len[idx[i]] - 1); len[idx[i]]++; moved = 1; }
+        if (!moved) return 0;
+    }
+    for (int i = n - 1; i >= 0 && K < full; i--)
+        while (len[idx[i]] > 1 && K + (1L << (L - len[idx[i]])) <= full) {
+            K += 1L << (L - len[idx[i]]);
+            len[idx[i]]--;
+        }
+    return K == full;
+}
+
 /* ------------------------------------------------------------------ */
 /* Canonical code assignment (backward, Kraft-safe)                    */
 /* ------------------------------------------------------------------ */
@@ -109,14 +145,42 @@ static void canonical_codes(const uint8_t* len, int maxSym, uint16_t* code)
 /* ------------------------------------------------------------------ */
 
 size_t huf_build_header(const unsigned* counts, int maxSym,
-                        uint8_t* out, size_t out_cap, int* out_k)
+                        uint8_t* out, size_t out_cap, int* out_k, int* out_limited,
+                        int max_bits)
 {
+    if (max_bits < HUF_MAX_TABLE_BITS) max_bits = HUF_MAX_TABLE_BITS;
+    if (max_bits > HUF_MAX_CODE_BITS) max_bits = HUF_MAX_CODE_BITS;
+    if (out_limited) *out_limited = 0;
     if (maxSym > 255) return 0;
     uint8_t len[256];
     memset(len, 0, sizeof(len));
     int maxd = build_lengths(counts, maxSym, len);
     if (maxd == 0) return 0;
-    if (maxd > HUF_MAX_CODE_BITS) return 0;   /* pathological: caller falls back */
+    /* big text literals reach 17-21-bit codes on rare bytes: without a
+     * limit Huffman was rejected there (dickens, xml fell back to rANS at
+     * every level). Literals limit to the table width (no code then needs
+     * the slow long-code path); byte planes keep 16 (skewed exponent lanes
+     * lost up to 0.8% at 12). */
+    if (maxd > HUF_MAX_TABLE_BITS) {
+        /* the table width when it costs <= 0.5% (text), else up to
+         * max_bits (skewed streams such as float exponent planes lost up
+         * to 0.8% at 12 bits) */
+        uint8_t l12[256], lmx[256];
+        memcpy(l12, len, sizeof(l12));
+        memcpy(lmx, len, sizeof(lmx));
+        const int ok12 = limit_lengths(counts, maxSym, l12, HUF_MAX_TABLE_BITS);
+        const int okmx = maxd <= max_bits || limit_lengths(counts, maxSym, lmx, max_bits);
+        unsigned long long b12 = 0, bmx = 0;
+        for (int i = 0; i <= maxSym; i++) { b12 += (unsigned long long)counts[i] * l12[i]; bmx += (unsigned long long)counts[i] * lmx[i]; }
+        if (ok12 && (!okmx || b12 * 200 <= bmx * 201)) {
+            memcpy(len, l12, sizeof(l12));
+            maxd = HUF_MAX_TABLE_BITS;
+            if (out_limited) *out_limited = 1;
+        } else if (okmx) {
+            memcpy(len, lmx, sizeof(lmx));
+            if (maxd > max_bits) { maxd = max_bits; if (out_limited) *out_limited = 1; }
+        } else return 0;
+    }
     if (out_cap < 257) return 0;
 
     int k = maxd < HUF_MAX_TABLE_BITS ? maxd : HUF_MAX_TABLE_BITS;

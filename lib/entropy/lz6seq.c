@@ -901,7 +901,8 @@ parsed:
         unsigned hcounts[256] = {0};
         for (int i = 0; i < lit_count; i++) hcounts[sc.lits[i]]++;
         int hk = 0;
-        size_t hhdr = huf_build_header(hcounts, 255, huf_buf, lit_cap, &hk);
+        int hlim = 0;   /* 1: code lengths were cut to the table width */
+        size_t hhdr = huf_build_header(hcounts, 255, huf_buf, lit_cap, &hk, &hlim, 16);
         size_t hsz = 0;
         /* k<=12 keeps table decode (4096 entries); only deeper trees fall
          * back to FSE. The old k<=10 gate skipped huffman for most text. */
@@ -915,7 +916,10 @@ parsed:
             if (hstr > 0) hsz = hhdr + hstr;
         }
         size_t lit_sz = 0;
-        if (hsz == 0 || (lit_count >= 65536 && level >= 4)) {
+        /* a length-limited Huffman can lose a few % to order-0 rANS (AIT
+         * C/F text): from level 4 try it too; L1-L3 keep the faster one */
+        const int try_o0 = hsz == 0 || (hlim && level >= 4);
+        if (try_o0 || (lit_count >= 65536 && level >= 4)) {
             lit_syms = (unsigned*)malloc((size_t)lit_count * sizeof(unsigned));
             if (!lit_syms) { free(lit_buf); free(huf_buf); free(sc.lits); free(sc.lit_lens); free(sc.match_lens); free(sc.offsets); return 0; }
             for (int i = 0; i < lit_count; i++) lit_syms[i] = sc.lits[i];
@@ -923,7 +927,7 @@ parsed:
         /* FSE vs Huffman: huffman's encode is ~2x cheaper and its decode
          * ~2x faster (table walk), so it wins any near-tie. Run FSE only
          * when huffman is absent/pathological. */
-        if (hsz == 0) {
+        if (try_o0) {
             size_t lit_ts;
             lit_sz = fse_encode(lit_syms, (size_t)lit_count, 255, lit_buf, lit_cap, NULL, 0, &lit_ts);
         }
@@ -1434,7 +1438,7 @@ static size_t plane_encode(const uint8_t* src, size_t srcSize,
             }
             if (hb) {
                 int k = 0;
-                size_t hhdr = huf_build_header(counts, 255, hb, plane_size + 1024, &k);
+                size_t hhdr = huf_build_header(counts, 255, hb, plane_size + 1024, &k, NULL, 16);
                 if (hhdr > 0 && k <= 10) {
                     size_t hstr = huf_encode_stream(hb, syms, plane_size,
                                                     hb + hhdr, plane_size + 1024 - hhdr);

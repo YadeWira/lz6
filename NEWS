@@ -1,4 +1,13 @@
 v1.6.8-pre (unreleased)
+- literals: Huffman code lengths are now limited instead of rejected.
+  Big text literals reached 17-21-bit codes on rare bytes, so Huffman was
+  refused and dickens, xml, webster, reymont fell back to order-0 rANS at
+  every level. Lengths are cut to the 12-bit decode table (no long-code
+  path at decode) when that costs <= 0.5% of the stream, else to 16 (float
+  exponent lanes lost 0.8% at 12); the code stays complete (Kraft exact).
+  dickens L2 decode 418 -> 498 MB/s, Silesia L2 decode -4% cycles; size
+  Silesia +0.01-0.02%, AIT +0.06-0.08% (AIT C: Huffman now wins its near-
+  tie with order-0, as intended). Format unchanged.
 - fixed: O(n^2) time in the binary-tree match finder (HC L13-L15, seq
   L12-L15) on a long repetitive run that does not reach the end of the
   input: every tree insert compared the candidate up to the end of the

@@ -27,11 +27,14 @@
 extern "C" {
 #endif
 
-/* Build a canonical Huffman code over `counts` (maxSym+1 symbols).
+/* Build a canonical Huffman code over `counts` (maxSym+1 symbols), with
+ * code lengths limited to the 12-bit decode table (*out_limited = 1 when
+ * the limit had to cut the optimal lengths; may be NULL).
  * Writes [k][256 lengths] into `out`; returns bytes written (257),
  * or 0 on error/oversize. `maxSym` must be <= 255. */
 size_t huf_build_header(const unsigned* counts, int maxSym,
-                        uint8_t* out, size_t out_cap, int* out_k);
+                        uint8_t* out, size_t out_cap, int* out_k, int* out_limited,
+                        int max_bits);   /* 12..16 */
 
 /* Encode `syms[0..n)` with the lengths in `hdr` (huf_build_header
  * output). Writes [4B total][MSB-first stream] into `out`, returns
