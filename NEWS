@@ -1,4 +1,17 @@
 v1.6.8-pre (unreleased)
+- levels/encode: L1 and L2 use a new single-pass fast parser (fast1,
+  zstd "fast"-style): one small hash of 6-byte keys, no lazy matching, a
+  rep0 check one byte ahead, an accelerating step through literal runs,
+  candidates bounded to a window, and sequences + literals written straight
+  into the block collector (no HC context, no callback, no second literal
+  pass). Full Silesia, one core (was):
+    L1 33.33% @ 150 MB/s (33.69% @ 121, with the 2^20 hash cap below)
+    L2 31.83% @ 128 MB/s (32.03% @ 111)
+  AIT L1 42.40% -> 40.77%, L2 41.41% -> 40.46%. Decode L1 -11% cycles,
+  L2 unchanged. The byte-plane lanes (compressed at level 1) use it too, so
+  L8/L15 moved by 0.01-0.02 points. Tried and rejected: two positions per
+  round (+3-6% speed, -0.36 points). Remaining encode time is ~45% parser,
+  ~40% entropy stage.
 - literals: Huffman code lengths are now limited instead of rejected.
   Big text literals reached 17-21-bit codes on rare bytes, so Huffman was
   refused and dickens, xml, webster, reymont fell back to order-0 rANS at

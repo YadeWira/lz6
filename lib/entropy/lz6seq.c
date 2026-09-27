@@ -802,17 +802,26 @@ static size_t compress_normal(const char* src, size_t srcSize,
         sc.lit_sum = 0;
     }
 
+    {
+        unsigned h, m, w;
+        if (LZ6HC_seqFast1Params(level, &h, &m, &w)) {
 #ifdef LZ6_SEQ_TUNING
-    if (level == 1 && getenv("LZ6_FAST1")) {
-        const unsigned h = getenv("LZ6_F1_H") ? (unsigned)atoi(getenv("LZ6_F1_H")) : 16;
-        const unsigned m = getenv("LZ6_F1_M") ? (unsigned)atoi(getenv("LZ6_F1_M")) : 6;
-        const unsigned w = getenv("LZ6_F1_W") ? (unsigned)atoi(getenv("LZ6_F1_W")) : 20;
-        if (fast1_parse(&sc, (const uint8_t*)src, srcSize, h, m, w)) {
-            free(sc.lits); free(sc.lit_lens); free(sc.match_lens); free(sc.offsets); return 0;
-        }
-        goto parsed;
-    }
+            if (getenv("LZ6_F1_H")) h = (unsigned)atoi(getenv("LZ6_F1_H"));
+            if (getenv("LZ6_F1_M")) m = (unsigned)atoi(getenv("LZ6_F1_M"));
+            if (getenv("LZ6_F1_W")) w = (unsigned)atoi(getenv("LZ6_F1_W"));
 #endif
+            if (h < 10) h = 10;
+            if (h > 24) h = 24;
+            if (m < 4) m = 4;
+            if (m > 8) m = 8;
+            if (w < 10) w = 10;
+            if (w > 25) w = 25;
+            if (fast1_parse(&sc, (const uint8_t*)src, srcSize, h, m, w)) {
+                free(sc.lits); free(sc.lit_lens); free(sc.match_lens); free(sc.offsets); return 0;
+            }
+            goto parsed;
+        }
+    }
     void* hc = malloc(state_sz);
     if (!hc) { free(sp); free(sc.lits); free(sc.lit_lens); free(sc.match_lens); free(sc.offsets); return 0; }
     memset(hc, 0, state_sz);
@@ -849,9 +858,7 @@ static size_t compress_normal(const char* src, size_t srcSize,
     free(hc);              /* free the state struct itself */
     if (rc) { free(sc.lits); free(sc.lit_lens); free(sc.match_lens); free(sc.offsets); return 0; }
     fill_literals(&sc);
-#ifdef LZ6_SEQ_TUNING
 parsed:
-#endif
 #ifdef LZ6_SEQ_DUMP
     if (getenv("LZ6_SEQ_DUMP")) {   /* experiment hook: raw (ll, ml, offset) triples */
         FILE* df = fopen(getenv("LZ6_SEQ_DUMP"), "ab");

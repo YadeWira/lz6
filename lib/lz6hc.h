@@ -137,6 +137,9 @@ int LZ6HC_seqLevelIsOptimal(int level);
 /* compression level that makes LZ6_alloc_mem_HC_seq load the price
  * pre-parse parameters (LZ6HC_seqPreParameters) */
 #define LZ6HC_SEQ_PRE_LEVEL (-1)
+/* 1 when seq level `level` uses the single-pass fast parser (lz6seq.c
+ * fast1_parse); fills its hash log, hashed bytes and window log */
+int LZ6HC_seqFast1Params(int level, unsigned* hashLog, unsigned* hashBytes, unsigned* windowLog);
 int LZ6HC_compress_sequences(void* state, const char* src, size_t srcSize,
                               LZ6HC_seq_cb cb, void* opaque);
 

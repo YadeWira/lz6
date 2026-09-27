@@ -243,7 +243,7 @@ FORCE_INLINE size_t LZ6HC_more_profitable(size_t best_off, size_t best_common, s
  * LZ6HC_compress_row in lz6hc.c. Appended last so the numeric values of the
  * other strategies (tuning hook) stay the same; compare strategies by name,
  * not by order, where row matters. */
-typedef enum { LZ6HC_fast, LZ6HC_price_fast, LZ6HC_lowest_price, LZ6HC_optimal_price, LZ6HC_optimal_price_bt, LZ6HC_row } LZ6HC_strategy;
+typedef enum { LZ6HC_fast, LZ6HC_price_fast, LZ6HC_lowest_price, LZ6HC_optimal_price, LZ6HC_optimal_price_bt, LZ6HC_row, LZ6HC_fast1 } LZ6HC_strategy;
 
 typedef struct
 {
@@ -393,8 +393,8 @@ static const LZ6HC_parameters LZ6HC_seqParameters[LZ6HC_MAX_CLEVEL+1] =
      * every step smaller than the one before.
      * windLog, contentLog,  H, H3,  Snum, SL, SuffL, FS, Strategy                   subset ratio / MB/s */
     {        0,          0,  0,  0,     0,  0,     0,  0, LZ6HC_fast             }, // level 0 - never used
-    { MAXD_LOG,   MAXD_LOG, 13,  0,     4,  6,     0,  0, LZ6HC_fast             }, // level 1   33.42% / 95
-    { MAXD_LOG,   MAXD_LOG, 13,  0,     2,  6,     0,  0, LZ6HC_fast             }, // level 2   31.95% / 88
+    { MAXD_LOG,   MAXD_LOG, 15,  0,     0,  6,    20,  0, LZ6HC_fast1            }, // level 1   full Silesia 33.33% / 150
+    { MAXD_LOG,   MAXD_LOG, 20,  0,     0,  6,    25,  0, LZ6HC_fast1            }, // level 2   full Silesia 31.84% / 128
     { MAXD_LOG,   MAXD_LOG, 10,  0,     8,  5,    22,  0, LZ6HC_row              }, // level 3   28.64% / 57
     { MAXD_LOG,   MAXD_LOG, 10,  0,     8,  5,    22,  1, LZ6HC_row              }, // level 4   28.12% / 45
     { MAXD_LOG,   MAXD_LOG, 10,  0,    16,  5,    23,  2, LZ6HC_row              }, // level 5   27.71% / 38

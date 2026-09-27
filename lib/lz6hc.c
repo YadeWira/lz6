@@ -232,7 +232,8 @@ void LZ6HC_reset_mem(LZ6HC_Data_Structure* ctx)
     /* the fast / price_fast strategies never read the chain table: leave
      * it untouched (a large unwritten allocation costs no page faults;
      * zeroing it was ~20% of level-2 encode time on 10-50 MB inputs) */
-    if (ctx->params.strategy >= LZ6HC_lowest_price && ctx->params.strategy != LZ6HC_row)
+    if (ctx->params.strategy >= LZ6HC_lowest_price && ctx->params.strategy != LZ6HC_row
+        && ctx->params.strategy != LZ6HC_fast1)
         MEM_INIT(ctx->chainTable, 0, sizeof(U32) * ((size_t)1 << ctx->params.contentLog));
 }
 
@@ -1263,6 +1264,15 @@ int LZ6HC_seqLevelIsOptimal(int level)
 #endif
     return LZ6HC_seqParameters[level].strategy == LZ6HC_optimal_price
         || LZ6HC_seqParameters[level].strategy == LZ6HC_optimal_price_bt;
+}
+
+int LZ6HC_seqFast1Params(int level, unsigned* hashLog, unsigned* hashBytes, unsigned* windowLog)
+{
+    if (level < 1 || level > LZ6HC_MAX_CLEVEL) return 0;
+    const LZ6HC_parameters* p = &LZ6HC_seqParameters[level];
+    if (p->strategy != LZ6HC_fast1) return 0;
+    *hashLog = p->hashLog; *hashBytes = p->searchLength; *windowLog = p->sufficientLength;
+    return 1;
 }
 
 void LZ6HC_setSeqPrice(void* state, const LZ6HC_seqPrice* sp)
