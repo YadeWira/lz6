@@ -1,4 +1,4 @@
-v1.6.8-pre (unreleased)
+v1.6.8-pre
 - fixed: HC output depended on uninitialized memory. The hash and chain
   tables were malloc'ed and the parsers read entries before writing them,
   so a context allocated over recycled heap memory could compress
