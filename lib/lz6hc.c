@@ -176,13 +176,18 @@ static int LZ6_alloc_mem_HC_wl(LZ6HC_Data_Structure* ctx, int compressionLevel,
         if (widened > ctx->params.hashLog) ctx->params.hashLog = widened;
     }
 
-    ctx->hashTable = (U32*) malloc(sizeof(U32)*(((size_t)1 << ctx->params.hashLog3)+((size_t)1 << ctx->params.hashLog)));
+    /* calloc, not malloc: the parsers read table entries before writing
+     * them, so recycled heap memory made HC output depend on whatever the
+     * previous allocation left there (valid but non-deterministic: level 2
+     * differed by 3 bytes when levels 0-15 ran in one process; zpaq-std).
+     * Large tables come from fresh zero pages anyway, so this is free. */
+    ctx->hashTable = (U32*) calloc(((size_t)1 << ctx->params.hashLog3)+((size_t)1 << ctx->params.hashLog), sizeof(U32));
     if (!ctx->hashTable)
         return 0;
 
     ctx->hashTable3 = ctx->hashTable + ((size_t)1 << ctx->params.hashLog);
 
-    ctx->chainTable = (U32*) malloc(sizeof(U32)*((size_t)1 << ctx->params.contentLog));
+    ctx->chainTable = (U32*) calloc((size_t)1 << ctx->params.contentLog, sizeof(U32));
     if (!ctx->chainTable)
     {
         FREEMEM(ctx->hashTable);

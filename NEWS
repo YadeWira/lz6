@@ -1,4 +1,12 @@
 v1.6.8-pre (unreleased)
+- fixed: HC output depended on uninitialized memory. The hash and chain
+  tables were malloc'ed and the parsers read entries before writing them,
+  so a context allocated over recycled heap memory could compress
+  differently (valid, but not deterministic: level 2 of a 134 KB file was
+  3 bytes smaller when levels 0-15 ran in one process). The tables are
+  calloc'ed now; large ones come from fresh zero pages, so it costs nothing.
+  Output is unchanged whenever the memory was zero (fresh processes).
+  Found by zpaq-std.
 - fixed (memory safety): LZ6_compress_HC_extStateHC / _continue (and the
   _window variants) wrote PAST the output buffer on data LZ cannot
   compress. With maxDstSize >= LZ6_compressBound they picked an unchecked
