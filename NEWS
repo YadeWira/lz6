@@ -1,4 +1,13 @@
 v1.6.8-pre (unreleased)
+- fixed (memory safety): LZ6_compress_HC_extStateHC / _continue (and the
+  _window variants) wrote PAST the output buffer on data LZ cannot
+  compress. With maxDstSize >= LZ6_compressBound they picked an unchecked
+  mode, trusting the bound -- but the price parsers (HC levels 9-15) can
+  exceed it (+732 KB on 16 MB of random base64 at level 10). The output is
+  now always bounds-checked, and with a buffer of at least the bound an
+  attempt that does not fit becomes a literal-only block, so the bound is a
+  guarantee again. Fitting output is byte-identical (the checks never
+  change a parse decision). Inherited from LZ5 1.5; reported by zpaq-std.
 - levels/encode: L1 and L2 use a new single-pass fast parser (fast1,
   zstd "fast"-style): one small hash of 6-byte keys, no lazy matching, a
   rep0 check one byte ahead, an accelerating step through literal runs,

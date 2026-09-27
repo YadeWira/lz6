@@ -2460,14 +2460,40 @@ static int LZ6HC_compress_generic (void* ctxvoid, const char* source, char* dest
 
 int LZ6_sizeofStateHC(void) { return sizeof(LZ6HC_Data_Structure); }
 
+/* The whole input as one literal run: a valid block that always fits in
+ * LZ6_compressBound (n + n/255 + 2 bytes at most). */
+static int LZ6HC_literalsOnly(const char* src, char* dst, int n)
+{
+    BYTE* op = (BYTE*)dst;
+    int lastRun = n;
+    if (lastRun >= (int)RUN_MASK) {
+        *op++ = (BYTE)(RUN_MASK << ML_BITS);
+        lastRun -= RUN_MASK;
+        for (; lastRun > 254; lastRun -= 255) *op++ = 255;
+        *op++ = (BYTE)lastRun;
+    } else *op++ = (BYTE)(lastRun << ML_BITS);
+    memcpy(op, src, (size_t)n);
+    op += n;
+    return (int)(op - (BYTE*)dst);
+}
+
+/* The price parsers (levels 10-15) can emit MORE than LZ6_compressBound
+ * on data LZ cannot compress (3-byte matches that cost more than the
+ * literals: +4.4% on 16 MB of random base64). So the output is always
+ * bounds-checked; with a buffer of at least the bound, an attempt that
+ * does not fit is replaced by the literal-only block, which does -- the
+ * bound stays a guarantee. (It used to pick an unchecked mode there and
+ * write past the buffer; inherited from LZ5 1.5, reported by zpaq-std.)
+ * The checks never change a parse decision: fitting output is identical. */
 int LZ6_compress_HC_extStateHC (void* state, const char* src, char* dst, int srcSize, int maxDstSize)
 {
     if (((size_t)(state)&(sizeof(void*)-1)) != 0) return 0;   /* Error : state is not aligned for pointers (32 or 64 bits) */
     LZ6HC_init ((LZ6HC_Data_Structure*)state, (const BYTE*)src);
-    if (maxDstSize < LZ6_compressBound(srcSize))
-        return LZ6HC_compress_generic (state, src, dst, srcSize, maxDstSize, limitedOutput);
-    else
-        return LZ6HC_compress_generic (state, src, dst, srcSize, maxDstSize, noLimit);
+    {
+        const int r = LZ6HC_compress_generic (state, src, dst, srcSize, maxDstSize, limitedOutput);
+        if (r > 0 || maxDstSize < LZ6_compressBound(srcSize)) return r;
+        return LZ6HC_literalsOnly(src, dst, srcSize);
+    }
 }
 
 
@@ -2686,10 +2712,12 @@ static int LZ6_compressHC_continue_generic (LZ6HC_Data_Structure* ctxPtr,
 
 int LZ6_compress_HC_continue (LZ6_streamHC_t* LZ6_streamHCPtr, const char* source, char* dest, int inputSize, int maxOutputSize)
 {
-    if (maxOutputSize < LZ6_compressBound(inputSize))
-        return LZ6_compressHC_continue_generic ((LZ6HC_Data_Structure*)LZ6_streamHCPtr, source, dest, inputSize, maxOutputSize, limitedOutput);
-    else
-        return LZ6_compressHC_continue_generic ((LZ6HC_Data_Structure*)LZ6_streamHCPtr, source, dest, inputSize, maxOutputSize, noLimit);
+    /* always bounds-checked, see LZ6_compress_HC_extStateHC. The stream
+     * state has already advanced over the block, and a literal block is
+     * consistent with it (the decoder gets the same bytes). */
+    const int r = LZ6_compressHC_continue_generic ((LZ6HC_Data_Structure*)LZ6_streamHCPtr, source, dest, inputSize, maxOutputSize, limitedOutput);
+    if (r > 0 || maxOutputSize < LZ6_compressBound(inputSize)) return r;
+    return LZ6HC_literalsOnly(source, dest, inputSize);
 }
 
 
