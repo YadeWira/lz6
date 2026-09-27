@@ -7,8 +7,8 @@ lz6 and lz5 are integrated as lzbench plugins (see
 with the same buffers and the same round-trip verification as lz4, lizard,
 zstd, misa77, brotli, xz and zlib.
 
-Last full sweep: 2026-09-25, v1.6.7-pre (row-hash match finder at levels 3-5,
-decode-stage rich tANS entries). fastlzma2 / uf-lzma2 / memlz rows are
+Last full sweep: 2026-09-27, v1.6.8-pre (4-stream Huffman literals, single-pass
+fast parser at levels 1-2, length-limited Huffman). fastlzma2 / uf-lzma2 / memlz rows are
 from the 2026-09-22/23 runs on the same machine and settings. Added then, on the same
 machine and settings: **fastlzma2** 1.0.1 (lzbench's build, C decoder),
 **uf-lzma2** 1.1.0 (github.com/YadeWira/ultra-fast-lzma2, a fast-lzma2 fork,
@@ -22,7 +22,7 @@ levels 1/5/10 were measured with 1.1.0 (level 10 gives the same bytes in
 both); in that run level 10 decoded
 at 120.6 MB/s on Silesia (110.5 in the 09-22 run shown), so level 11 decodes
 ~2% slower than level 10 when both come from the same run. uf-lzma2 1.3.0 and
-1.4.x were not re-measured: per its author, nothing changed since 1.2.0 on the
+1.4.x / 1.5.x were not re-measured: per its author, nothing changed since 1.2.0 on the
 path lzbench uses (native one-shot UF2_compressMt / UF2_decompressMt; later
 releases add .xz, streaming and hardware CRC), and compressed sizes still
 match fastlzma2 at levels 1/6/10.
@@ -51,69 +51,69 @@ Two caveats, both material:
 
 | codec | csize | ratio | enc MB/s | dec MB/s |
 |---|---:|---:|---:|---:|
-| **lz6 seq -15** | 5,100,395 | 38.83% | 1.6 | 436.2 |
-| **lz6 seq -14** | 5,101,443 | 38.83% | 1.9 | 425.0 |
-| **lz6 seq -13** | 5,104,969 | 38.86% | 3.2 | 435.4 |
-| **lz6 seq -12** | 5,114,516 | 38.93% | 6.2 | 436.3 |
-| **lz6 seq -11** | 5,117,662 | 38.96% | 8.8 | 431.5 |
-| **lz6 seq -10** | 5,119,428 | 38.97% | 9.0 | 431.4 |
-| **lz6 seq -9** | 5,134,824 | 39.09% | 9.9 | 429.9 |
-| **lz6 seq -8** | 5,155,127 | 39.24% | 12.0 | 428.5 |
-| **lz6 seq -7** | 5,192,768 | 39.53% | 22.6 | 433.3 |
-| **lz6 seq -6** | 5,197,867 | 39.57% | 25.6 | 433.4 |
-| **lz6 seq -5** | 5,201,042 | 39.59% | 61.6 | 448.0 |
-| **lz6 seq -4** | 5,210,499 | 39.66% | 65.4 | 448.3 |
-| **lz6 seq -3** | 5,241,400 | 39.90% | 96.9 | 438.3 |
-| **lz6 seq -2** | 5,439,718 | 41.41% | 139.9 | 440.6 |
-| **lz6 seq -1** | 5,569,986 | 42.40% | 163.6 | 449.2 |
+| **lz6 seq -15** | 5,098,928 | 38.82% | 1.8 | 575.9 |
+| **lz6 seq -14** | 5,100,004 | 38.82% | 2.3 | 576.1 |
+| **lz6 seq -13** | 5,103,632 | 38.85% | 3.5 | 581.0 |
+| **lz6 seq -12** | 5,113,549 | 38.93% | 6.5 | 586.2 |
+| **lz6 seq -11** | 5,116,727 | 38.95% | 8.8 | 586.6 |
+| **lz6 seq -10** | 5,118,473 | 38.96% | 8.8 | 586.4 |
+| **lz6 seq -9** | 5,133,905 | 39.08% | 9.6 | 574.5 |
+| **lz6 seq -8** | 5,154,211 | 39.24% | 11.8 | 573.5 |
+| **lz6 seq -7** | 5,192,171 | 39.53% | 22.4 | 584.7 |
+| **lz6 seq -6** | 5,197,311 | 39.56% | 25.3 | 581.2 |
+| **lz6 seq -5** | 5,200,318 | 39.59% | 62.7 | 612.6 |
+| **lz6 seq -4** | 5,209,712 | 39.66% | 67.0 | 614.3 |
+| **lz6 seq -3** | 5,240,636 | 39.89% | 96.1 | 605.6 |
+| **lz6 seq -2** | 5,314,845 | 40.46% | 205.8 | 652.2 |
+| **lz6 seq -1** | 5,355,986 | 40.77% | 248.2 | 683.8 |
 | uf-lzma2 L11 | 6,914,570 | 52.64% | 2.2 | 64.8 |
-| brotli L11 | 7,041,245 | 53.60% | 0.6 | 223.8 |
+| brotli L11 | 7,041,245 | 53.60% | 0.6 | 220.3 |
 | fastlzma2 L10 | 7,067,576 | 53.80% | 6.2 | 47.0 |
 | uf-lzma2 L10 | 7,067,576 | 53.80% | 6.2 | 63.9 |
 | fastlzma2 L5 | 7,086,428 | 53.95% | 8.6 | 46.5 |
 | uf-lzma2 L5 | 7,086,428 | 53.95% | 8.6 | 62.8 |
-| xz L6 | 7,114,024 | 54.16% | 3.9 | 68.6 |
-| xz L9 | 7,114,024 | 54.16% | 3.3 | 67.6 |
+| xz L6 | 7,114,024 | 54.16% | 3.7 | 66.6 |
+| xz L9 | 7,114,024 | 54.16% | 3.3 | 66.3 |
 | fastlzma2 L1 | 7,330,324 | 55.80% | 16.3 | 49.3 |
 | uf-lzma2 L1 | 7,330,324 | 55.80% | 16.4 | 70.4 |
-| zstd L19 | 7,351,946 | 55.97% | 5.2 | 1070.2 |
-| xz L3 | 7,379,360 | 56.18% | 6.7 | 65.7 |
-| xz L1 | 7,435,760 | 56.60% | 9.0 | 64.6 |
-| brotli L9 | 7,468,536 | 56.85% | 13.6 | 313.1 |
-| brotli L6 | 7,489,339 | 57.01% | 33.0 | 315.4 |
-| zstd L15 | 7,530,938 | 57.33% | 13.3 | 1002.7 |
-| zstd L12 | 7,552,509 | 57.49% | 36.3 | 1002.1 |
-| zstd L9 | 7,578,176 | 57.69% | 68.7 | 1013.3 |
-| brotli L4 | 7,591,522 | 57.79% | 80.3 | 338.5 |
-| zstd L5 | 7,619,521 | 58.00% | 127.3 | 977.7 |
-| zstd L3 | 7,695,386 | 58.58% | 190.0 | 1063.5 |
-| zlib L9 | 7,786,253 | 59.27% | 7.2 | 313.2 |
-| zlib L6 | 7,814,687 | 59.49% | 20.6 | 303.9 |
-| brotli L1 | 7,855,241 | 59.80% | 260.2 | 295.8 |
-| zstd L1 | 7,869,981 | 59.91% | 435.9 | 1378.4 |
-| lizard L49 | 8,041,060 | 61.21% | 5.5 | 1554.9 |
-| zlib L1 | 8,094,068 | 61.62% | 54.5 | 304.7 |
-| lizard L45 | 8,253,375 | 62.83% | 16.9 | 1556.3 |
-| lizard L40 | 8,481,600 | 64.57% | 332.6 | 1504.6 |
-| lz5 HC L15 | 8,603,507 | 65.49% | 2.1 | 974.0 |
-| lz5 HC L12 | 8,720,302 | 66.38% | 10.1 | 1060.6 |
-| lizard L30 | 8,756,123 | 66.66% | 451.5 | 1927.1 |
-| misa77 L3 | 8,867,044 | 67.50% | 9.6 | 5465.5 |
-| lz5 HC L9 | 8,900,815 | 67.76% | 20.4 | 1157.3 |
-| **lz6 HC -15** | 8,996,054 | 68.48% | 10.2 | 1660.5 |
-| **lz6 HC -12** | 8,996,268 | 68.48% | 11.2 | 1653.4 |
-| lz5 HC L6 | 9,066,986 | 69.02% | 41.2 | 1526.9 |
-| misa77 L4 | 9,070,575 | 69.05% | 7.4 | 3453.2 |
-| **lz6 HC -6** | 9,190,747 | 69.96% | 42.9 | 1600.2 |
-| misa77 L2 | 9,287,323 | 70.70% | 38.3 | 6600.9 |
-| lz5 | 9,469,498 | 72.09% | 317.3 | 1247.9 |
-| misa77 L0 | 9,554,603 | 72.73% | 209.3 | 7300.5 |
-| misa77 L1 | 9,628,088 | 73.29% | 50.3 | 7798.3 |
-| lizard L20 | 9,761,531 | 74.31% | 450.3 | 2506.1 |
-| lizard L10 | 9,926,082 | 75.56% | 628.4 | 4725.5 |
-| lz4 | 9,938,605 | 75.66% | 782.1 | 5086.0 |
-| misa77 L-1 | 10,041,718 | 76.44% | 327.0 | 7448.0 |
-| lz5 HC L1 | 10,441,177 | 79.48% | 537.1 | 2517.6 |
+| zstd L19 | 7,351,946 | 55.97% | 5.1 | 1049.5 |
+| xz L3 | 7,379,360 | 56.18% | 6.9 | 65.5 |
+| xz L1 | 7,435,760 | 56.60% | 9.1 | 63.6 |
+| brotli L9 | 7,468,536 | 56.85% | 13.4 | 308.2 |
+| brotli L6 | 7,489,339 | 57.01% | 32.4 | 310.4 |
+| zstd L15 | 7,530,938 | 57.33% | 12.7 | 996.5 |
+| zstd L12 | 7,552,509 | 57.49% | 34.8 | 972.4 |
+| zstd L9 | 7,578,176 | 57.69% | 65.5 | 983.4 |
+| brotli L4 | 7,591,522 | 57.79% | 79.6 | 335.0 |
+| zstd L5 | 7,619,521 | 58.00% | 121.7 | 953.4 |
+| zstd L3 | 7,695,386 | 58.58% | 182.0 | 1040.7 |
+| zlib L9 | 7,786,253 | 59.27% | 7.1 | 301.8 |
+| zlib L6 | 7,814,687 | 59.49% | 19.9 | 294.1 |
+| brotli L1 | 7,855,241 | 59.80% | 255.8 | 287.4 |
+| zstd L1 | 7,869,981 | 59.91% | 413.0 | 1338.9 |
+| lizard L49 | 8,041,060 | 61.21% | 5.3 | 1507.0 |
+| zlib L1 | 8,094,068 | 61.62% | 52.6 | 297.9 |
+| lizard L45 | 8,253,375 | 62.83% | 16.9 | 1516.5 |
+| lizard L40 | 8,481,600 | 64.57% | 323.8 | 1466.6 |
+| lz5 HC L15 | 8,603,507 | 65.49% | 2.1 | 978.9 |
+| lz5 HC L12 | 8,720,302 | 66.38% | 11.0 | 1053.0 |
+| lizard L30 | 8,756,123 | 66.66% | 437.9 | 1875.4 |
+| misa77 L3 | 8,867,044 | 67.50% | 9.7 | 5541.6 |
+| lz5 HC L9 | 8,900,815 | 67.76% | 19.8 | 1150.9 |
+| **lz6 HC -15** | 8,996,304 | 68.48% | 9.9 | 1617.7 |
+| **lz6 HC -12** | 8,996,539 | 68.49% | 10.5 | 1629.1 |
+| lz5 HC L6 | 9,066,986 | 69.02% | 40.1 | 1518.7 |
+| misa77 L4 | 9,070,575 | 69.05% | 7.3 | 3471.3 |
+| **lz6 HC -6** | 9,190,747 | 69.96% | 41.4 | 1564.3 |
+| misa77 L2 | 9,287,323 | 70.70% | 37.4 | 6586.1 |
+| lz5 | 9,469,498 | 72.09% | 317.2 | 1249.4 |
+| misa77 L0 | 9,554,603 | 72.73% | 192.5 | 7284.4 |
+| misa77 L1 | 9,628,088 | 73.29% | 48.9 | 7792.9 |
+| lizard L20 | 9,761,531 | 74.31% | 436.7 | 2435.2 |
+| lizard L10 | 9,926,082 | 75.56% | 604.9 | 4600.5 |
+| lz4 | 9,938,605 | 75.66% | 768.6 | 5090.3 |
+| misa77 L-1 | 10,041,718 | 76.44% | 308.5 | 7432.5 |
+| lz5 HC L1 | 10,441,177 | 79.48% | 519.3 | 2514.1 |
 | memlz | 10,724,346 | 81.64% | 1872.5 | 1712.7 |
 
 ## Silesia (212 MB, per-file)
@@ -125,72 +125,72 @@ Two caveats, both material:
 | uf-lzma2 L11 | 48,483,163 | 22.88% | 1.2 | 118.3 |
 | fastlzma2 L10 | 48,673,262 | 22.97% | 3.3 | 81.0 |
 | uf-lzma2 L10 | 48,673,262 | 22.97% | 3.3 | 110.5 |
-| xz L9 | 48,795,480 | 23.02% | 2.5 | 112.7 |
-| brotli L11 | 50,328,370 | 23.75% | 0.5 | 362.0 |
+| xz L9 | 48,795,480 | 23.02% | 2.6 | 109.5 |
+| brotli L11 | 50,328,370 | 23.75% | 0.5 | 352.6 |
 | fastlzma2 L5 | 51,124,925 | 24.12% | 5.9 | 77.9 |
 | uf-lzma2 L5 | 51,124,925 | 24.12% | 6.1 | 107.0 |
-| zstd L19 | 52,891,946 | 24.96% | 2.8 | 784.4 |
-| **lz6 seq -15** | 53,929,126 | 25.45% | 0.7 | 600.9 |
-| **lz6 seq -13** | 53,992,880 | 25.48% | 1.4 | 615.1 |
-| **lz6 seq -12** | 54,151,986 | 25.55% | 2.8 | 616.8 |
-| **lz6 seq -10** | 55,107,589 | 26.00% | 4.3 | 610.0 |
-| **lz6 seq -8** | 57,874,091 | 27.31% | 8.1 | 562.3 |
-| **lz6 seq -7** | 58,543,789 | 27.62% | 16.2 | 542.2 |
-| xz L1 | 58,716,448 | 27.70% | 16.0 | 96.9 |
+| zstd L19 | 52,891,946 | 24.96% | 2.8 | 798.3 |
+| **lz6 seq -15** | 53,968,932 | 25.46% | 0.7 | 677.4 |
+| **lz6 seq -13** | 54,032,851 | 25.49% | 1.4 | 662.7 |
+| **lz6 seq -12** | 54,191,868 | 25.57% | 2.8 | 659.9 |
+| **lz6 seq -10** | 55,147,281 | 26.02% | 4.2 | 652.1 |
+| **lz6 seq -8** | 57,914,441 | 27.33% | 7.9 | 602.7 |
+| **lz6 seq -7** | 58,583,989 | 27.64% | 15.6 | 628.1 |
+| xz L1 | 58,716,448 | 27.70% | 16.4 | 94.7 |
 | fastlzma2 L1 | 58,993,508 | 27.84% | 17.8 | 65.1 |
 | uf-lzma2 L1 | 58,993,508 | 27.84% | 18.1 | 96.4 |
-| **lz6 seq -5** | 59,460,886 | 28.06% | 36.2 | 576.7 |
-| **lz6 seq -4** | 60,412,245 | 28.50% | 45.8 | 560.2 |
-| lizard L49 | 60,667,327 | 28.62% | 1.9 | 1189.8 |
-| **lz6 seq -3** | 61,766,808 | 29.14% | 61.1 | 538.8 |
-| zstd L5 | 62,751,501 | 29.61% | 100.6 | 809.2 |
-| lz5 HC L15 | 65,595,195 | 30.95% | 2.1 | 764.7 |
-| **lz6 seq -2** | 67,528,503 | 31.86% | 96.6 | 496.0 |
-| zlib L6 | 68,220,487 | 32.19% | 26.9 | 332.5 |
-| **lz6 seq -1** | 70,858,255 | 33.43% | 107.1 | 485.2 |
-| zstd L1 | 73,229,468 | 34.55% | 351.5 | 1203.4 |
-| brotli L1 | 73,429,961 | 34.65% | 209.4 | 331.4 |
-| zlib L1 | 77,246,811 | 36.45% | 84.6 | 306.7 |
-| misa77 L3 | 80,028,169 | 37.76% | 11.0 | 4605.2 |
-| lz5 HC L6 | 80,576,517 | 38.02% | 48.5 | 1177.3 |
-| **lz6 HC -15** | 81,308,486 | 38.36% | 5.5 | 1283.6 |
-| lizard L30 | 85,765,250 | 40.47% | 322.5 | 1219.6 |
-| lz5 | 88,218,423 | 41.62% | 234.7 | 712.3 |
-| misa77 L1 | 90,385,225 | 42.65% | 51.3 | 5157.1 |
-| misa77 L-1 | 99,073,179 | 46.75% | 280.2 | 4800.6 |
-| lz4 | 100,880,147 | 47.60% | 546.2 | 3639.4 |
-| lz5 HC L1 | 113,525,877 | 53.57% | 512.0 | 1659.5 |
+| **lz6 seq -5** | 59,500,636 | 28.07% | 35.3 | 644.1 |
+| **lz6 seq -4** | 60,451,889 | 28.52% | 45.3 | 637.6 |
+| lizard L49 | 60,667,327 | 28.62% | 1.9 | 1191.2 |
+| **lz6 seq -3** | 61,804,090 | 29.16% | 60.9 | 597.8 |
+| zstd L5 | 62,751,501 | 29.61% | 101.4 | 816.9 |
+| lz5 HC L15 | 65,595,195 | 30.95% | 2.1 | 768.7 |
+| **lz6 seq -2** | 67,466,984 | 31.83% | 143.9 | 542.8 |
+| zlib L6 | 68,220,487 | 32.19% | 26.2 | 319.8 |
+| **lz6 seq -1** | 70,639,619 | 33.33% | 173.7 | 611.3 |
+| zstd L1 | 73,229,468 | 34.55% | 350.3 | 1181.8 |
+| brotli L1 | 73,429,961 | 34.65% | 213.7 | 324.7 |
+| zlib L1 | 77,246,811 | 36.45% | 82.4 | 297.3 |
+| misa77 L3 | 80,028,169 | 37.76% | 11.1 | 4623.6 |
+| lz5 HC L6 | 80,576,517 | 38.02% | 48.4 | 1148.7 |
+| **lz6 HC -15** | 81,309,280 | 38.36% | 5.5 | 1256.7 |
+| lizard L30 | 85,765,250 | 40.47% | 317.1 | 1205.6 |
+| lz5 | 88,218,423 | 41.62% | 238.5 | 708.6 |
+| misa77 L1 | 90,385,225 | 42.65% | 51.8 | 5132.7 |
+| misa77 L-1 | 99,073,179 | 46.75% | 275.2 | 4747.5 |
+| lz4 | 100,880,147 | 47.60% | 521.8 | 3513.9 |
+| lz5 HC L1 | 113,525,877 | 53.57% | 503.5 | 1604.3 |
 | memlz | 126,970,186 | 59.91% | 963.2 | 887.8 |
 
 ### Silesia per-file ratio
 
 | file | orig | lz6 L15 | lz6 L2 | zstd -19 | xz -9 | brotli -11 | lizard -49 | lz5 HC15 | lz4 |
 |---|---:|---:|---:|---:|---:|---:|---:|---:|---:|
-| dickens | 9.7 MB | 28.29% | 37.60% | 27.96% | 27.77% | 27.99% | 33.00% | 36.87% | 63.07% |
-| mozilla | 48.8 MB | 30.20% | 37.55% | 29.41% | 26.11% | 27.48% | 34.31% | 35.79% | 51.61% |
-| mr | 9.5 MB | 33.24% | 33.86% | 31.16% | 27.58% | 28.34% | 34.20% | 37.92% | 54.57% |
-| nci | 32.0 MB | 5.52% | 8.67% | 4.96% | 5.18% | 4.82% | 5.92% | 7.26% | 16.49% |
-| ooffice | 5.9 MB | 44.41% | 57.44% | 42.18% | 39.45% | 40.31% | 50.21% | 49.35% | 70.53% |
-| osdb | 9.6 MB | 30.78% | 34.56% | 30.74% | 28.26% | 28.01% | 33.78% | 37.30% | 52.12% |
-| reymont | 6.3 MB | 20.88% | 31.42% | 20.35% | 19.87% | 20.15% | 23.34% | 27.09% | 48.00% |
-| samba | 20.6 MB | 19.50% | 25.42% | 18.04% | 17.42% | 17.69% | 20.90% | 22.43% | 35.72% |
-| sao | 6.9 MB | 69.90% | 79.47% | 68.95% | 60.88% | 63.29% | 73.89% | 78.09% | 93.63% |
-| webster | 39.5 MB | 20.67% | 29.62% | 20.93% | 20.23% | 21.20% | 24.64% | 27.00% | 48.58% |
-| x-ray | 8.1 MB | 57.02% | 57.02% | 60.53% | 52.98% | 55.30% | 66.91% | 75.46% | 99.01% |
-| xml | 5.1 MB | 9.48% | 13.32% | 8.47% | 8.48% | 8.05% | 9.98% | 11.23% | 22.96% |
+| dickens | 9.7 MB | 28.29% | 37.33% | 27.96% | 27.77% | 27.99% | 33.00% | 36.87% | 63.07% |
+| mozilla | 48.8 MB | 30.20% | 37.26% | 29.41% | 26.11% | 27.48% | 34.31% | 35.79% | 51.61% |
+| mr | 9.5 MB | 33.19% | 34.24% | 31.16% | 27.58% | 28.34% | 34.20% | 37.92% | 54.57% |
+| nci | 32.0 MB | 5.53% | 9.48% | 4.96% | 5.18% | 4.82% | 5.92% | 7.26% | 16.49% |
+| ooffice | 5.9 MB | 44.41% | 52.99% | 42.18% | 39.45% | 40.31% | 50.21% | 49.35% | 70.53% |
+| osdb | 9.6 MB | 30.78% | 34.31% | 30.74% | 28.26% | 28.01% | 33.78% | 37.30% | 52.12% |
+| reymont | 6.3 MB | 20.88% | 31.85% | 20.35% | 19.87% | 20.15% | 23.34% | 27.09% | 48.00% |
+| samba | 20.6 MB | 19.50% | 25.15% | 18.04% | 17.42% | 17.69% | 20.90% | 22.43% | 35.72% |
+| sao | 6.9 MB | 69.90% | 75.50% | 68.95% | 60.88% | 63.29% | 73.89% | 78.09% | 93.63% |
+| webster | 39.5 MB | 20.67% | 30.43% | 20.93% | 20.23% | 21.20% | 24.64% | 27.00% | 48.58% |
+| x-ray | 8.1 MB | 57.49% | 57.49% | 60.53% | 52.98% | 55.30% | 66.91% | 75.46% | 99.01% |
+| xml | 5.1 MB | 9.48% | 14.14% | 8.47% | 8.48% | 8.05% | 9.98% | 11.23% | 22.96% |
 
 ## Findings
 
-**AIT: the lead is file D.** L15 is 38.83% on the 8 files against brotli
--11's 53.60% and zstd -19's 55.97%, decoding at 436 MB/s. Almost all of that
+**AIT: the lead is file D.** L15 is 38.82% on the 8 files against brotli
+-11's 53.60% and zstd -19's 55.97%, decoding at 576 MB/s. Almost all of that
 comes from one file: D is glibc `random()` output, which lz6 regenerates
 from its seed (2,000,000 -> 7 bytes) while every other codec stores it raw.
-Without D, lz6 -15 is 45.80%: ahead of xz -9 and zstd -19, behind brotli
+Without D, lz6 -15 is 45.79%: ahead of xz -9 and zstd -19, behind brotli
 -11 and LZMA2 (uf-lzma2 -10/-11):
 
 | codec | 8 files | without D | A | B | C | E | F | G | H |
 |---|---:|---:|---:|---:|---:|---:|---:|---:|---:|
-| **lz6 -15** | **38.83%** | 45.80% | 55.27% | 18.44% | 27.05% | 79.45% | 79.39% | 29.32% | 40.14% |
+| **lz6 -15** | **38.82%** | 45.79% | 55.27% | 18.45% | 27.04% | 79.45% | 79.44% | 29.22% | 40.14% |
 | brotli -11 | 53.60% | 45.27% | 50.85% | 17.41% | 24.92% | 84.75% | 79.28% | 30.97% | 36.26% |
 | uf-lzma2 -10 | 53.80% | 45.50% | 51.87% | 17.78% | 24.78% | 85.52% | 82.53% | 28.53% | 35.97% |
 | xz -9 | 54.16% | 45.92% | 53.34% | 17.76% | 24.72% | 85.84% | 82.38% | 29.71% | 35.87% |
@@ -207,28 +207,38 @@ parser rebuilt each file's size from lzbench's rounded ratio, and D's 0.00
 ratio dropped it from lz6's denominator only. Fixed in parse_lzbench.py,
 which now uses the real file sizes; reported by uf-lzma2.)
 
-**On Silesia lz6 -15 is 0.49 points behind zstd -19.** L15 is 25.45% @ 601
-MB/s versus zstd -19's 24.96% @ 784 MB/s. The gap was 1.56 points before the
+**On Silesia lz6 -15 is 0.50 points behind zstd -19.** L15 is 25.46% @ 677
+MB/s versus zstd -19's 24.96% @ 798 MB/s. The gap was 1.56 points before the
 entropy-priced parser (v1.6.5-pre) and 0.76 before the offset low-bits model
-(v1.6.6-pre); zstd -19 decodes 1.30x faster (2.0x before v1.6.4-pre).
-lizard -49 is 3.2 points behind lz6 at 2.0x the decode.
+(v1.6.6-pre); zstd -19 decodes 1.18x faster (1.30x in v1.6.7-pre, 2.0x before
+v1.6.4-pre). lizard -49 is 3.2 points behind lz6 at 1.8x the decode.
 
 **LZMA2 with an assembler decoder.** uf-lzma2 -11 is the best ratio in the
 Silesia table (22.88%; -10: 22.97%, xz -9: 23.02%) at ~110-118 MB/s decode;
 its -10 streams decode 36-48% faster than the same streams through
 fastlzma2's C decoder. That is the ceiling of the bit-wise range-coder
-class; lz6 -15 trades 2.6 points of ratio for ~5x the decode. Level 11's
+class; lz6 -15 trades 2.6 points of ratio for ~5.7x the decode. Level 11's
 per-file lc/lp/pb search also takes AIT/E from 85.52% to 78.01% (lz6's
 byte-plane result there: 79.53%).
 
 **memlz** is the opposite end: ~0.9 GB/s both ways on Silesia (1.7-1.9 GB/s
 on AIT) at 59.91%, a worse ratio than lz4 (47.60%): a compression-speed codec.
 
-**Per file, lz6 L15 wins x-ray and webster** (57.02% vs 60.53%, 20.67%
+**Per file, lz6 L15 wins x-ray and webster** (57.49% vs 60.53%, 20.67%
 vs 20.93%), ties osdb (30.78 vs 30.74) and is within 0.4 points of zstd -19
-on dickens (28.29 vs 27.96). The remaining losses are the binary/structured
+on dickens (28.29 vs 27.96). x-ray lost 0.47 points in v1.6.8-pre: its
+byte-plane lanes are compressed at level 1, now the fast1 parser. The remaining losses are the binary/structured
 files: sao 69.90 vs 68.95, mozilla 30.20 vs 29.41, ooffice 44.41 vs 42.18,
 mr 33.24 vs 31.16 and samba 19.50 vs 18.04.
+
+**Fast end and decode (v1.6.8-pre).** Levels 1-2 use a single-pass
+zstd-"fast"-style parser writing sequences straight into the block
+collector: lz6 -1 173.7 MB/s encode at 33.33% (v1.6.7-pre: 107 at 33.43%),
+lz6 -2 143.9 MB/s at 31.83% (96.6 at 31.86%). zstd -1 is still 2x faster to
+encode, at 34.55%. Huffman literals now come in 4 interleaved streams, and
+Huffman is no longer rejected on big text (its code lengths are limited
+instead): Silesia decode rises across the board (L15 601 -> 677 MB/s, L2
+496 -> 543), and AIT from ~435 to 575-684 MB/s.
 
 **Row-hash match finder (v1.6.7-pre).** Levels 3-5 use a zstd 1.5-style
 row hash (16 tagged slots per row, one SSE2 compare, lazy parser). lz6 -3 is
@@ -289,19 +299,19 @@ on text (measured: Silesia tar L15 62,437,010 -> 58,693,799, -6.0%; AIT
 5,367,989 -> 5,194,253, -3.2%) and removing a bitfield read, so decode got
 ~6% faster as well. It also breaks the seq block format - see NEWS.
 
-**Decode speed remains lz6's weak axis vs zstd/lizard.** lz6's 440-620
-MB/s band sits 1.3-3x below zstd (780-1380) and lizard (1200-1930), and
+**Decode speed remains lz6's weak axis vs zstd/lizard.** lz6's 540-690
+MB/s band sits 1.2-2.2x below zstd (800-1380) and lizard (1190-1930), and
 ~9-18x below misa77 (4600-7800, at much worse ratio). The seq v2 decoder is
 instruction-bound (IPC ~2.5); see the wiki's Decoder Internals and Roadmap
 pages.
 
 **Level ladder (v1.6.5-pre).** The seq levels have their own table and form
-a strictly monotonic ladder: Silesia L1 33.43% -> L15 25.45%, every level
+a strictly monotonic ladder: Silesia L1 33.33% -> L15 25.46%, every level
 smaller than the one before (the old table had byte-identical pairs).
 L13-L15 differ only by refinement re-parses, so they sit close together
-(25.48 / 25.45 / 25.45%); deeper searches gave nothing past 64.
+(25.49 / 25.46 / 25.46%); deeper searches gave nothing past 64.
 
 **Not benchmarked here:** brotli/xz are different families with no
 fast-decode pretension. The uncomfortable line is still zstd -19, smaller
-and 1.30x faster to decode on Silesia; the remaining ratio gap is in the
+and 1.18x faster to decode on Silesia; the remaining ratio gap is in the
 binary/structured files above.
