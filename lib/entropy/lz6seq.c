@@ -759,8 +759,9 @@ static int fast1_parse(seq_collector_t* sc, const uint8_t* src, size_t n,
     return 0;
 }
 
-static size_t compress_normal(const char* src, size_t srcSize,
-                              char* dst, size_t dstCap, int level) {
+static size_t compress_normal_ex(const char* src, size_t srcSize,
+                              char* dst, size_t dstCap, int level,
+                                 int fast_lits) {
     /* Phase 1: lz6 match finding */
     size_t state_sz = (size_t)LZ6_sizeofStateHC();
     seq_collector_t sc;
@@ -925,8 +926,8 @@ parsed:
         size_t lit_sz = 0;
         /* a length-limited Huffman can lose a few % to order-0 rANS (AIT
          * C/F text): from level 4 try it too; L1-L3 keep the faster one */
-        const int try_o0 = hsz == 0 || (hlim && level >= 4);
-        if (try_o0 || (lit_count >= 65536 && level >= 4)) {
+        const int try_o0 = hsz == 0 || (hlim && level >= 4 && !fast_lits);
+        if (try_o0 || (lit_count >= 65536 && level >= 4 && !fast_lits)) {
             lit_syms = (unsigned*)malloc((size_t)lit_count * sizeof(unsigned));
             if (!lit_syms) { free(lit_buf); free(huf_buf); free(sc.lits); free(sc.lit_lens); free(sc.match_lens); free(sc.offsets); return 0; }
             for (int i = 0; i < lit_count; i++) lit_syms[i] = sc.lits[i];
@@ -951,7 +952,7 @@ parsed:
         /* order-1 only at level >= 4: at L1/L2 its encode cost dwarfs the
          * ratio gain and sinks the Weissman score (measured on A-H:
          * L2 W 2.32 -> 1.76 with order-1 on; L4+ parser dominates time). */
-        if (lit_count >= 65536 && level >= 4) {
+        if (lit_count >= 65536 && level >= 4 && !fast_lits) {
             /* sample up to 64K literals */
             int samp = lit_count < 65536 ? lit_count : 65536;
             uint32_t hist0[256], hist1[256];
@@ -1343,6 +1344,15 @@ oom:
     return 0;
 }
 
+/* fast_lits = 1: literals only as Huffman (or raw), never the order-1 /
+ * order-0 rANS coders -- they decode several times slower (byte-plane lanes:
+ * mr at L8 decoded 780 -> 240 MB/s with order-1 lanes) */
+static size_t compress_normal(const char* src, size_t srcSize,
+                              char* dst, size_t dstCap, int level)
+{
+    return compress_normal_ex(src, srcSize, dst, dstCap, level, 0);
+}
+
 /* ---- byte-plane transform (stride 2/4) ----
  * Files with one byte per value of low entropy (e.g. IEEE float exponent
  * bytes, 16-bit image channels) compress poorly as an interleaved byte
@@ -1460,8 +1470,8 @@ static size_t plane_encode(const uint8_t* src, size_t srcSize,
             size_t lz_cap = plane_size + (plane_size >> 1) + 4096;
             uint8_t* lz_buf = (uint8_t*)malloc(lz_cap);
             if (lz_buf) {
-                size_t lz_size = compress_normal((const char*)plane_buf, plane_size,
-                                                 (char*)lz_buf, lz_cap, level);
+                size_t lz_size = compress_normal_ex((const char*)plane_buf, plane_size,
+                                                    (char*)lz_buf, lz_cap, level, 1);
                 if (lz_size > 0 && lz_size < plane_size - 32 &&
                     (csize == 0 || lz_size < csize)) {
                     payload = lz_buf;   /* hb (if any) is freed below */
@@ -1480,16 +1490,16 @@ static size_t plane_encode(const uint8_t* src, size_t srcSize,
                 /* lanes are byte streams: L1 lazy matching is near-optimal
                  * and much faster than the outer level (which also hurts
                  * ratio here — F/G lanes compress best at L1) */
-                csize = compress_normal((const char*)plane_buf, plane_size,
-                                        (char*)payload, tmp_cap, 1);
+                csize = compress_normal_ex((const char*)plane_buf, plane_size,
+                                           (char*)payload, tmp_cap, 1, 1);
                 /* no single lane level wins: F/G lanes are best at L1 (the
                  * single-pass parser), x-ray's at L4 (row hash, -3%). From
                  * outer level 4, try L4 too and keep the smaller. */
                 if (level >= 4) {
                     uint8_t* alt = (uint8_t*)malloc(tmp_cap);
                     if (alt) {
-                        const size_t a4 = compress_normal((const char*)plane_buf, plane_size,
-                                                          (char*)alt, tmp_cap, 4);
+                        const size_t a4 = compress_normal_ex((const char*)plane_buf, plane_size,
+                                                             (char*)alt, tmp_cap, 4, 1);
                         if (a4 > 0 && (csize == 0 || a4 < csize)) {
                             free(payload); payload = alt; csize = a4;
                         } else free(alt);
