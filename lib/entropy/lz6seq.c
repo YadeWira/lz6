@@ -1482,6 +1482,19 @@ static size_t plane_encode(const uint8_t* src, size_t srcSize,
                  * ratio here — F/G lanes compress best at L1) */
                 csize = compress_normal((const char*)plane_buf, plane_size,
                                         (char*)payload, tmp_cap, 1);
+                /* no single lane level wins: F/G lanes are best at L1 (the
+                 * single-pass parser), x-ray's at L4 (row hash, -3%). From
+                 * outer level 4, try L4 too and keep the smaller. */
+                if (level >= 4) {
+                    uint8_t* alt = (uint8_t*)malloc(tmp_cap);
+                    if (alt) {
+                        const size_t a4 = compress_normal((const char*)plane_buf, plane_size,
+                                                          (char*)alt, tmp_cap, 4);
+                        if (a4 > 0 && (csize == 0 || a4 < csize)) {
+                            free(payload); payload = alt; csize = a4;
+                        } else free(alt);
+                    }
+                }
                 if (csize == 0 || csize >= plane_size - 32) {
                     free(payload);
                     payload = NULL;

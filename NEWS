@@ -1,3 +1,15 @@
+v1.6.9-pre (unreleased)
+- ratio/planes: byte-plane lanes of mid entropy were always compressed at
+  level 1. No single lane level wins (F/G lanes are best at L1, x-ray's and
+  mr's at L4), so from outer level 4 a lane is also tried at L4 and the
+  smaller kept. Full Silesia L4 28.52% -> 28.30%, L8 27.33 -> 27.11,
+  L12 25.57 -> 25.35, L15 25.46 -> 25.25% (zstd -19's lead 0.50 -> 0.29
+  points); x-ray L15 57.49 -> 55.85%, mr -9.8%. AIT unchanged. Encode
+  L4 -3%, L8 -2%.
+  Trade-off: mr's lanes at L4 pick 16-context order-1 literals (12% smaller
+  than Huffman, past the 3% near-tie rule), and mr decodes 780 -> 240 MB/s
+  at L8; x-ray decodes faster (881 -> 1047 MB/s).
+
 v1.6.8-pre
 - fixed: HC output depended on uninitialized memory. The hash and chain
   tables were malloc'ed and the parsers read entries before writing them,
