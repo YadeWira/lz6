@@ -311,8 +311,8 @@ on text (measured: Silesia tar L15 62,437,010 -> 58,693,799, -6.0%; AIT
 5,367,989 -> 5,194,253, -3.2%) and removing a bitfield read, so decode got
 ~6% faster as well. It also breaks the seq block format - see NEWS.
 
-**Decode speed remains lz6's weak axis vs zstd/lizard.** lz6's 540-690
-MB/s band sits 1.2-2.2x below zstd (800-1380) and lizard (1190-1930), and
+**Decode speed remains lz6's weak axis vs zstd/lizard.** lz6's 540-670
+MB/s band sits 1.1-2.2x below zstd (760-1350) and lizard (1160-1930), and
 ~9-18x below misa77 (4600-7800, at much worse ratio). The seq v2 decoder is
 instruction-bound (IPC ~2.5); see the wiki's Decoder Internals and Roadmap
 pages.
