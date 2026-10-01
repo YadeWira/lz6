@@ -318,12 +318,12 @@ instruction-bound (IPC ~2.5); see the wiki's Decoder Internals and Roadmap
 pages.
 
 **Level ladder (v1.6.5-pre).** The seq levels have their own table and form
-a strictly monotonic ladder: Silesia L1 33.33% -> L15 25.46%, every level
+a strictly monotonic ladder: Silesia L1 33.16% -> L15 25.20%, every level
 smaller than the one before (the old table had byte-identical pairs).
 L13-L15 differ only by refinement re-parses, so they sit close together
-(25.49 / 25.46 / 25.46%); deeper searches gave nothing past 64.
+(25.23 / 25.20 / 25.20%); deeper searches gave nothing past 64.
 
 **Not benchmarked here:** brotli/xz are different families with no
 fast-decode pretension. The uncomfortable line is still zstd -19, smaller
-and 1.18x faster to decode on Silesia; the remaining ratio gap is in the
+and 1.13x faster to decode on Silesia; the remaining ratio gap is in the
 binary/structured files above.
