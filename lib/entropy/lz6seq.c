@@ -1531,8 +1531,138 @@ static size_t plane_encode(const uint8_t* src, size_t srcSize,
     return (size_t)(p - dst);
 }
 
-size_t LZ6_compress_seq(const char* src, size_t srcSize,
-                        char* dst, size_t dstCap, int level) {
+
+/* ---- x86 branch filter (BCJ): CALL/JMP rel32 -> absolute ----
+ * Executable code repeats call targets; as relative displacements every
+ * call to one function looks different, as absolute addresses they repeat
+ * and the LZ matcher finds them. The converter is the classic E8/E9 one
+ * (xz / 7-Zip): it is its own bijection for ANY byte string, so the
+ * decoder inverts it exactly. Applied to detected code ranges only, and
+ * only where a trial compression says it pays (Silesia/ooffice -14%;
+ * non-x86 data would get worse). Block flag 0x10 wraps a normal block:
+ *   [0x10][isize:4][nr:vlq][nr x (start:4, len:4)][inner seq block] */
+#if defined(__SSE2__)
+#  include <emmintrin.h>
+#endif
+#define BCJ_T86(b) ((b) == 0 || (b) == 0xFF)
+#define BCJ_CHUNK      65536u
+#define BCJ_HITS_64K   128u        /* candidate chunk: >= 0.2% E8/E9 with a 00/FF high byte */
+#define BCJ_TRIAL_MAX  (512u * 1024u)
+
+/* index of the next E8/E9 byte in buf[i..limit], or limit + 1 */
+static inline size_t bcj_next(const uint8_t* buf, size_t i, size_t limit)
+{
+#if defined(__SSE2__)
+    const __m128i e8 = _mm_set1_epi8((char)0xE8), e9 = _mm_set1_epi8((char)0xE9);
+    while (i + 16 <= limit + 1) {
+        const __m128i v = _mm_loadu_si128((const __m128i*)(buf + i));
+        const int m = _mm_movemask_epi8(_mm_or_si128(_mm_cmpeq_epi8(v, e8), _mm_cmpeq_epi8(v, e9)));
+        if (m) return i + (size_t)__builtin_ctz((unsigned)m);
+        i += 16;
+    }
+#endif
+    while (i <= limit && buf[i] != 0xE8 && buf[i] != 0xE9) i++;
+    return i;
+}
+
+static void x86_bcj(uint8_t* buf, size_t size, int enc, uint32_t now_pos)
+{
+    static const int allowed[8] = { 1, 1, 1, 0, 1, 0, 0, 0 };
+    static const uint32_t bitnum[8] = { 0, 1, 2, 2, 3, 3, 3, 3 };
+    uint32_t prev_mask = 0, prev_pos = now_pos - 5;
+    if (size < 5) return;
+    const size_t limit = size - 5;
+    size_t i = 0;
+    for (;;) {
+        i = bcj_next(buf, i, limit);
+        if (i > limit) break;
+        uint8_t b;
+        const uint32_t offset = now_pos + (uint32_t)i - prev_pos;
+        prev_pos = now_pos + (uint32_t)i;
+        if (offset > 5) prev_mask = 0;
+        else for (uint32_t k = 0; k < offset; k++) { prev_mask &= 0x77; prev_mask <<= 1; }
+        b = buf[i + 4];
+        if (BCJ_T86(b) && allowed[(prev_mask >> 1) & 7] && (prev_mask >> 1) < 0x10) {
+            uint32_t src = ((uint32_t)b << 24) | ((uint32_t)buf[i + 3] << 16) | ((uint32_t)buf[i + 2] << 8) | buf[i + 1];
+            uint32_t dest;
+            for (;;) {
+                dest = enc ? src + (now_pos + (uint32_t)i + 5) : src - (now_pos + (uint32_t)i + 5);
+                if (prev_mask == 0) break;
+                const uint32_t k = bitnum[prev_mask >> 1];
+                b = (uint8_t)(dest >> (24 - k * 8));
+                if (!BCJ_T86(b)) break;
+                src = dest ^ ((1U << (32 - k * 8)) - 1);
+            }
+            buf[i + 4] = (uint8_t)(~(((dest >> 24) & 1) - 1));
+            buf[i + 3] = (uint8_t)(dest >> 16);
+            buf[i + 2] = (uint8_t)(dest >> 8);
+            buf[i + 1] = (uint8_t)dest;
+            i += 5; prev_mask = 0;
+        } else {
+            i++; prev_mask |= 1;
+            if (BCJ_T86(b)) prev_mask |= 0x10;
+        }
+    }
+}
+
+/* E8/E9 opcodes followed (4 bytes on) by a 00/FF byte: code-like density */
+static size_t bcj_hits(const uint8_t* p, size_t n)
+{
+    size_t hits = 0;
+    if (n < 5) return 0;
+    const size_t limit = n - 5;
+    size_t i = 0;
+    for (;;) {
+        i = bcj_next(p, i, limit);
+        if (i > limit) break;
+        if (BCJ_T86(p[i + 4])) hits++;
+        i++;
+    }
+    return hits;
+}
+
+/* x86 ranges worth filtering in src[0..n): chunks with code-like density,
+ * merged, then each kept only if a level-1 trial on its first 512 KB is
+ * >= 0.5% smaller filtered. Returns the count (<= max), 0 if none. */
+static size_t compress_normal_ex(const char* src, size_t srcSize, char* dst, size_t dstCap, int level, int fast_lits);
+static int bcj_detect(const uint8_t* src, size_t n, uint32_t* rs, uint32_t* rl, size_t max)
+{
+    const size_t nch = (n + BCJ_CHUNK - 1) / BCJ_CHUNK;
+    int nr = 0;
+    for (size_t k = 0; k < nch && (size_t)nr < max; ) {
+        const size_t s0 = k * BCJ_CHUNK;
+        size_t len = n - s0 < BCJ_CHUNK ? n - s0 : BCJ_CHUNK;
+        if (bcj_hits(src + s0, len) * BCJ_CHUNK < (size_t)BCJ_HITS_64K * len) { k++; continue; }
+        size_t e = k + 1;
+        for (; e < nch; e++) {
+            const size_t t0 = e * BCJ_CHUNK;
+            const size_t tl = n - t0 < BCJ_CHUNK ? n - t0 : BCJ_CHUNK;
+            if (bcj_hits(src + t0, tl) * BCJ_CHUNK < (size_t)BCJ_HITS_64K * tl) break;
+        }
+        const size_t end = e * BCJ_CHUNK < n ? e * BCJ_CHUNK : n;
+        const size_t rlen = end - s0;
+        k = e;
+        if (rlen < 4096) continue;
+        /* trial: level-1 size of a sample, plain vs filtered */
+        const size_t sl = rlen < BCJ_TRIAL_MAX ? rlen : BCJ_TRIAL_MAX;
+        const size_t cap = sl + (sl >> 1) + 65536;
+        uint8_t* buf = (uint8_t*)malloc(sl + cap * 2);
+        if (!buf) continue;
+        uint8_t* flt = buf; uint8_t* o1 = buf + sl; uint8_t* o2 = o1 + cap;
+        memcpy(flt, src + s0, sl);
+        x86_bcj(flt, sl, 1, (uint32_t)s0);
+        size_t a = compress_normal_ex((const char*)(src + s0), sl, (char*)o1, cap, 1, 0);
+        size_t b = compress_normal_ex((const char*)flt, sl, (char*)o2, cap, 1, 0);
+        free(buf);
+        if (a == 0) a = sl;
+        if (b == 0) b = sl;
+        if (b + b / 200 < a) { rs[nr] = (uint32_t)s0; rl[nr] = (uint32_t)rlen; nr++; }
+    }
+    return nr;
+}
+
+static size_t compress_seq_core(const char* src, size_t srcSize,
+                                char* dst, size_t dstCap, int level) {
     if (!src || !dst || dstCap < 64) return 0;
     if (!code_tabs_ready) code_tabs_init();
     if (level < 1) level = 9;
@@ -2230,12 +2360,81 @@ static size_t decode_normal(const char* src, size_t srcSize, char* dst, size_t d
     return decode_normal_default(src, srcSize, dst, dstCap);
 }
 
+
+size_t LZ6_compress_seq(const char* src, size_t srcSize,
+                        char* dst, size_t dstCap, int level) {
+    if (srcSize >= 16384 && srcSize <= 0x7FFFFFFFu && dstCap > 64) {
+        const size_t maxr = srcSize / BCJ_CHUNK + 1;
+        uint32_t* rs = (uint32_t*)malloc(maxr * 2 * sizeof(uint32_t));
+        if (rs) {
+            uint32_t* rl = rs + maxr;
+            const int nr = bcj_detect((const uint8_t*)src, srcSize, rs, rl, maxr);
+            if (nr > 0) {
+                uint8_t* tmp = (uint8_t*)malloc(srcSize);
+                const size_t hl = 1 + 4 + (size_t)(nr / 255 + 1) + (size_t)nr * 8;
+                if (tmp && dstCap > hl + 64) {
+                    memcpy(tmp, src, srcSize);
+                    for (int k = 0; k < nr; k++) x86_bcj(tmp + rs[k], rl[k], 1, rs[k]);
+                    const size_t r = compress_seq_core((const char*)tmp, srcSize, dst + hl, dstCap - hl, level);
+                    free(tmp);
+                    if (r > 0) {
+                        uint8_t* q = (uint8_t*)dst;
+                        w8(&q, 0x10);
+                        w32le(&q, (uint32_t)srcSize);
+                        q += wvlq(q, nr);
+                        for (int k = 0; k < nr; k++) { w32le(&q, rs[k]); w32le(&q, rl[k]); }
+                        /* wvlq may use fewer bytes than the hl estimate: close the gap */
+                        const size_t used = (size_t)(q - (uint8_t*)dst);
+                        if (used != hl) memmove(dst + used, dst + hl, r);
+                        free(rs);
+                        return used + r;
+                    }
+                } else free(tmp);
+            }
+            free(rs);
+        }
+    }
+    return compress_seq_core(src, srcSize, dst, dstCap, level);
+}
+
+/* flag 0x10: x86-filtered block, see x86_bcj */
+static size_t decode_x86_wrapper(const uint8_t* p, size_t srcSize, char* dst, size_t dstCap)
+{
+    const uint8_t* const end = p + srcSize;
+    const uint8_t* q = p + 1;
+    if (srcSize < 1 + 4 + 1 + 8 + 5) return 0;
+    const uint32_t isize = r32le(&q);
+    if (isize > dstCap || isize > 0x7FFFFFFFu) return 0;
+    const int nr = rvlq(&q, end);
+    if (nr < 1 || (size_t)nr > (size_t)isize / BCJ_CHUNK + 1) return 0;
+    if ((size_t)(end - q) < (size_t)nr * 8 + 5) return 0;
+    const uint8_t* rt = q;
+    q += (size_t)nr * 8;
+    {
+        uint32_t prev_end = 0;
+        const uint8_t* t = rt;
+        for (int k = 0; k < nr; k++) {
+            const uint32_t st = r32le(&t), ln = r32le(&t);
+            if (st < prev_end || ln < 5 || ln > isize || st > isize - ln) return 0;
+            prev_end = st + ln;
+        }
+    }
+    if (q[0] & 0x10) return 0;          /* no nesting */
+    if (LZ6_decompress_seq((const char*)q, (size_t)(end - q), dst, isize) != isize) return 0;
+    for (int k = 0; k < nr; k++) {
+        const uint32_t st = r32le(&rt), ln = r32le(&rt);
+        x86_bcj((uint8_t*)dst + st, ln, 0, st);
+    }
+    return isize;
+}
+
 size_t LZ6_decompress_seq(const char* src, size_t srcSize,
                           char* dst, size_t dstCap) {
     const uint8_t* p = (const uint8_t*)src;
     if (!code_tabs_ready) code_tabs_init();
     if (srcSize < 5) return 0;
     int flags = p[0];
+    if (flags & 0x10) return decode_x86_wrapper(p, srcSize, dst, dstCap);
     if (flags & 0x08) {  /* byte-plane block */
         const uint8_t* q = p + 1;
         if (srcSize < 6) return 0;
