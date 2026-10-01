@@ -1,4 +1,32 @@
 v1.6.9-pre (unreleased)
+- ratio/x86: an x86 branch filter (BCJ: CALL/JMP rel32 -> absolute, the
+  classic E8/E9 converter of xz / 7-Zip) in front of the matcher, applied
+  per detected code range and only where a trial pays. Executable code
+  repeats call targets, but as relative displacements every call to one
+  function looks different; as absolute addresses they repeat and the LZ
+  stage matches them. Detection: 64 KB chunks with >= 0.2% E8/E9 opcodes
+  followed by a 00/FF high byte, merged into ranges; each range is kept
+  only if a level-1 trial on its first 512 KB is >= 0.5% smaller filtered,
+  so non-x86 data (Silesia mozilla is Alpha code) never takes it and is
+  byte-identical. Silesia ooffice: L3 3,003,477 -> 2,600,625 (-13.4%),
+  L12 2,744,338 -> 2,357,203 (-14.1%), L15 -14.0% (44.4% -> 38.2%: ahead of
+  xz -9 at 39.45% and zstd -19 at 42.18%); AIT H -4.6%; the other 11
+  Silesia files and 7 AIT files are unchanged.
+  BREAKS THE SEQ BLOCK FORMAT (new block flag 0x10, a wrapper):
+    [0x10][isize:4][nr:vlq][nr x (start:4, len:4)][inner seq block]
+  The decoder decodes the inner block untouched, then applies the inverse
+  filter to each range in place: ~15% of decode time on code blocks
+  (ooffice L3 378 -> 339 MB/s, L12 362 -> 282; the filter alone runs at
+  1.8 GB/s). The filter is a bijection on any byte string (23,000
+  adversarial cases), and corrupted wrapped streams are rejected (24,000
+  mutations under ASAN/UBSan). Tried and rejected: a table for the mask
+  update (no gain).
+- tried and rejected: literals coded in the context of the byte the last
+  match offset points at (LZMA-style matched literals). Offline, with the
+  real adaptive cost: -1.4% (mozilla) to -8% (osdb) of the literal stream
+  over the existing literal-stream order-1 with 17 contexts, ~0.15 points of
+  Silesia before table headers, and it would force literals to be decoded
+  interleaved with the copies instead of in bulk.
 - levels/encode: the row-hash match finder takes rows of 16 or 32 slots
   (hashLog3 = 5 selects 32; one more SSE2 compare, one more cache line per
   probe). L5 and L6 move to 32-slot rows. Full Silesia (was): L5 27.81%
@@ -8,7 +36,6 @@ v1.6.9-pre (unreleased)
   unchanged (L5 +0-3%, L6 -2% cycles). L3-L4 and L7-L15 byte-identical.
   Next: L7 still runs the chain parser and is now slower than L6.
 
-v1.6.9-pre (unreleased)
 - ratio/planes: byte-plane lanes of mid entropy were always compressed at
   level 1. No single lane level wins (F/G lanes are best at L1, x-ray's at
   L4), so from outer level 4 a lane is also tried at L4 and the smaller
