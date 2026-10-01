@@ -1,4 +1,4 @@
-v1.6.9-pre (unreleased)
+v1.6.9-pre
 - ratio/x86: an x86 branch filter (BCJ: CALL/JMP rel32 -> absolute, the
   classic E8/E9 converter of xz / 7-Zip) in front of the matcher, applied
   per detected code range and only where a trial pays. Executable code
