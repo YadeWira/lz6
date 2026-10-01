@@ -2205,7 +2205,7 @@ static int LZ6HC_compress_fast (
 
 /* ---- row-hash match finder + lazy parser (LZ6HC_row, seq engine) ----
  * zstd 1.5's "row" match finder, simplified: the hash picks a row of
- * LZ6_ROW_SIZE positions; each slot also keeps an 8-bit tag (more hash
+ * 16 or 32 positions (hashLog3 = 5 selects 32); each slot also keeps an 8-bit tag (more hash
  * bits), so a search compares all the row's tags at once (SWAR, portable)
  * and only verifies slots whose tag matches. One cache miss yields up to
  * 16 candidates, where a chain walk takes one miss per candidate.
@@ -2214,13 +2214,12 @@ static int LZ6HC_compress_fast (
  * hash table, unused here, so keep it small (it is zeroed per call);
  * searchLength = hashed bytes (4-7); searchNum = candidates verified per
  * search; fullSearch = lazy depth (0 greedy, 1 lazy, 2). */
-#define LZ6_ROW_LOG  4
-#define LZ6_ROW_SIZE (1u << LZ6_ROW_LOG)
-
+/* rows of 2^rowLog slots: 16 (rowLog 4) or 32 (5), from hashLog3 */
 typedef struct {
-    U32* pos;          /* [nrows][ROW_SIZE] positions (index from base) */
-    BYTE* tag;         /* [nrows][ROW_SIZE] tags */
+    U32* pos;          /* [nrows][rowSize] positions (index from base) */
+    BYTE* tag;         /* [nrows][rowSize] tags */
     BYTE* head;        /* [nrows] next slot to overwrite (ring) */
+    U32 rowLog;
     U32 rowsLog;
     U32 mls;
     U32 nextToUpdate;
@@ -2238,10 +2237,10 @@ FORCE_INLINE void LZ6HC_rowInsert(LZ6HC_rows* r, const BYTE* base, U32 idx)
     const U64 h = LZ6HC_rowHash(base + idx, r->mls);
     const size_t row = (size_t)(h >> (64 - r->rowsLog));
     const BYTE t = (BYTE)(h >> (56 - r->rowsLog));
-    const U32 slot = (U32)(r->head[row] - 1) & (LZ6_ROW_SIZE - 1);
+    const U32 slot = (U32)(r->head[row] - 1) & ((1u << r->rowLog) - 1);
     r->head[row] = (BYTE)slot;
-    r->pos[row * LZ6_ROW_SIZE + slot] = idx;
-    r->tag[row * LZ6_ROW_SIZE + slot] = t;
+    r->pos[(row << r->rowLog) + slot] = idx;
+    r->tag[(row << r->rowLog) + slot] = t;
 }
 
 FORCE_INLINE U32 LZ6HC_highbit32(U32 v) { return 31u - (U32)__builtin_clz(v | 1u); }
@@ -2251,8 +2250,9 @@ FORCE_INLINE U32 LZ6HC_highbit32(U32 v) { return 31u - (U32)__builtin_clz(v | 1u
 FORCE_INLINE void LZ6HC_rowPrefetch(const LZ6HC_rows* r, const BYTE* p)
 {
     const size_t row = (size_t)(LZ6HC_rowHash(p, r->mls) >> (64 - r->rowsLog));
-    LZ6_PREFETCH(r->tag + row * LZ6_ROW_SIZE);
-    LZ6_PREFETCH(r->pos + row * LZ6_ROW_SIZE);
+    LZ6_PREFETCH(r->tag + (row << r->rowLog));
+    LZ6_PREFETCH(r->pos + (row << r->rowLog));
+    if (r->rowLog > 4) LZ6_PREFETCH(r->pos + (row << r->rowLog) + 16);   /* 128-byte row */
     LZ6_PREFETCH(r->head + row);
 }
 
@@ -2293,26 +2293,37 @@ FORCE_INLINE size_t LZ6HC_rowSearch(LZ6HC_Data_Structure* ctx, LZ6HC_rows* r,
     const U64 h = LZ6HC_rowHash(ip, r->mls);
     const size_t row = (size_t)(h >> (64 - r->rowsLog));
     const BYTE t = (BYTE)(h >> (56 - r->rowsLog));
-    const BYTE* const tg = r->tag + row * LZ6_ROW_SIZE;
-    const U32* const ps = r->pos + row * LZ6_ROW_SIZE;
+    const U32 rsz = 1u << r->rowLog;
+    const BYTE* const tg = r->tag + (row << r->rowLog);
+    const U32* const ps = r->pos + (row << r->rowLog);
+    U32 mask = 0;
 #if defined(__SSE2__)
-    U32 mask = (U32)_mm_movemask_epi8(_mm_cmpeq_epi8(_mm_loadu_si128((const __m128i*)tg), _mm_set1_epi8((char)t)));
+    {
+        const __m128i tv = _mm_set1_epi8((char)t);
+        for (U32 c = 0; c < rsz; c += 16)
+            mask |= (U32)_mm_movemask_epi8(_mm_cmpeq_epi8(_mm_loadu_si128((const __m128i*)(tg + c)), tv)) << c;
+    }
 #else
-    const U64 rep = 0x0101010101010101ULL * t;
-    const U64 z0 = LZ6HC_zeroBytes(MEM_read64(tg) ^ rep), z1 = LZ6HC_zeroBytes(MEM_read64(tg + 8) ^ rep);
-    /* compact the high bits of each byte into a 16-bit hit mask */
-    U32 mask = (U32)(((z0 >> 7) * 0x0102040810204080ULL) >> 56) | ((U32)(((z1 >> 7) * 0x0102040810204080ULL) >> 56) << 8);
+    {
+        const U64 rep = 0x0101010101010101ULL * t;
+        /* compact the high bits of each byte into an 8-bit hit mask per word */
+        for (U32 c = 0; c < rsz; c += 8) {
+            const U64 z = LZ6HC_zeroBytes(MEM_read64(tg + c) ^ rep);
+            mask |= (U32)(((z >> 7) * 0x0102040810204080ULL) >> 56) << c;
+        }
+    }
 #endif
     /* rotate so bit 0 is the newest slot (head) */
     const U32 hd = r->head[row];
-    mask = ((mask >> hd) | (mask << (LZ6_ROW_SIZE - hd))) & 0xFFFFu;
+    if (hd) mask = (mask >> hd) | (mask << (rsz - hd));
+    if (rsz < 32) mask &= (1u << rsz) - 1;
     U32 tries = ctx->params.searchNum ? ctx->params.searchNum : 1;
     size_t best = 0;
     int bestGain = 0;
     while (mask && tries) {
         const U32 k = (U32)__builtin_ctz(mask);
         mask &= mask - 1;
-        const U32 m = ps[(k + hd) & (LZ6_ROW_SIZE - 1)];
+        const U32 m = ps[(k + hd) & (rsz - 1)];
         if (m < low || m >= cur) continue;
         tries--;
         const BYTE* const mp = base + m;
@@ -2359,8 +2370,9 @@ static int LZ6HC_compress_row (
         if (slotsLog > cap) slotsLog = cap;
     }
     if (slotsLog > 24) slotsLog = 24;
-    if (slotsLog < LZ6_ROW_LOG + 4) slotsLog = LZ6_ROW_LOG + 4;
-    r.rowsLog = slotsLog - LZ6_ROW_LOG;
+    r.rowLog = ctx->params.hashLog3 == 5 ? 5 : 4;
+    if (slotsLog < r.rowLog + 4) slotsLog = r.rowLog + 4;
+    r.rowsLog = slotsLog - r.rowLog;
     r.mls = ctx->params.searchLength < 4 ? 4 : ctx->params.searchLength > 7 ? 7 : ctx->params.searchLength;
     r.pos = (U32*)calloc((size_t)1 << slotsLog, sizeof(U32));
     r.tag = (BYTE*)calloc((size_t)1 << slotsLog, 1);

@@ -387,7 +387,9 @@ static const LZ6HC_parameters LZ6HC_seqParameters[LZ6HC_MAX_CLEVEL+1] =
      * with 6-byte hashes and 1/2/4/8 candidates: every level smaller and no
      * slower than before). L3-L5 then moved to the row-hash match finder
      * (LZ6HC_row; SufL = log2 cap of its row slots, FS = lazy depth): up
-     * to 2x faster than lowest_price at the same ratio. The optimal
+     * to 2x faster than lowest_price at the same ratio. 2026-09-30: L5-L6
+     * on 32-slot rows (H3 = 5 selects them for the row strategy): L6 at
+     * lowest_price's ratio, 1.7x faster. The optimal
      * levels' price pre-parse has its own row (LZ6HC_seqPreParameters).
      * Full Silesia, L1 -> L15: 33.43% -> 25.45%; AIT 42.40% -> 38.83%;
      * every step smaller than the one before.
@@ -397,8 +399,8 @@ static const LZ6HC_parameters LZ6HC_seqParameters[LZ6HC_MAX_CLEVEL+1] =
     { MAXD_LOG,   MAXD_LOG, 20,  0,     0,  6,    25,  0, LZ6HC_fast1            }, // level 2   full Silesia 31.84% / 128
     { MAXD_LOG,   MAXD_LOG, 10,  0,     8,  5,    22,  0, LZ6HC_row              }, // level 3   28.64% / 57
     { MAXD_LOG,   MAXD_LOG, 10,  0,     8,  5,    22,  1, LZ6HC_row              }, // level 4   28.12% / 45
-    { MAXD_LOG,   MAXD_LOG, 10,  0,    16,  5,    23,  2, LZ6HC_row              }, // level 5   27.71% / 38
-    { MAXD_LOG,   MAXD_LOG, 15, 13,     4,  6,     0,  0, LZ6HC_lowest_price     }, // level 6   27.44% / 17
+    { MAXD_LOG,   MAXD_LOG, 10,  5,    24,  5,    23,  2, LZ6HC_row              }, // level 5   full Silesia 27.81% (32-slot rows)
+    { MAXD_LOG,   MAXD_LOG, 10,  5,    32,  5,    24,  2, LZ6HC_row              }, // level 6   full Silesia 27.69% (32-slot rows)
     { MAXD_LOG,   MAXD_LOG, 15, 13,     8,  6,     0,  0, LZ6HC_lowest_price     }, // level 7   27.19% / 14
     { MAXD_LOG, MAXD_LOG+1, 23, 16,     8,  4,    32,  0, LZ6HC_optimal_price_bt }, // level 8   27.07% / 7.1
     { MAXD_LOG, MAXD_LOG+1, 23, 16,     8,  4,    32,  1, LZ6HC_optimal_price_bt }, // level 9   26.67% / 5.0
