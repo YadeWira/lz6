@@ -224,6 +224,35 @@ size_t LZ6F_flush(LZ6F_compressionContext_t cctx, void* dstBuffer, size_t dstMax
  * The function outputs an error code if it fails (can be tested using LZ6F_isError())
  */
 
+/* ---- block-level API (independent-block frames) -------------------------
+ * Whole blocks, one call each, no frame-level state: several threads can each
+ * own a context and still produce / consume a perfectly ordinary frame.
+ *
+ * Compression: create one context per thread, LZ6F_compressBegin() each with the
+ * same preferences (discard their headers), and write the frame header, the
+ * blocks in INPUT ORDER, and the end with a separate context.
+ * - LZ6F_compressBlockIndependent(): compresses ONE block (0 < srcSize <= the
+ *   frame's block size; blockMode must be LZ6F_blockIndependent) into
+ *   [4-byte block header][payload]; returns the bytes written (<= srcSize + 4),
+ *   dstMaxSize >= LZ6F_compressBound(srcSize, prefs). It touches no frame-level
+ *   state, so it is safe to call from different threads on different contexts.
+ * - LZ6F_updateContent(): feeds the content checksum and the size count of the
+ *   frame context (the one that calls LZ6F_compressEnd), in input order.
+ * Reproducibility: with the seq codec a block's bytes depend only on the block, so any
+ * assignment of blocks to contexts writes the same frame. The classic HC codec does not
+ * have that property (its match finder keeps table contents from the previous block of
+ * the same context): the frame is valid, but its bytes depend on the assignment.
+ *
+ * Decompression: read the 4-byte block header word yourself (0 = end mark, then
+ * the 4-byte content checksum if the frame has one), its payload (size from the
+ * word: bit31 = stored, bit30 = seq, bits 29-0 = size), and call
+ * LZ6F_decompressBlockIndependent() with a dst of at least the frame's block
+ * size; it returns the decoded size or an error and is stateless (thread-safe).
+ */
+size_t LZ6F_compressBlockIndependent(LZ6F_compressionContext_t cctx, void* dstBuffer, size_t dstMaxSize, const void* srcBuffer, size_t srcSize);
+size_t LZ6F_updateContent(LZ6F_compressionContext_t cctx, const void* srcBuffer, size_t srcSize);
+size_t LZ6F_decompressBlockIndependent(void* dstBuffer, size_t dstCapacity, const void* payload, unsigned blockHeaderWord);
+
 size_t LZ6F_compressEnd(LZ6F_compressionContext_t cctx, void* dstBuffer, size_t dstMaxSize, const LZ6F_compressOptions_t* cOptPtr);
 /* LZ6F_compressEnd()
  * When you want to properly finish the compressed frame, just call LZ6F_compressEnd().
@@ -261,6 +290,13 @@ LZ6F_errorCode_t LZ6F_freeDecompressionContext(LZ6F_decompressionContext_t dctx)
  * dctx memory can be released using LZ6F_freeDecompressionContext();
  * The result of LZ6F_freeDecompressionContext() is indicative of the current state of decompressionContext when being released.
  * That is, it should be == 0 if decompression has been completed fully and correctly.
+ */
+
+void LZ6F_resetDecompressionContext(LZ6F_decompressionContext_t dctx);
+/* LZ6F_resetDecompressionContext() :
+ * Puts dctx back at the start of a new frame, keeping its buffers: as if it had just been created.
+ * Needed by a caller that consumed a frame without passing it through LZ6F_decompress()
+ * (see LZ6F_decompressBlockIndependent()) and wants to reuse the context for the next frame.
  */
 
 

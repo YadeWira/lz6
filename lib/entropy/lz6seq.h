@@ -40,6 +40,11 @@ extern "C" {
 size_t LZ6_compress_seq(const char* src, size_t srcSize,
                         char* dst, size_t dstCap, int level);
 
+/* Builds the codec's lookup tables. Called lazily by the functions below, which
+ * is a data race if the first calls come from several threads at once: call it
+ * once before starting threads (LZ6F_create*Context do). Idempotent. */
+void LZ6_seq_init(void);
+
 /* Decompress a stream produced by LZ6_compress_seq.
  * `dst` must have room for the original size (recovered from the
  * stream). Returns bytes written, or 0 on error.

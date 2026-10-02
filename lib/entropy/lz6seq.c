@@ -83,6 +83,9 @@ static uint8_t ll_tab[LL_TAB_MAX + 1];
 static uint8_t ml_tab[ML_TAB_MAX + 1];
 static int code_tabs_ready = 0;
 
+static void code_tabs_init(void);
+void LZ6_seq_init(void) { if (!code_tabs_ready) code_tabs_init(); }
+
 static void code_tabs_init(void) {
     for (int v = 0; v <= LL_TAB_MAX; v++) ll_tab[v] = (uint8_t)ll_to_code(v);
     for (int v = 0; v <= ML_TAB_MAX; v++) ml_tab[v] = (uint8_t)ml_to_code(v);

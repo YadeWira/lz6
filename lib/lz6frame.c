@@ -373,6 +373,7 @@ LZ6F_errorCode_t LZ6F_createCompressionContext(LZ6F_compressionContext_t* LZ6F_c
 {
     LZ6F_cctx_t* cctxPtr;
 
+    LZ6_seq_init();   /* tables built here, before any worker thread runs */
     cctxPtr = (LZ6F_cctx_t*)ALLOCATOR(sizeof(LZ6F_cctx_t));
     if (cctxPtr==NULL) return (LZ6F_errorCode_t)(-LZ6F_ERROR_allocation_failed);
 
@@ -772,6 +773,32 @@ size_t LZ6F_compressUpdate(LZ6F_compressionContext_t compressionContext, void* d
 }
 
 
+/* ---- block-level API (independent-block frames) ----
+ * One whole block per call, no frame-level state: lets a caller run several
+ * contexts on several threads and still write a perfectly ordinary frame. */
+size_t LZ6F_compressBlockIndependent(LZ6F_compressionContext_t compressionContext, void* dstBuffer, size_t dstMaxSize, const void* srcBuffer, size_t srcSize)
+{
+    LZ6F_cctx_t* cctxPtr = (LZ6F_cctx_t*)compressionContext;
+    if (cctxPtr->cStage != 1) return (size_t)-LZ6F_ERROR_GENERIC;
+    if (cctxPtr->prefs.frameInfo.blockMode != LZ6F_blockIndependent) return (size_t)-LZ6F_ERROR_GENERIC;
+    if (srcSize == 0 || srcSize > cctxPtr->maxBlockSize) return (size_t)-LZ6F_ERROR_GENERIC;
+    if (dstMaxSize < LZ6F_compressBound(srcSize, &(cctxPtr->prefs))) return (size_t)-LZ6F_ERROR_dstMaxSize_tooSmall;
+    {
+        compressFunc_t compress = LZ6F_selectCompression(cctxPtr->prefs.frameInfo.blockMode, cctxPtr->prefs.compressionLevel, cctxPtr->prefs.frameInfo.blockCodec);
+        return LZ6F_compressBlock(dstBuffer, srcBuffer, srcSize, compress, cctxPtr);
+    }
+}
+
+size_t LZ6F_updateContent(LZ6F_compressionContext_t compressionContext, const void* srcBuffer, size_t srcSize)
+{
+    LZ6F_cctx_t* cctxPtr = (LZ6F_cctx_t*)compressionContext;
+    if (cctxPtr->cStage != 1) return (size_t)-LZ6F_ERROR_GENERIC;
+    if (cctxPtr->prefs.frameInfo.contentChecksumFlag == LZ6F_contentChecksumEnabled)
+        XXH32_update(&(cctxPtr->xxh), srcBuffer, srcSize);
+    cctxPtr->totalInSize += srcSize;
+    return 0;
+}
+
 /* LZ6F_flush()
 * Should you need to create compressed data immediately, without waiting for a block to be filled,
 * you can call LZ6_flush(), which will immediately compress any remaining data stored within compressionContext.
@@ -871,6 +898,7 @@ LZ6F_errorCode_t LZ6F_createDecompressionContext(LZ6F_decompressionContext_t* LZ
 {
     LZ6F_dctx_t* dctxPtr;
 
+    LZ6_seq_init();   /* tables built here, before any worker thread runs */
     dctxPtr = (LZ6F_dctx_t*)ALLOCATOR(sizeof(LZ6F_dctx_t));
     if (dctxPtr==NULL) return (LZ6F_errorCode_t)-LZ6F_ERROR_GENERIC;
 
@@ -1062,11 +1090,47 @@ LZ6F_errorCode_t LZ6F_getFrameInfo(LZ6F_decompressionContext_t dCtx, LZ6F_frameI
 }
 
 
+void LZ6F_resetDecompressionContext(LZ6F_decompressionContext_t dCtx)
+{
+    LZ6F_dctx_t* const dctxPtr = (LZ6F_dctx_t*)dCtx;
+    dctxPtr->dStage = dstage_getHeader;
+    dctxPtr->tmpInSize = 0;
+    dctxPtr->tmpInTarget = 0;
+    dctxPtr->tmpOutStart = 0;
+    dctxPtr->tmpOutSize = 0;
+}
+
+
 /* trivial redirector, for common prototype */
 static int LZ6F_decompress_safe (const char* source, char* dest, int compressedSize, int maxDecompressedSize, const char* dictStart, int dictSize)
 {
     (void)dictStart; (void)dictSize;
     return LZ6_decompress_safe (source, dest, compressedSize, maxDecompressedSize);
+}
+
+/* One block of an independent-block frame, from its 4-byte header word and
+ * payload; stateless, so any number of threads may call it at once. */
+size_t LZ6F_decompressBlockIndependent(void* dstBuffer, size_t dstCapacity, const void* payload, unsigned blockHeaderWord)
+{
+    const U32 bh = blockHeaderWord;
+    if (bh == 0) return (size_t)-LZ6F_ERROR_GENERIC;               /* the end mark is not a block */
+    if (bh & LZ6F_BLOCKUNCOMPRESSED_FLAG)
+    {
+        size_t const n = bh & 0x7FFFFFFFU;
+        if (n > dstCapacity) return (size_t)-LZ6F_ERROR_GENERIC;
+        memcpy(dstBuffer, payload, n);
+        return n;
+    }
+    {
+        size_t const cSize = bh & 0x3FFFFFFFU;
+        int decoded;
+        if (cSize == 0 || dstCapacity > 0x7FFFFFFFU) return (size_t)-LZ6F_ERROR_GENERIC;
+        decoded = (bh & LZ6F_BLOCKSEQ_FLAG)
+                ? LZ6F_localLZ6_decompress_seq((const char*)payload, (char*)dstBuffer, (int)cSize, (int)dstCapacity, NULL, 0)
+                : LZ6F_decompress_safe((const char*)payload, (char*)dstBuffer, (int)cSize, (int)dstCapacity, NULL, 0);
+        if (decoded < 0) return (size_t)-LZ6F_ERROR_decompressionFailed;
+        return (size_t)decoded;
+    }
 }
 
 
