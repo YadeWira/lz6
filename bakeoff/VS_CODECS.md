@@ -240,8 +240,9 @@ become absolute addresses, which repeat; it is applied per detected code range
 and only where a level-1 trial says it pays, so mozilla (Alpha code) and the
 rest are byte-identical. Cost: ~15% of decode time on the code ranges.
 Byte-plane lanes are also tried at level 4 and keep Huffman-only literals
-(x-ray 57.49% -> 55.85%), and levels 5-6 moved to 32-slot rows (L6 27.69%
-at 1.8x the encode speed of the chain parser it replaces).
+(x-ray 57.49% -> 55.85%), and levels 5-6 moved to 32-slot rows (L6 27.49%
+at 1.5-1.8x the encode speed of the chain parser it replaces; L5 is ~12%
+slower to encode).
 
 **Fast end and decode (v1.6.8-pre).** Levels 1-2 use a single-pass
 zstd-"fast"-style parser writing sequences straight into the block

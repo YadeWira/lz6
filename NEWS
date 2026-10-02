@@ -31,8 +31,9 @@ v1.6.9-pre
   (hashLog3 = 5 selects 32; one more SSE2 compare, one more cache line per
   probe). L5 and L6 move to 32-slot rows. Full Silesia (was): L5 27.81%
   (27.99), L6 27.69% (27.86); L6 encode 14.7 -> 26.9 MB/s on the Silesia
-  subset, i.e. 1.8x faster than the chain parser it replaces and 0.17
-  points smaller; L5 encode 29 -> 28 MB/s. AIT L5/L6 -0.1%. Decode
+  subset, i.e. 1.8x faster than the chain parser it replaces (1.5-1.65x on
+  another file set) and 0.17 points smaller; L5 encode is ~12% slower
+  (same build, 16 vs 32 slots). AIT L5/L6 -0.1%. Decode
   unchanged (L5 +0-3%, L6 -2% cycles). L3-L4 and L7-L15 byte-identical.
   Next: L7 still runs the chain parser and is now slower than L6.
 
