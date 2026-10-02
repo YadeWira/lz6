@@ -77,11 +77,17 @@ Measured with one harness ([lzbench], one thread, mem-to-mem, per file) on 2x Xe
 | zstd -19 | 24.96% | 2.6 | 756 |
 | **lz6 -15** | **25.20%** | 0.7 | **668** |
 | **lz6 -12** | **25.31%** | 2.6 | **666** |
+| zstd -17 | 25.58% | 4.9 | 816 |
+| zstd -14 | 27.03% | 11.2 | 828 |
 | **lz6 -8** | **27.08%** | 7.6 | **592** |
+| zstd -12 | 27.33% | 26.6 | 813 |
+| zstd -9 | 27.88% | 53.3 | 824 |
 | lizard -49 | 28.62% | 1.8 | 1,159 |
+| zstd -6 | 28.90% | 75.4 | 853 |
 | **lz6 -3** | **28.97%** | 57.1 | **594** |
 | zstd -5 | 29.61% | 101 | 787 |
 | lz5 v1.5 HC -15 | 30.95% | 2.0 | 769 |
+| zstd -3 | 31.21% | 170 | 850 |
 | **lz6 -2** | **31.65%** | 135 | **536** |
 | **lz6 -1** | **33.16%** | 164 | **620** |
 | zstd -1 | 34.55% | 348 | 1,166 |
@@ -89,6 +95,8 @@ Measured with one harness ([lzbench], one thread, mem-to-mem, per file) on 2x Xe
 | misa77 -1 | 42.65% | 51.2 | 4,933 |
 | lz4 | 47.60% | 540 | 3,537 |
 | memlz | 59.91% | 963 | 888 |
+
+The zstd -3, -6, -9, -12, -14 and -17 rows come from a complementary run on 2026-10-02 (same machine and harness, pinned to one core; lzbench's zstd 1.5.7). The first sweep only had zstd -1, -5 and -19, which left the ladder between them out of the comparison. In the complementary run lz6 -1/-2/-3 and zstd -1/-5 repeated within 4% of the table.
 
 **AIT A-H** (13 MB, 8 files)
 
@@ -107,7 +115,11 @@ Measured with one harness ([lzbench], one thread, mem-to-mem, per file) on 2x Xe
 | lz4 | 75.66% | 774 | 5,148 |
 | memlz | 81.64% | 1,872 | 1,713 |
 
-On AIT most of lz6's lead comes from one file, D (glibc `random()` output, regenerated from its seed: 2 MB -> 7 bytes); without D, lz6 -15 is 45.66%, ahead of xz -9 and zstd -19 and behind brotli -11 and LZMA2. On Silesia lz6 -15 is 0.24 points behind zstd -19 and ahead of lizard, lz5 and misa77; lz6 -3 is smaller than zstd -5, and lz6 -15 beats xz -9 and zstd -19 on ooffice (x86 code). Decode speed remains its weak axis: 1.1-2x below zstd and lizard. See also [bakeoff/COMPETITORS.md](bakeoff/COMPETITORS.md) and the [wiki](https://github.com/YadeWira/lz6/wiki/Benchmarks).
+On AIT most of lz6's lead comes from one file, D (glibc `random()` output, regenerated from its seed: 2 MB -> 7 bytes); without D, lz6 -15 is 45.66%, ahead of xz -9 and zstd -19 and behind brotli -11 and LZMA2.
+
+**On Silesia, on one thread, the zstd ladder is ahead of lz6 over most of the range.** zstd -3 (31.21%) is smaller than lz6 -2 and -1 (31.65%, 33.16%), encodes as fast as lz6 -1 and decodes 1.3-1.5x faster; zstd -6 matches lz6 -3 (28.90% vs 28.97%) with 1.3x its encode speed and 1.4x its decode speed; zstd -12 is smaller than lz6 -5 and -6, zstd -14 matches lz6 -8, and lz6 -15 is 0.24 points behind zstd -19 (3.7x slower to encode, 1.13x slower to decode). lz6 -15 is still ahead of lizard, lz5 and misa77 in ratio. Decode is its weak axis: 1.1-1.5x below zstd at equal ratio and 1.7-1.9x below lizard -49. The cause is instruction count, not IPC: measured on dickens, xml and samba, lz6's decoder runs about 250 instructions per sequence against about 150 for zstd's, at a higher IPC.
+
+Where lz6 leads is in its transforms. On `ooffice` (x86 code) lz6 -15 reaches 38.18% against 42.18% for zstd -19, and lz6 -5 41.27% against 46.00% for zstd -12; on `x-ray` (byte planes) lz6 -5 gets 55.85% against 62.68%; on `sao` it is 0.5 points ahead, and on the other files it is 0.3-1.7 points behind zstd -12 at a similar encode speed. And blocks are independent, so decoding scales with `-T` (see [Multithreading](#multithreading)). See also [bakeoff/COMPETITORS.md](bakeoff/COMPETITORS.md) and the [wiki](https://github.com/YadeWira/lz6/wiki/Benchmarks).
 
 ## Documentation
 

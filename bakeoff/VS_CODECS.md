@@ -164,6 +164,36 @@ Two caveats, both material:
 | lz5 HC L1 | 113,525,877 | 53.57% | 508.3 | 1615.5 |
 | memlz | 126,970,186 | 59.91% | 963.2 | 887.8 |
 
+### Silesia, the zstd ladder (complementary run, 2026-10-02)
+
+The sweep above ran zstd at -1, -5 and -19 only. This run adds the levels in
+between, with the same harness and settings, pinned to one core (`taskset -c 44`),
+lzbench's zstd 1.5.7 (with its assembler Huffman loop) and lz6 v1.6.9-pre:
+
+| codec | csize | ratio | enc MB/s | dec MB/s |
+|---|---:|---:|---:|---:|
+| zstd -17 | 54,207,531 | 25.58% | 4.9 | 816 |
+| zstd -14 | 57,287,654 | 27.03% | 11.2 | 828 |
+| **lz6 -8** | 57,390,652 | 27.08% | 7.9 | 628 |
+| zstd -12 | 57,919,879 | 27.33% | 26.6 | 813 |
+| **lz6 -6** | 58,272,166 | 27.49% | 26.7 | 660 |
+| **lz6 -5** | 58,534,476 | 27.62% | 29.7 | 665 |
+| zstd -9 | 59,081,628 | 27.88% | 53.3 | 824 |
+| zstd -7 | 60,258,866 | 28.43% | 67.6 | 826 |
+| zstd -6 | 61,239,847 | 28.90% | 75.4 | 853 |
+| **lz6 -3** | 61,401,238 | 28.97% | 59.4 | 607 |
+| zstd -5 | 62,751,501 | 29.61% | 102.7 | 802 |
+| zstd -4 | 64,958,218 | 30.65% | 168.0 | 766 |
+| zstd -3 | 66,137,723 | 31.21% | 169.9 | 850 |
+| **lz6 -2** | 67,069,091 | 31.65% | 140.8 | 557 |
+| zstd -2 | 69,332,724 | 32.71% | 252.1 | 949 |
+| **lz6 -1** | 70,270,844 | 33.16% | 165.5 | 632 |
+| zstd -1 | 73,229,468 | 34.55% | 355.7 | 1196 |
+
+Repeats of lz6 -1/-2/-3 and zstd -1/-5 agree with the main table within 4%.
+Raw rows: [vs_codecs_silesia_mid.csv](vs_codecs_silesia_mid.csv). Instruction counts and the
+reason for the decode gap: [SINGLE_THREAD_STUDY.md](SINGLE_THREAD_STUDY.md).
+
 ### Silesia per-file ratio
 
 | file | orig | lz6 L15 | lz6 L2 | zstd -19 | xz -9 | brotli -11 | lizard -49 | lz5 HC15 | lz4 |
