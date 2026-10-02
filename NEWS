@@ -1,3 +1,55 @@
+v1.6.10-pre
+- speed/CLI: multithreaded compression and decompression, -T# (0 = one thread
+  per core; default 1). NO FORMAT CHANGE: seq blocks are self-contained, so
+  the CLI hands them to an ordered pool of workers and writes them back in
+  input order. The compressed file is byte-for-byte what one thread writes,
+  at any -T (checked against the v1.6.9 CLI: 25 file/level/block-size
+  combinations and all 15 levels with small blocks, each at -T1/-T4/-T8, plus
+  stdin), and any .lz6 file decodes with any -T. Only the seq engine (-1..-15)
+  compresses on several threads: the classic HC frame codec (--hc) keeps
+  table contents from the previous block (LZ6HC_init does not clear the hash
+  table), so which context compresses a block would change its bytes; --hc
+  and -0 compress on one thread and stay byte-identical. Decoding is
+  multithreaded for every codec. Silesia.tar (212 MB), -B5, threads on distinct cores of one
+  socket, best of 3:
+                  1 thread -> 16 threads          decode (1 -> 16 threads)
+    -9           31.1 s -> 6.2 s   (5.0x)          458 -> 1,469 MB/s
+    -5            6.7 s -> 1.7 s   (3.9x)          468 -> 1,578 MB/s
+    -3            4.4 s -> 1.2 s   (3.6x)          445 -> 1,507 MB/s
+    -1            1.8 s -> 0.8 s   (2.3x)          445 -> 1,129 MB/s
+  -1 is bound by the main thread (read, LZ6S3 segmentation, XXH32, copy:
+  ~270 MB/s), the other levels by the number of blocks. The speed-up is
+  bounded by the biggest block, and the default block size of seq levels on
+  large inputs (B7, up to 256 MB) makes few and large ones: on 8 threads the
+  same file gains only 2.6x (-3) and 2.4x (-9). -B5 / -B4 make more blocks
+  and cost ratio (Silesia.tar, -3: 29.15% default, 29.56% -B5, 29.71% -B4;
+  -9: 27.11 / 27.49 / 27.65%); on 8 threads -B4 gives 3.1x (-3) and 5.6x (-9).
+  -B4 is also faster on ONE thread (blocks stay in cache): -3 compresses in
+  3.81 s instead of 4.68 s and decodes at 458 instead of 394 MB/s.
+  Memory: about two blocks per thread plus the compressor tables, so it grows
+  with -B and -T. Linked-block frames (which this library no longer writes)
+  still decode on one thread. The library engine is unchanged: lzbench
+  numbers (one thread, in memory) are those of v1.6.9-pre.
+- lib: block-level frame API for callers that run their own threads:
+  LZ6F_compressBlockIndependent(), LZ6F_updateContent(),
+  LZ6F_decompressBlockIndependent() (stateless) and
+  LZ6F_resetDecompressionContext(). LZ6_seq_init() builds the seq engine's
+  lazily filled tables; the frame context constructors call it, so after
+  that the library has no mutable global state (ThreadSanitizer clean).
+- speed/CLI: the LZ6S3 segmentation histogram uses four tables (a run of
+  equal bytes serialises a single one); same counts, so the same cuts. The
+  gain is small (-1 on 8 threads, 1.05 -> 1.00 s, close to the noise).
+  Decoding of independent-block frames now goes block by block straight into
+  the buffer that is checksummed and written: 0-3% faster on one thread (A/B
+  of the same file, stdout and file output); the old streaming path remains
+  for linked frames.
+- verified: edge suite (empty, 1 byte, block boundaries, concatenated frames,
+  linked-flag frames, stdin/stdout, -m, -t, bad options, --hc and -0 bytes
+  against the v1.6.9 CLI) on the release build, ASAN+UBSan and TSan; 510 corrupted/truncated streams decode
+  with the same verdict at -T1 and -T4; zero sanitizer reports.
+  Found on the way: LZ6F_getFrameInfo() with no input does memcpy(dst, NULL,
+  0) (UB, left as is; the CLI no longer calls it that way).
+
 v1.6.9-pre
 - ratio/x86: an x86 branch filter (BCJ: CALL/JMP rel32 -> absolute, the
   classic E8/E9 converter of xz / 7-Zip) in front of the matcher, applied
