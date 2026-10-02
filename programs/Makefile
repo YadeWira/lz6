@@ -59,6 +59,12 @@ VOID = /dev/null
 endif
 
 
+# -T# worker threads: pthreads everywhere but Windows (which uses Win32 threads)
+ifeq (,$(filter Windows%,$(OS)))
+FLAGS += -pthread
+endif
+
+
 # Default test parameters
 TEST_FILES   := COPYING
 FUZZER_TIME  := -T9mn

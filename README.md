@@ -18,6 +18,8 @@ lz6 --hc -9 file         # classic LZ6-HC frame codec
 lz6 -d file.lz6          # decompress (codec-agnostic, per-block dispatch)
 lz6 -2 -c file | lz6 -d -c     # pipes
 lz6 -m file1 file2       # multiple inputs
+lz6 -3 -T0 file          # all cores: same bytes as one thread, several times faster
+lz6 -d -T4 file.lz6      # decompress on 4 threads (any file, any -T)
 ```
 
 Levels 1-15 select the seq engine; the default level uses the fast LZ frame codec. Blocks up to 256MB, match windows up to 32MB. Frames are self-describing and independently decodable per block.

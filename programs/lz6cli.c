@@ -150,7 +150,11 @@ static int usage_advanced(void)
     DISPLAY( " -c     : force write to standard output, even if it is the console\n");
     DISPLAY( " -t     : test compressed file integrity\n");
     DISPLAY( " -m     : multiple input files (implies automatic output filenames)\n");
-    DISPLAY( " -B#    : Block size [1-7] = 64KB, 256KB, 1MB, 4MB, 16MB, 64MB, 256MB (default : 5 = 16MB)\n");
+    DISPLAY( " -B#    : Block size [1-7] = 64KB, 256KB, 1MB, 4MB, 16MB, 64MB, 256MB (default : 5 = 16MB;\n");
+    DISPLAY( "          a file larger than that gets 7 = 256MB, or 6 with --hc)\n");
+    DISPLAY( " -T#    : worker threads, 0 = all cores (default : 1). Compression: levels 1-15 (not --hc);\n");
+    DISPLAY( "          decompression: any file. Same output at any count. One block per thread:\n");
+    DISPLAY( "          memory grows with -B and -T, and a file only speeds up if it has several blocks\n");
   //  DISPLAY( " -BD    : Block dependency (improve compression ratio)\n");
     /* DISPLAY( " -BX    : enable block checksum (default:disabled)\n");   *//* Option currently inactive */
     DISPLAY( "--no-frame-crc : disable stream checksum (default:enabled)\n");
@@ -375,6 +379,20 @@ int main(int argc, char** argv)
                             }
                         }
                         if (exitBlockProperties) break;
+                    }
+                    break;
+
+                    /* Worker threads */
+                case 'T':
+                    {
+                        int t = 0;
+                        if (argument[1] < '0' || argument[1] > '9') badusage();
+                        while ((argument[1] >= '0') && (argument[1] <= '9'))
+                        {
+                            if (t < 10000) t = t * 10 + (argument[1] - '0');
+                            argument++;
+                        }
+                        LZ6IO_setNbThreads(t);
                     }
                     break;
 

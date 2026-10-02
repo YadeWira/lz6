@@ -86,6 +86,15 @@ int LZ6IO_setBlockChecksumMode(int xxhash);
 /* Default setting : stream checksum enabled */
 int LZ6IO_setStreamChecksumMode(int xxhash);
 
+/* Worker threads for (de)compression of independent-block frames.
+   Default setting : 1 (single thread). 0 = one per hardware thread.
+   Compression is multithreaded for the seq codec only (the HC frame codec's output
+   depends on the context that compresses a block); decompression for any frame
+   of independent blocks. The output is byte-identical whatever the count.
+   Frames with linked blocks always decode on one thread.
+   return : the value kept */
+int LZ6IO_setNbThreads(int nbThreads);
+
 /* Default setting : 0 (no notification) */
 int LZ6IO_setNotificationLevel(int level);
 

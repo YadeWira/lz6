@@ -79,6 +79,8 @@
 #include "lz6hc.h"     /* still required for legacy format */
 #include "entropy/lz6seq.h"   /* legacy --seq envelope decoder */
 #include "lz6frame.h"
+#include "xxhash.h"      /* content checksum of multithreaded decoding */
+#include "lz6mt.h"
 
 
 
@@ -141,6 +143,7 @@ static int g_blockIndependence = 1;
 static int g_sparseFileSupport = 1;
 static int g_contentSizeFlag = 0;
 static int g_blockCodec = 0;   /* 0 = LZ/HC frame (magic ...06), 1 = seq frame (magic ...07) */
+static int g_nbThreads = 1;    /* 1 = single thread; 0 = one per hardware thread */
 
 static const int minBlockSizeID = 1;
 static const int maxBlockSizeID = 7;
@@ -191,6 +194,12 @@ int LZ6IO_setBlockSizeID(int bsid)
 }
 
 /* blockCodec : 0 = LZ/HC frame, 1 = seq frame */
+int LZ6IO_setNbThreads(int nbThreads)
+{
+    g_nbThreads = nbThreads < 0 ? 1 : nbThreads;
+    return g_nbThreads;
+}
+
 int LZ6IO_setBlockCodec(int codec)
 {
     g_blockCodec = (codec != 0);
@@ -385,6 +394,161 @@ static void LZ6IO_freeCResources(cRess_t ress)
     if (LZ6F_isError(errorCode)) EXM_THROW(38, "Error : can't free LZ6F context resource : %s", LZ6F_getErrorName(errorCode));
 }
 
+/* Byte histogram, overwriting hist[256]. Four tables break the store-to-load
+ * dependency a run of equal bytes creates on a single one; counts are exact. */
+static void LZ6IO_byteHistogram(unsigned* hist, const unsigned char* p, size_t n)
+{
+    unsigned h[4][256];
+    size_t i = 0;
+    int b;
+    memset(h, 0, sizeof(h));
+    for (; i + 4 <= n; i += 4) {
+        h[0][p[i]]++; h[1][p[i+1]]++; h[2][p[i+2]]++; h[3][p[i+3]]++;
+    }
+    for (; i < n; i++) h[0][p[i]]++;
+    for (b = 0; b < 256; b++) hist[b] = h[0][b] + h[1][b] + h[2][b] + h[3][b];
+}
+
+/* make *buf hold at least `need` bytes (contents are not kept); sizes are rounded up
+ * to 1 MB so blocks of slightly different lengths reuse the same buffer */
+static int LZ6IO_reserve(unsigned char** buf, size_t* cap, size_t need)
+{
+    size_t const rounded = (need + ((size_t)1 << 20) - 1) & ~(((size_t)1 << 20) - 1);
+    if (*cap >= need) return 1;
+    free(*buf);
+    *buf = (unsigned char*)malloc(rounded);
+    *cap = *buf ? rounded : 0;
+    return *buf != NULL;
+}
+
+/* Slots in flight: blocks finish out of order but are written in order, so a slow
+ * early block holds its successors' slots; twice the workers keeps them fed. Huge
+ * blocks (-B7 is 256 MB) would make that a lot of memory, so the input held in
+ * flight is capped (2 GB; 256 MB for a 32-bit process), but never below threads + 2. */
+static int LZ6IO_slotsFor(int nThreads, size_t blockSize)
+{
+    size_t const budget = ((sizeof(void*) > 4) ? (size_t)2048 : (size_t)256) << 20;
+    size_t const byBudget = budget / (blockSize ? blockSize : 1);
+    size_t n = 2 * (size_t)nThreads + 2;
+    size_t const floor = (size_t)nThreads + 2;
+    if (n > byBudget) n = byBudget > floor ? byBudget : floor;
+    return (int)n;
+}
+
+/* threads actually worth starting for an input of `fileSize` bytes (0 = unknown) */
+static int LZ6IO_effectiveThreads(unsigned long long fileSize, size_t blockSize)
+{
+    int t = g_nbThreads <= 0 ? mt_hardware_threads() : g_nbThreads;
+    if (t > 64) t = 64;
+    if (fileSize) {
+        /* blocks are at most blockSize and (seq) rarely under 4 MB */
+        size_t const unit = blockSize < ((size_t)4 MB) ? blockSize : ((size_t)4 MB);
+        unsigned long long const blocks = fileSize / unit + 1;
+        if ((unsigned long long)t > blocks) t = (int)blocks;
+    }
+    return t < 1 ? 1 : t;
+}
+
+/* Where finished blocks go. Single thread: compressUpdate + fwrite, as ever.
+ * Multithreaded: independent-block frames only -- blocks are compressed by the
+ * workers and written back in input order, so the file is byte-identical. */
+typedef struct {
+    LZ6F_compressionContext_t ctx;          /* frame context: header, content checksum, end */
+    void* dstBuffer; size_t dstBufferSize;
+    FILE* dstFile;
+    unsigned long long* compressedBytes;
+    size_t blockSize;
+    const LZ6F_preferences_t* prefs;        /* what the workers were started with */
+    mt_pool_t* pool;                        /* NULL = single thread */
+    LZ6F_compressionContext_t* wctx;        /* one per worker */
+    void** wl;                              /* the pool's view of wctx */
+    int nWorkers;
+} blockSink_t;
+
+static void LZ6IO_compressWorker(void* wctx, mt_slot_t* s)
+{
+    size_t const r = LZ6F_compressBlockIndependent((LZ6F_compressionContext_t)wctx, s->out, s->outCap, s->in, s->inSize);
+    if (LZ6F_isError(r)) { s->error = 1; s->outSize = r; }
+    else s->outSize = r;
+}
+
+static void LZ6IO_sinkDrainOne(blockSink_t* k)
+{
+    mt_slot_t* const s = mt_pool_next_done(k->pool);
+    if (s->error) EXM_THROW(34, "Compression failed : %s", LZ6F_getErrorName(s->outSize));
+    if (fwrite(s->out, 1, s->outSize, k->dstFile) != s->outSize) EXM_THROW(35, "Write error : cannot write compressed block");
+    *k->compressedBytes += s->outSize;
+    mt_pool_release(k->pool, s);
+}
+
+static void LZ6IO_emitBlock(blockSink_t* k, const void* data, size_t len)
+{
+    if (!k->pool) {
+        size_t const outSize = LZ6F_compressUpdate(k->ctx, k->dstBuffer, k->dstBufferSize, data, len, NULL);
+        if (LZ6F_isError(outSize)) EXM_THROW(34, "Compression failed : %s", LZ6F_getErrorName(outSize));
+        *k->compressedBytes += outSize;
+        if (fwrite(k->dstBuffer, 1, outSize, k->dstFile) != outSize) EXM_THROW(35, "Write error : cannot write compressed block");
+        return;
+    }
+    {
+        mt_slot_t* s;
+        size_t const rc = LZ6F_updateContent(k->ctx, data, len);   /* checksum + size, in input order */
+        if (LZ6F_isError(rc)) EXM_THROW(34, "Compression failed : %s", LZ6F_getErrorName(rc));
+        while ((s = mt_pool_acquire(k->pool)) == NULL) LZ6IO_sinkDrainOne(k);
+        if (!LZ6IO_reserve(&s->in, &s->inCap, len)
+         || !LZ6IO_reserve(&s->out, &s->outCap, LZ6F_compressBound(len, k->prefs)))
+            EXM_THROW(31, "Allocation error : not enough memory");
+        memcpy(s->in, data, len);
+        s->inSize = len;
+        mt_pool_submit(k->pool, s);
+        while (mt_pool_oldest_ready(k->pool)) LZ6IO_sinkDrainOne(k);
+    }
+}
+
+static void LZ6IO_sinkFlush(blockSink_t* k)
+{
+    if (!k->pool) return;
+    while (mt_pool_pending(k->pool)) LZ6IO_sinkDrainOne(k);
+}
+
+static void LZ6IO_sinkClose(blockSink_t* k)
+{
+    int i;
+    mt_pool_destroy(k->pool);
+    k->pool = NULL;
+    for (i = 0; i < k->nWorkers; i++) LZ6F_freeCompressionContext(k->wctx[i]);
+    free(k->wctx);
+    free(k->wl);
+    k->wctx = NULL; k->wl = NULL; k->nWorkers = 0;
+}
+
+/* workers: one frame context each, started with the same preferences */
+static int LZ6IO_sinkStartThreads(blockSink_t* k, int nThreads, const LZ6F_preferences_t* prefs)
+{
+    unsigned char hdr[64];
+    int i, ok = 0;
+    k->wl = (void**)calloc((size_t)nThreads, sizeof(void*));
+    k->wctx = (LZ6F_compressionContext_t*)calloc((size_t)nThreads, sizeof(LZ6F_compressionContext_t));
+    k->nWorkers = 0;
+    if (!k->wl || !k->wctx) goto fail;
+    for (i = 0; i < nThreads; i++) {
+        if (LZ6F_isError(LZ6F_createCompressionContext(&k->wctx[i], LZ6F_VERSION))) break;
+        k->nWorkers = i + 1;
+        if (LZ6F_isError(LZ6F_compressBegin(k->wctx[i], hdr, sizeof(hdr), prefs))) break;
+        k->wl[i] = k->wctx[i];
+        ok++;
+    }
+    if (ok < nThreads) goto fail;
+    k->pool = mt_pool_create(nThreads, LZ6IO_slotsFor(nThreads, k->blockSize), LZ6IO_compressWorker, k->wl);
+    if (!k->pool) goto fail;
+    return 1;
+fail:
+    for (i = 0; i < k->nWorkers; i++) LZ6F_freeCompressionContext(k->wctx[i]);
+    free(k->wctx); free(k->wl);
+    k->wctx = NULL; k->wl = NULL; k->nWorkers = 0;
+    return 0;
+}
+
 /*
  * LZ6IO_compressFilename_extRess()
  * result : 0 : compression completed correctly
@@ -460,6 +624,22 @@ static int LZ6IO_compressFilename_extRess(cRess_t ress, const char* srcFileName,
         if (sizeCheck!=headerSize) EXM_THROW(33, "Write error : cannot write header");
         compressedfilesize += headerSize;
 
+        /* where finished blocks go: this thread, or a pool of workers */
+        blockSink_t sink;
+        memset(&sink, 0, sizeof(sink));
+        sink.ctx = ctx; sink.dstBuffer = dstBuffer; sink.dstBufferSize = dstBufferSize;
+        sink.dstFile = dstFile; sink.compressedBytes = &compressedfilesize;
+        sink.blockSize = blockSize; sink.prefs = &prefs;
+        {
+            /* seq blocks are a pure function of their input. The classic HC frame codec is not: its
+             * match finder keeps table contents from the previous block, so which context compresses
+             * a block would change the bytes. Those frames are compressed on one thread. */
+            int const nThreads = (g_blockIndependence && g_blockCodec == 1 && g_nbThreads != 1)
+                               ? LZ6IO_effectiveThreads(LZ6IO_GetFileSize(srcFileName), blockSize) : 1;
+            if (nThreads > 1 && !LZ6IO_sinkStartThreads(&sink, nThreads, &prefs))
+                DISPLAYLEVEL(2, "Warning : cannot start worker threads, compressing on one thread\n");
+        }
+
         /* Main Loop */
         if (g_blockCodec == 1)
         {
@@ -478,7 +658,7 @@ static int LZ6IO_compressFilename_extRess(cRess_t ress, const char* srcFileName,
             if (getenv("LZ6_SEG_THRESHOLD")) threshold = atof(getenv("LZ6_SEG_THRESHOLD"));
             unsigned s_hist[256] = {0}, w_hist[256];
             double s_H = 0.0; int s_has = 0;
-            size_t segLen = readSize, outSize;
+            size_t segLen = readSize;
 
             #define SEG_ENTROPY(hist, cnt, outH) do { \
                 unsigned _h[256]; memcpy(_h, hist, sizeof(_h)); \
@@ -490,9 +670,7 @@ static int LZ6IO_compressFilename_extRess(cRess_t ress, const char* srcFileName,
 
             /* profile the open segment (the first window) */
             {
-                unsigned hh[256] = {0};
-                for (size_t i = 0; i < segLen; i++) hh[segBuf[i]]++;
-                memcpy(s_hist, hh, sizeof(s_hist));
+                LZ6IO_byteHistogram(s_hist, segBuf, segLen);
                 SEG_ENTROPY(s_hist, segLen, s_H);
                 s_has = 1;
             }
@@ -505,11 +683,8 @@ static int LZ6IO_compressFilename_extRess(cRess_t ress, const char* srcFileName,
                  * read past the end of srcBuffer — that was a heap overflow
                  * when segLen landed exactly on blockSize). */
                 if (segLen >= blockSize) {
-                    outSize = LZ6F_compressUpdate(ctx, dstBuffer, dstBufferSize, srcBuffer, segLen, NULL);
-                    if (LZ6F_isError(outSize)) EXM_THROW(34, "Compression failed : %s", LZ6F_getErrorName(outSize));
-                    compressedfilesize += outSize;
-                    sizeCheck = fwrite(dstBuffer, 1, outSize, dstFile);
-                    if (sizeCheck!=outSize) EXM_THROW(35, "Write error : cannot write compressed block");
+                    LZ6IO_emitBlock(&sink, srcBuffer, segLen);
+                        DISPLAYUPDATE(2, "\rRead : %u MB   ==> %.2f%%   ", (unsigned)(filesize>>20), (double)compressedfilesize/(filesize+!filesize)*100);
                     segLen = 0;
                     memset(s_hist, 0, sizeof(s_hist));
                     s_H = 0.0; s_has = 0;
@@ -520,8 +695,7 @@ static int LZ6IO_compressFilename_extRess(cRess_t ress, const char* srcFileName,
                 filesize += readSize;
 
                 if (readSize > 0) {
-                    memset(w_hist, 0, sizeof(w_hist));
-                    for (size_t i = 0; i < readSize; i++) w_hist[segBuf[segLen + i]]++;
+                    LZ6IO_byteHistogram(w_hist, segBuf + segLen, readSize);
                     double w_H;
                     SEG_ENTROPY(w_hist, readSize, w_H);
                     int cut = 0;
@@ -529,12 +703,8 @@ static int LZ6IO_compressFilename_extRess(cRess_t ress, const char* srcFileName,
 
                     if (cut) {
                         /* close the open segment */
-                        outSize = LZ6F_compressUpdate(ctx, dstBuffer, dstBufferSize, srcBuffer, segLen, NULL);
-                        if (LZ6F_isError(outSize)) EXM_THROW(34, "Compression failed : %s", LZ6F_getErrorName(outSize));
-                        compressedfilesize += outSize;
+                        LZ6IO_emitBlock(&sink, srcBuffer, segLen);
                         DISPLAYUPDATE(2, "\rRead : %u MB   ==> %.2f%%   ", (unsigned)(filesize>>20), (double)compressedfilesize/(filesize+!filesize)*100);
-                        sizeCheck = fwrite(dstBuffer, 1, outSize, dstFile);
-                        if (sizeCheck!=outSize) EXM_THROW(35, "Write error : cannot write compressed block");
                         /* reopen with the just-read window */
                         memmove(segBuf, segBuf + segLen, readSize);
                         memcpy(s_hist, w_hist, sizeof(s_hist));
@@ -548,11 +718,8 @@ static int LZ6IO_compressFilename_extRess(cRess_t ress, const char* srcFileName,
                         SEG_ENTROPY(s_hist, segLen, s_H);
                     }
                     if (segLen >= blockSize) {
-                        outSize = LZ6F_compressUpdate(ctx, dstBuffer, dstBufferSize, srcBuffer, segLen, NULL);
-                        if (LZ6F_isError(outSize)) EXM_THROW(34, "Compression failed : %s", LZ6F_getErrorName(outSize));
-                        compressedfilesize += outSize;
-                        sizeCheck = fwrite(dstBuffer, 1, outSize, dstFile);
-                        if (sizeCheck!=outSize) EXM_THROW(35, "Write error : cannot write compressed block");
+                        LZ6IO_emitBlock(&sink, srcBuffer, segLen);
+                        DISPLAYUPDATE(2, "\rRead : %u MB   ==> %.2f%%   ", (unsigned)(filesize>>20), (double)compressedfilesize/(filesize+!filesize)*100);
                         segLen = 0;
                         memset(s_hist, 0, sizeof(s_hist));
                         s_H = 0.0; s_has = 0;
@@ -562,11 +729,8 @@ static int LZ6IO_compressFilename_extRess(cRess_t ress, const char* srcFileName,
                 if (readSize == 0 && feof(srcFile)) {
                     /* EOF: flush the open segment as the final block */
                     if (segLen > 0) {
-                        outSize = LZ6F_compressUpdate(ctx, dstBuffer, dstBufferSize, srcBuffer, segLen, NULL);
-                        if (LZ6F_isError(outSize)) EXM_THROW(34, "Compression failed : %s", LZ6F_getErrorName(outSize));
-                        compressedfilesize += outSize;
-                        sizeCheck = fwrite(dstBuffer, 1, outSize, dstFile);
-                        if (sizeCheck!=outSize) EXM_THROW(35, "Write error : cannot write compressed block");
+                        LZ6IO_emitBlock(&sink, srcBuffer, segLen);
+                        DISPLAYUPDATE(2, "\rRead : %u MB   ==> %.2f%%   ", (unsigned)(filesize>>20), (double)compressedfilesize/(filesize+!filesize)*100);
                         segLen = 0;
                     }
                     break;
@@ -576,22 +740,18 @@ static int LZ6IO_compressFilename_extRess(cRess_t ress, const char* srcFileName,
         else
         while (readSize>0)
         {
-            size_t outSize;
-
             /* Compress Block */
-            outSize = LZ6F_compressUpdate(ctx, dstBuffer, dstBufferSize, srcBuffer, readSize, NULL);
-            if (LZ6F_isError(outSize)) EXM_THROW(34, "Compression failed : %s", LZ6F_getErrorName(outSize));
-            compressedfilesize += outSize;
+            LZ6IO_emitBlock(&sink, srcBuffer, readSize);
             DISPLAYUPDATE(2, "\rRead : %u MB   ==> %.2f%%   ", (unsigned)(filesize>>20), (double)compressedfilesize/filesize*100);
-
-            /* Write Block */
-            sizeCheck = fwrite(dstBuffer, 1, outSize, dstFile);
-            if (sizeCheck!=outSize) EXM_THROW(35, "Write error : cannot write compressed block");
 
             /* Read next block */
             readSize  = fread(srcBuffer, (size_t)1, (size_t)blockSize, srcFile);
             filesize += readSize;
         }
+
+        /* all blocks out, in order, before the end mark */
+        LZ6IO_sinkFlush(&sink);
+        LZ6IO_sinkClose(&sink);
 
         /* End of Stream mark */
         headerSize = LZ6F_compressEnd(ctx, dstBuffer, dstBufferSize, NULL);
@@ -815,6 +975,128 @@ static void LZ6IO_freeDResources(dRess_t ress)
 }
 
 
+/* ---- multithreaded decoding of independent-block frames ----
+ * The reader splits the frame into blocks (4-byte header word + payload), the
+ * workers decode them, and the blocks are written back in order. Blocks are
+ * self-contained, so this reproduces what the single-thread decoder writes. */
+typedef struct {
+    FILE* dstFile;
+    mt_pool_t* pool;
+    void** wl;                       /* per-worker context: none, the decoder is stateless */
+    XXH32_state_t xxh;
+    int doChecksum;
+    unsigned long long total;
+    unsigned storedSkips;
+    unsigned char *in, *out;         /* one block, when there is no pool */
+    size_t inCap, outCap;
+} dSink_t;
+
+static void LZ6IO_decompressWorker(void* unused, mt_slot_t* s)
+{
+    size_t const r = LZ6F_decompressBlockIndependent(s->out, s->limit, s->in, s->tag);
+    (void)unused;
+    if (LZ6F_isError(r)) { s->error = 1; s->outSize = r; }
+    else s->outSize = r;
+}
+
+/* a decoded block, in order: checksum, count, write */
+static void LZ6IO_dsinkWrite(dSink_t* k, const unsigned char* data, size_t n)
+{
+    if (k->doChecksum) XXH32_update(&k->xxh, data, n);
+    k->total += n;
+    DISPLAYUPDATE(2, "\rDecompressed : %u MB  ", (unsigned)(k->total>>20));
+    k->storedSkips = LZ6IO_fwriteSparse(k->dstFile, data, n, k->storedSkips);
+}
+
+static void LZ6IO_dsinkDrainOne(dSink_t* k)
+{
+    mt_slot_t* const s = mt_pool_next_done(k->pool);
+    if (s->error) EXM_THROW(66, "Decompression error : %s", LZ6F_getErrorName(s->outSize));
+    LZ6IO_dsinkWrite(k, s->out, s->outSize);
+    mt_pool_release(k->pool, s);
+}
+
+static void LZ6IO_dsinkFlush(dSink_t* k)
+{
+    if (!k->pool) return;
+    while (mt_pool_pending(k->pool)) LZ6IO_dsinkDrainOne(k);
+}
+
+/* Several threads when asked for (and available); otherwise, or if they cannot be
+ * started, the blocks are decoded one after the other on this thread. */
+static void LZ6IO_dsinkStart(dSink_t* k, FILE* dstFile, int doChecksum, size_t maxBlockSize)
+{
+    int nThreads = g_nbThreads <= 0 ? mt_hardware_threads() : g_nbThreads;
+    if (nThreads > 64) nThreads = 64;
+    memset(k, 0, sizeof(*k));
+    k->dstFile = dstFile;
+    k->doChecksum = doChecksum;
+    if (doChecksum) XXH32_reset(&k->xxh, 0);
+    if (nThreads < 2) return;
+    k->wl = (void**)calloc((size_t)nThreads, sizeof(void*));
+    if (!k->wl) return;
+    k->pool = mt_pool_create(nThreads, LZ6IO_slotsFor(nThreads, maxBlockSize), LZ6IO_decompressWorker, k->wl);
+    if (!k->pool) { free(k->wl); k->wl = NULL; }
+}
+
+/* the header is already consumed (and validated by the frame decoder) */
+static unsigned long long LZ6IO_decompressBlocksMT(dSink_t* k, FILE* srcFile, size_t maxBlockSize, unsigned long long contentSize)
+{
+    for (;;)
+    {
+        unsigned char bhb[4];
+        unsigned bh;
+        size_t cSize;
+        mt_slot_t* s;
+
+        if (fread(bhb, 1, 4, srcFile) != 4) { LZ6IO_dsinkFlush(k); EXM_THROW(67, "Unfinished stream"); }
+        bh = LZ6IO_readLE32(bhb);
+        if (bh == 0) break;                                            /* end mark */
+        cSize = (bh & 0x80000000U) ? (bh & 0x7FFFFFFFU) : (bh & 0x3FFFFFFFU);   /* raw : bits 30-0 ; else bit 30 = seq flag */
+        if (cSize == 0 || cSize > maxBlockSize) { LZ6IO_dsinkFlush(k); EXM_THROW(66, "Decompression error : invalid block size"); }
+
+        if (!k->pool)   /* one thread: decode straight into the buffer that gets written */
+        {
+            size_t r;
+            if (!LZ6IO_reserve(&k->in, &k->inCap, cSize) || !LZ6IO_reserve(&k->out, &k->outCap, maxBlockSize))
+                EXM_THROW(61, "Allocation error : not enough memory");
+            if (fread(k->in, 1, cSize, srcFile) != cSize) EXM_THROW(67, "Unfinished stream");
+            r = LZ6F_decompressBlockIndependent(k->out, maxBlockSize, k->in, bh);
+            if (LZ6F_isError(r)) EXM_THROW(66, "Decompression error : %s", LZ6F_getErrorName(r));
+            LZ6IO_dsinkWrite(k, k->out, r);
+            continue;
+        }
+
+        while ((s = mt_pool_acquire(k->pool)) == NULL) LZ6IO_dsinkDrainOne(k);
+        /* the decoded size is not in the stream, so `out` must be able to hold a full block;
+         * its pages are only touched as far as the block really decodes */
+        if (!LZ6IO_reserve(&s->in, &s->inCap, cSize) || !LZ6IO_reserve(&s->out, &s->outCap, maxBlockSize))
+            EXM_THROW(61, "Allocation error : not enough memory");
+        if (fread(s->in, 1, cSize, srcFile) != cSize) { LZ6IO_dsinkFlush(k); EXM_THROW(67, "Unfinished stream"); }
+        s->inSize = cSize;
+        s->limit = maxBlockSize;   /* exactly what the frame allows, as the single-thread decoder does */
+        s->tag = bh;
+        mt_pool_submit(k->pool, s);
+        while (mt_pool_oldest_ready(k->pool)) LZ6IO_dsinkDrainOne(k);
+    }
+    LZ6IO_dsinkFlush(k);
+
+    if (k->doChecksum)
+    {
+        unsigned char cb[4];
+        if (fread(cb, 1, 4, srcFile) != 4) EXM_THROW(67, "Unfinished stream");
+        if (LZ6IO_readLE32(cb) != XXH32_digest(&k->xxh)) EXM_THROW(66, "Decompression error : content checksum invalid");
+    }
+    if (contentSize && k->total != contentSize) EXM_THROW(66, "Decompression error : decoded size differs from the frame header");
+
+    LZ6IO_fwriteSparseEnd(k->dstFile, k->storedSkips);
+    mt_pool_destroy(k->pool);   /* NULL-safe */
+    free(k->wl);
+    free(k->in); free(k->out);
+    return k->total;
+}
+
+
 static unsigned long long LZ6IO_decompressLZ6F(dRess_t ress, FILE* srcFile, FILE* dstFile, unsigned magicNumber)
 {
     unsigned long long filesize = 0;
@@ -828,6 +1110,37 @@ static unsigned long long LZ6IO_decompressLZ6F(dRess_t ress, FILE* srcFile, FILE
         LZ6IO_writeLE32(ress.srcBuffer, magicNumber);
         nextToLoad = LZ6F_decompress(ress.dCtx, ress.dstBuffer, &outSize, ress.srcBuffer, &inSize, NULL);
         if (LZ6F_isError(nextToLoad)) EXM_THROW(62, "Header error : %s", LZ6F_getErrorName(nextToLoad));
+    }
+
+    /* Read the rest of the header and let the frame decoder validate it. Independent blocks
+     * are decoded one by one, on several threads if asked to; anything else carries on below. */
+    {
+        unsigned char hb[16];
+        size_t inSize, outSize = 0;
+        size_t const got = fread(hb, 1, 2, srcFile);                       /* FLG, BD */
+        size_t hdrRest;
+        if (got != 2) EXM_THROW(67, "Unfinished stream");
+        hdrRest = ((hb[0] >> 3) & 1) ? 11 : 3;                             /* after the magic: with / without content size */
+        if (fread(hb + 2, 1, hdrRest - 2, srcFile) != hdrRest - 2) EXM_THROW(67, "Unfinished stream");
+        inSize = hdrRest;
+        nextToLoad = LZ6F_decompress(ress.dCtx, ress.dstBuffer, &outSize, hb, &inSize, NULL);
+        if (LZ6F_isError(nextToLoad)) EXM_THROW(62, "Header error : %s", LZ6F_getErrorName(nextToLoad));
+        {   /* FLG = hb[0], BD = hb[1], content size = hb[2..9] when flagged; the decoder accepted them */
+            int const independent = (hb[0] >> 5) & 1;
+            int const checksum = (hb[0] >> 2) & 1;
+            int const blockSizeID = (hb[1] >> 4) & 7;
+            unsigned long long contentSize = 0;
+            dSink_t sink;
+            if ((hb[0] >> 3) & 1) { int i; for (i = 7; i >= 0; i--) contentSize = (contentSize << 8) | hb[2 + i]; }
+            if (independent)
+            {
+                size_t const maxBlockSize = (size_t)LZ6IO_GetBlockSize_FromBlockId(blockSizeID);
+                LZ6IO_dsinkStart(&sink, dstFile, checksum, maxBlockSize);
+                unsigned long long const decoded = LZ6IO_decompressBlocksMT(&sink, srcFile, maxBlockSize, contentSize);
+                LZ6F_resetDecompressionContext(ress.dCtx);   /* the frame never went through it: ready for the next one */
+                return decoded;
+            }
+        }
     }
 
     /* Main Loop */

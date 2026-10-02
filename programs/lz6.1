@@ -178,6 +178,22 @@ independently, and the resulting name of the compressed file will be
  block size [4-7](default : 7)
  B4= 64KB ; B5= 256KB ; B6= 1MB ; B7= 4MB
 .TP
+.B \-T#
+ worker threads (default : 1; 0 = one per CPU core).
+ Compression uses them for levels 1-15 (the seq engine); with
+.B --hc
+or
+.B -0
+it runs on one thread. Decompression uses them for any file.
+ The compressed file is byte-for-byte the same at any thread count, and any
+ file can be decompressed with any thread count. Each thread works on one block,
+ so memory grows with both
+.B -B
+and
+.B -T
+(about two blocks per thread, plus the compressor's tables), and a file of a single
+block does not speed up. Frames with linked blocks are always decoded on one thread.
+.TP
 .B \-BD
  block dependency (improve compression ratio)
 .TP
