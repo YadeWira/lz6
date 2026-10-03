@@ -33,6 +33,18 @@ v1.6.11-pre (unreleased)
   below ~48): 30.45% at ~32 cycles/byte, but placed at L3 it compresses worse than the old L3 (parked in the branch
   parked-fast2-ladder); 7 hashed bytes at L2 (Silesia -0.01 points, AIT +0.10); software prefetch of the next hash
   slot in fast1/fast2 (+-1.5%, noise: the parsers are instruction-bound, not latency-bound).
+- ratio, BREAKS THE SEQ BLOCK FORMAT (lab format: streams from earlier builds no longer decode; the LZ6S1 fixture is
+  regenerated at level 9): the extra-bit widths of the ll and ml codes 16..34 were wider than the step to the next
+  code's base, so most of those raw bits were always zero (the code for lengths 128..159 read 9 bits for 5 of
+  information, the one for 224..255 read 12). They are now log2 of the step, 1,1,1,1,2,2,2,2,3,3,3,4,4,4,4,5,5,5,5
+  for codes 16..34 in both tables; the escape code keeps 24. The 36 codes, their bases, the tANS tables and the
+  decoder are untouched, and the optimal parser's price model reads the same widths, so its prices become exact
+  (levels 8-15 parse differently). Compressed bytes over 20 files (Silesia + AIT A-H), levels 1/3/5/8/12/15:
+  -0.20% / -0.25% / -0.27% / -0.29% / -0.32% / -0.31% in total, and no file is larger at any of them (level 3:
+  nci -2.6%, xml -1.1%, mr -0.7%, samba -0.3%, webster -0.2%, mozilla -0.13%, dickens -0.004%; AIT D and E
+  unchanged). Decode cost is unchanged: only table constants differ (identical decode instructions per byte at
+  levels 1-5; within 0.3% at levels 8-15, where the parses differ). The encoder asserts (-DLZ6SEQ_DEBUG builds
+  only) that every ll/ml extra value fits its width.
 
 v1.6.10-pre
 - speed/CLI: multithreaded compression and decompression, -T# (0 = one thread

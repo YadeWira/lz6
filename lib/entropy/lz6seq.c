@@ -36,6 +36,15 @@
 #  define LZ6SEQ_STAGE_B_FAST_OK(seqno) 1
 #endif
 
+/* encoder invariant checks: compiled in only with -DLZ6SEQ_DEBUG. They need the
+ * code tables, so a debug build must call LZ6_seq_init() before its first compress. */
+#ifdef LZ6SEQ_DEBUG
+#  include <assert.h>
+#  define LZ6SEQ_ASSERT(c) assert(c)
+#else
+#  define LZ6SEQ_ASSERT(c) ((void)0)
+#endif
+
 /* ---- symbol tables (match ozip's ozf3.c) ---- */
 #define LL_CODES 36
 #define ML_CODES 36
@@ -65,9 +74,13 @@
 #error "tANS states are assumed to fit 12 bits (3 * 4096 decode entries)"
 #endif
 
+/* ll/ml code c: value = base[c] + read(extra[c]). Codes below 16 are one value
+ * each; from 16 on a code covers [base[c], base[c+1]), so extra[c] is log2 of
+ * that step and every extra value is < 1 << extra[c]. The last code is the
+ * open-ended escape: 24 bits. */
 static const int LL_extra[LL_CODES] = {
  0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,
- 1,1,1,1,2,2,3,3,4,4,5,5,6,7,8,9,10,11,12,24
+ 1,1,1,1,2,2,2,2,3,3,3,4,4,4,4,5,5,5,5,24
 };
 static const int LL_base[LL_CODES] = {
  0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,
@@ -76,7 +89,7 @@ static const int LL_base[LL_CODES] = {
 };
 static const int ML_extra[ML_CODES] = {
  0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,
- 1,1,1,1,2,2,3,3,4,4,5,5,6,7,8,9,10,11,12,24
+ 1,1,1,1,2,2,2,2,3,3,3,4,4,4,4,5,5,5,5,24
 };
 static const int ML_base[ML_CODES] = {
  3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,
@@ -1345,10 +1358,14 @@ parsed:
                 tbw_flush(&w);
             }
             const unsigned lc = ll_syms[n];
-            tbw_put(&w, (uint32_t)(sc.lit_lens[n] - LL_base[lc]), (unsigned)LL_extra[lc]);
+            const uint32_t lx = (uint32_t)(sc.lit_lens[n] - LL_base[lc]);
+            LZ6SEQ_ASSERT(lx < (1u << LL_extra[lc]));   /* tbw_put would silently truncate it */
+            tbw_put(&w, lx, (unsigned)LL_extra[lc]);
             if (ml_syms[n] > 0) {
                 const unsigned mr = ml_syms[n] - 1;
-                tbw_put(&w, (uint32_t)(sc.match_lens[n] - ML_base[mr]), (unsigned)ML_extra[mr]);
+                const uint32_t mx = (uint32_t)(sc.match_lens[n] - ML_base[mr]);
+                LZ6SEQ_ASSERT(mx < (1u << ML_extra[mr]));
+                tbw_put(&w, mx, (unsigned)ML_extra[mr]);
                 tbw_flush(&w);
                 const unsigned oc = of_syms[n];
                 if (oc < OF_CODES) { tbw_put(&w, (uint32_t)(sc.offsets[n] - OF_base[oc]) >> OF_LOW, OF_extra[oc]); tbw_flush(&w); }
