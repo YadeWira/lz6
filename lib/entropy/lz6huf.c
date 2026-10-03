@@ -468,6 +468,137 @@ size_t huf_encode4_8(const uint8_t* hdr, const uint8_t* syms, size_t n,
     return (size_t)(p - out);
 }
 
+#if defined(__GNUC__) || defined(__clang__)
+#  define HUF_FORCE_INLINE static inline __attribute__((always_inline))
+#else
+#  define HUF_FORCE_INLINE static inline
+#endif
+
+/* The fast loop below is dominated by variable-count shifts; with BMI2
+ * (shlx: 1 uop instead of 3) it runs ~20% faster. Compile it twice and pick
+ * at run time, like decode_normal in lz6seq.c (same switch to turn it off). */
+#if (defined(__GNUC__) || defined(__clang__)) && (defined(__x86_64__) || defined(_M_X64)) \
+    && !defined(LZ6SEQ_NO_DYNAMIC_BMI2)
+#  define LZ6HUF_DYNAMIC_BMI2 1
+#endif
+
+/* State of the fast loop. src/pos: each stream's bytes and bit position;
+ * lim: the last bit position at which an 8-byte load is still inside the
+ * stream; dst: where each stream writes; room: symbols each may still write. */
+typedef struct {
+    const uint8_t* src[4];
+    size_t pos[4];
+    size_t lim[4];
+    uint8_t* dst[4];
+    size_t room;
+} huf4_job;
+
+/* Iterations that cannot read past the stream whatever the codes are: one
+ * iteration takes at most NS * K <= 56 bits, so p <= lim holds at the start
+ * of each of the first ((lim - p) >> 6) + 1 of them. */
+static inline size_t huf4_iters(size_t lim, size_t p)
+{
+    return p <= lim ? ((lim - p) >> 6) + 1 : 0;
+}
+
+/* The four streams advance in lockstep, NS symbols each per iteration, one
+ * lookup per symbol in `tab` (2^K symbol bytes, then 2^K length bytes) and no
+ * per-symbol branch: the table has no long code and no unused slot, and a
+ * window (>= 57 bits) is loaded once per iteration. Returns the symbols
+ * decoded per stream; the bit positions are left in job->pos. */
+HUF_FORCE_INLINE size_t huf4_core(const uint8_t* tab, const int K, const int NS, huf4_job* job)
+{
+    const uint8_t *b0 = job->src[0], *b1 = job->src[1], *b2 = job->src[2], *b3 = job->src[3];
+    uint8_t *const o0 = job->dst[0], *const o1 = job->dst[1], *const o2 = job->dst[2], *const o3 = job->dst[3];
+    const size_t l0 = job->lim[0], l1 = job->lim[1], l2 = job->lim[2], l3 = job->lim[3];
+    const size_t room = job->room;
+    size_t p0 = job->pos[0], p1 = job->pos[1], p2 = job->pos[2], p3 = job->pos[3];
+    size_t i = 0;
+    for (;;) {
+        /* the bounds are checked once per batch of iterations; batches shrink towards the stream ends */
+        size_t it = (room - i) / (size_t)NS, t;
+        t = huf4_iters(l0, p0); if (t < it) it = t;
+        t = huf4_iters(l1, p1); if (t < it) it = t;
+        t = huf4_iters(l2, p2); if (t < it) it = t;
+        t = huf4_iters(l3, p3); if (t < it) it = t;
+        if (it == 0) break;
+        do {
+            uint64_t w0 = huf_read_be64(b0 + (p0 >> 3)) << (p0 & 7);
+            uint64_t w1 = huf_read_be64(b1 + (p1 >> 3)) << (p1 & 7);
+            uint64_t w2 = huf_read_be64(b2 + (p2 >> 3)) << (p2 & 7);
+            uint64_t w3 = huf_read_be64(b3 + (p3 >> 3)) << (p3 & 7);
+#define HUF4_SYM(J, S) do { const size_t x = w##J >> (64 - K);                          \
+                const unsigned l = tab[((size_t)1 << K) + x];                           \
+                o##J[i + (S)] = tab[x]; w##J <<= l; p##J += l; } while (0)
+#define HUF4_ROUND(S) do { HUF4_SYM(0, S); HUF4_SYM(1, S); HUF4_SYM(2, S); HUF4_SYM(3, S); } while (0)
+            HUF4_ROUND(0); HUF4_ROUND(1); HUF4_ROUND(2); HUF4_ROUND(3);
+            if (NS > 4) HUF4_ROUND(4);
+            if (NS > 5) HUF4_ROUND(5);
+#undef HUF4_ROUND
+#undef HUF4_SYM
+            i += (size_t)NS;
+        } while (--it);
+    }
+    job->pos[0] = p0; job->pos[1] = p1; job->pos[2] = p2; job->pos[3] = p3;
+    return i;
+}
+
+/* table width K and symbols per iteration NS: NS * K <= 56 */
+HUF_FORCE_INLINE size_t huf4_fast_body(const uint8_t* tab, int K, huf4_job* job)
+{
+    switch (K) {
+    case 9:  return huf4_core(tab, 9, 6, job);
+    case 11: return huf4_core(tab, 11, 5, job);
+    default: return huf4_core(tab, 12, 4, job);
+    }
+}
+
+static size_t huf4_fast_default(const uint8_t* tab, int K, huf4_job* job)
+{
+    return huf4_fast_body(tab, K, job);
+}
+
+#ifdef LZ6HUF_DYNAMIC_BMI2
+__attribute__((target("bmi2")))
+static size_t huf4_fast_bmi2(const uint8_t* tab, int K, huf4_job* job)
+{
+    return huf4_fast_body(tab, K, job);
+}
+#endif
+
+static size_t huf4_fast(const uint8_t* tab, int K, huf4_job* job)
+{
+#ifdef LZ6HUF_DYNAMIC_BMI2
+    __builtin_cpu_init();
+    if (__builtin_cpu_supports("bmi2")) return huf4_fast_bmi2(tab, K, job);
+#endif
+    return huf4_fast_default(tab, K, job);
+}
+
+/* Table of the fast loop: the decode table widened to K = 9, 11 or 12 bits
+ * (entries repeated over the extra low bits) as 2^K symbol bytes followed by
+ * 2^K length bytes. Returns K, or 0 unless the code is a complete prefix code
+ * with every length <= k: the fast loop has no check for a long code or an
+ * unused slot, and a corrupt header with overlapping codes has to keep
+ * decoding through the pair table of the 1-2 symbol loop, which reads such a
+ * table differently from a lookup per symbol. */
+static int huf4_table(const huf_dstate* t, uint8_t* tab)
+{
+    const int k = t->k;
+    const int K = k <= 9 ? 9 : k <= 11 ? 11 : 12;
+    uint32_t kraft = 0;
+    for (int l = k + 1; l <= HUF_MAX_CODE_BITS; l++) if (t->cnt[l]) return 0;
+    for (int l = 1; l <= k; l++) kraft += (uint32_t)t->cnt[l] << (k - l);
+    if (kraft != (1u << k)) return 0;
+    for (uint32_t i = 0; i < (1u << K); i++) {
+        const uint16_t v = t->table[i >> (K - k)];
+        if (v == 0xFFFF) return 0;
+        tab[i] = (uint8_t)(v >> 4);
+        tab[(1u << K) + i] = (uint8_t)(v & 15);
+    }
+    return K;
+}
+
 size_t huf_decode4(const huf_dstate* t, const uint8_t* in, size_t in_len,
                    uint8_t* out, size_t n)
 {
@@ -492,13 +623,33 @@ size_t huf_decode4(const huf_dstate* t, const uint8_t* in, size_t in_len,
         oe[j] = out + start + (n - start < seg ? n - start : seg);
         q += nb;
     }
+    uint8_t tab[2 << HUF_MAX_TABLE_BITS];
+    int K = 0;
+    /* the fast table costs ~9 instructions per entry and saves ~4 or more per
+     * symbol: only worth building for a block with several symbols per entry */
+    if (n >= ((size_t)4 << t->k) && st[0].nbytes >= 8 && st[1].nbytes >= 8 && st[2].nbytes >= 8 && st[3].nbytes >= 8)
+        K = huf4_table(t, tab);
+    if (K) {
+        huf4_job job;
+        job.room = (size_t)(oe[3] - o[3]);   /* the last stream is the shortest */
+        for (int j = 0; j < 4; j++) {
+            job.src[j] = st[j].base;
+            job.pos[j] = 0;
+            job.lim[j] = 8 * (st[j].nbytes - 8);
+            job.dst[j] = o[j];
+        }
+        const size_t done = huf4_fast(tab, K, &job);
+        for (int j = 0; j < 4; j++) { pos[j] = job.pos[j]; o[j] += done; }
+    }
+    /* 1-2 symbols per lookup: tables with long codes or unused slots, small
+     * blocks, and what the fast loop leaves of the stream ends */
     const int k = t->k;
     const uint32_t* const table2 = t->table2;
     /* interleaved core, with each stream's state in scalars so it stays in
      * registers (arrays indexed by stream number went through memory and
      * made this loop slower than one stream) */
     const uint8_t *b0 = st[0].base, *b1 = st[1].base, *b2 = st[2].base, *b3 = st[3].base;
-    size_t p0 = 0, p1 = 0, p2 = 0, p3 = 0;
+    size_t p0 = pos[0], p1 = pos[1], p2 = pos[2], p3 = pos[3];
     uint8_t *o0 = o[0], *o1 = o[1], *o2 = o[2], *o3 = o[3];
     if (st[0].nbytes >= 8 && st[1].nbytes >= 8 && st[2].nbytes >= 8 && st[3].nbytes >= 8) {
         const size_t l0 = st[0].nbytes - 8, l1 = st[1].nbytes - 8, l2 = st[2].nbytes - 8, l3 = st[3].nbytes - 8;
