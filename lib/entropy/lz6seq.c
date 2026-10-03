@@ -2518,6 +2518,54 @@ static size_t decode_x86_wrapper(const uint8_t* p, size_t srcSize, char* dst, si
     return isize;
 }
 
+/* Byte-plane merge: out[stride*j + i] = lane_i[j] for j < n, so it writes
+ * stride*n bytes and reads n bytes of each lane. The SSE2 loop does 16
+ * lane bytes per step (unpack = interleave) and only runs while a whole
+ * 16-byte window of every lane is in range; the scalar loop is the tail
+ * and, without SSE2, the whole merge. Both give the same bytes. */
+static void plane_merge2(uint8_t* out, const uint8_t* l0, const uint8_t* l1, size_t n)
+{
+    size_t j = 0;
+#if defined(__SSE2__)
+    for (; j + 16 <= n; j += 16) {
+        const __m128i a = _mm_loadu_si128((const __m128i*)(l0 + j));
+        const __m128i b = _mm_loadu_si128((const __m128i*)(l1 + j));
+        _mm_storeu_si128((__m128i*)(out + 2 * j), _mm_unpacklo_epi8(a, b));
+        _mm_storeu_si128((__m128i*)(out + 2 * j + 16), _mm_unpackhi_epi8(a, b));
+    }
+#endif
+    for (; j < n; j++) {
+        out[2 * j] = l0[j];
+        out[2 * j + 1] = l1[j];
+    }
+}
+
+static void plane_merge4(uint8_t* out, const uint8_t* l0, const uint8_t* l1,
+                         const uint8_t* l2, const uint8_t* l3, size_t n)
+{
+    size_t j = 0;
+#if defined(__SSE2__)
+    for (; j + 16 <= n; j += 16) {
+        const __m128i a = _mm_loadu_si128((const __m128i*)(l0 + j));
+        const __m128i b = _mm_loadu_si128((const __m128i*)(l1 + j));
+        const __m128i c = _mm_loadu_si128((const __m128i*)(l2 + j));
+        const __m128i d = _mm_loadu_si128((const __m128i*)(l3 + j));
+        const __m128i ab_lo = _mm_unpacklo_epi8(a, b), ab_hi = _mm_unpackhi_epi8(a, b);
+        const __m128i cd_lo = _mm_unpacklo_epi8(c, d), cd_hi = _mm_unpackhi_epi8(c, d);
+        _mm_storeu_si128((__m128i*)(out + 4 * j), _mm_unpacklo_epi16(ab_lo, cd_lo));
+        _mm_storeu_si128((__m128i*)(out + 4 * j + 16), _mm_unpackhi_epi16(ab_lo, cd_lo));
+        _mm_storeu_si128((__m128i*)(out + 4 * j + 32), _mm_unpacklo_epi16(ab_hi, cd_hi));
+        _mm_storeu_si128((__m128i*)(out + 4 * j + 48), _mm_unpackhi_epi16(ab_hi, cd_hi));
+    }
+#endif
+    for (; j < n; j++) {
+        out[4 * j] = l0[j];
+        out[4 * j + 1] = l1[j];
+        out[4 * j + 2] = l2[j];
+        out[4 * j + 3] = l3[j];
+    }
+}
+
 size_t LZ6_decompress_seq(const char* src, size_t srcSize,
                           char* dst, size_t dstCap) {
     const uint8_t* p = (const uint8_t*)src;
@@ -2573,21 +2621,12 @@ size_t LZ6_decompress_seq(const char* src, size_t srcSize,
                 q += plane_size;
             } else { free(planes); return 0; }
         }
+        const uint8_t *l0 = planes, *l1 = planes + plane_size;
         if (stride == 2) {
-            const uint8_t *l0 = planes, *l1 = planes + plane_size;
-            for (size_t j = 0; j < plane_size; j++) {
-                out[2 * j] = l0[j];
-                out[2 * j + 1] = l1[j];
-            }
+            plane_merge2(out, l0, l1, plane_size);
         } else {
-            const uint8_t *l0 = planes, *l1 = planes + plane_size;
             const uint8_t *l2 = l1 + plane_size, *l3 = l2 + plane_size;
-            for (size_t j = 0; j < plane_size; j++) {
-                out[4 * j] = l0[j];
-                out[4 * j + 1] = l1[j];
-                out[4 * j + 2] = l2[j];
-                out[4 * j + 3] = l3[j];
-            }
+            plane_merge4(out, l0, l1, l2, l3, plane_size);
         }
         free(planes);
         return (size_t)isize;
