@@ -397,7 +397,7 @@ static const LZ6HC_parameters LZ6HC_seqParameters[LZ6HC_MAX_CLEVEL+1] =
     {        0,          0,  0,  0,     0,  0,     0,  0, LZ6HC_fast             }, // level 0 - never used
     { MAXD_LOG,   MAXD_LOG, 15,  0,     0,  6,    20,  0, LZ6HC_fast1            }, // level 1   full Silesia 33.33% / 150
     { MAXD_LOG,   MAXD_LOG, 20,  0,     0,  6,    25,  0, LZ6HC_fast1            }, // level 2   full Silesia 31.84% / 128
-    { MAXD_LOG,   MAXD_LOG, 10,  0,     8,  5,    22,  0, LZ6HC_row              }, // level 3   28.64% / 57
+    { MAXD_LOG,   MAXD_LOG, 10,  0,     8,  6,    22,  0, LZ6HC_row              }, // level 3   full Silesia 28.87% (6-byte hash: was 28.97% with 5; AIT 39.73 -> 39.62%)
     { MAXD_LOG,   MAXD_LOG, 10,  0,     8,  5,    22,  1, LZ6HC_row              }, // level 4   28.12% / 45
     { MAXD_LOG,   MAXD_LOG, 10,  5,    24,  5,    23,  2, LZ6HC_row              }, // level 5   full Silesia 27.81% (32-slot rows)
     { MAXD_LOG,   MAXD_LOG, 10,  5,    32,  5,    24,  2, LZ6HC_row              }, // level 6   full Silesia 27.69% (32-slot rows)

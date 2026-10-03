@@ -47,6 +47,9 @@
 #include <stdio.h>    /* fprintf, getchar */
 #include <stdlib.h>   /* exit, calloc, free */
 #include <string.h>   /* strcmp, strlen */
+#ifdef __GLIBC__
+#  include <malloc.h>   /* mallopt */
+#endif
 #include "bench.h"    /* BMK_benchFile, BMK_SetNbIterations, BMK_SetBlocksize, BMK_SetPause */
 #include "lz6io.h"    /* LZ6IO_compressFilename, LZ6IO_decompressFilename, LZ6IO_compressMultipleFilenames */
 #include "lz6.h"      // LZ6_VERSION
@@ -255,6 +258,16 @@ int main(int argc, char** argv)
     char nullOutput[] = NULL_OUTPUT;
     char extension[] = LZ6_EXTENSION;
     int  blockSize;
+
+#ifdef __GLIBC__
+    /* Blocks are processed one after the other and each needs tens of MB of work buffers and
+     * hash tables. By default glibc hands those back to the kernel (mmap/munmap) and faults the
+     * pages in again for the next block: 6-10% of the encode time at levels 1-3 (silesia.tar,
+     * -B5). Keep the freed memory in the heap instead; the process is short-lived. */
+    mallopt(M_MMAP_THRESHOLD, 32 << 20);
+    mallopt(M_TRIM_THRESHOLD, 1 << 30);
+    mallopt(M_TOP_PAD, 64 << 20);
+#endif
 
     /* Init */
     programName = argv[0];

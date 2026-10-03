@@ -952,10 +952,12 @@ parsed:
         uint8_t* ctx_buf = NULL;
         size_t ctx_sz = 0;
         int ctx_mode16 = 0;
-        /* order-1 only at level >= 4: at L1/L2 its encode cost dwarfs the
+        /* order-1 only at level >= 8: at L1/L2 its encode cost dwarfs the
          * ratio gain and sinks the Weissman score (measured on A-H:
-         * L2 W 2.32 -> 1.76 with order-1 on; L4+ parser dominates time). */
-        if (lit_count >= 65536 && level >= 4 && !fast_lits) {
+         * L2 W 2.32 -> 1.76 with order-1 on). It is also slow to decode, and at
+         * levels 4-7 it was never chosen on Silesia or AIT (identical bytes
+         * with it off) while its trial cost ~5% of the encode time. */
+        if (lit_count >= 65536 && level >= 8 && !fast_lits) {
             /* sample up to 64K literals */
             int samp = lit_count < 65536 ? lit_count : 65536;
             uint32_t hist0[256], hist1[256];
@@ -1368,7 +1370,11 @@ static void lane_hist(const uint8_t* src, size_t n, int stride, uint32_t hist[4]
         for (; i + 4 <= n; i += 4) {
             hist[0][src[i]]++; hist[1][src[i + 1]]++; hist[2][src[i + 2]]++; hist[3][src[i + 3]]++;
         }
-    for (; i < n; i++) hist[i % (size_t)stride][src[i]]++;
+    else if (stride == 2)   /* not the generic loop below: its i % stride is a 64-bit division per byte (~20 cycles) */
+        for (; i + 2 <= n; i += 2) {
+            hist[0][src[i]]++; hist[1][src[i + 1]]++;
+        }
+    for (; i < n; i++) hist[i % (size_t)stride][src[i]]++;   /* the tail: fewer than `stride` bytes */
 }
 
 /* Per-lane order-0 entropy (x256) of `stride` interleaved lanes. Inputs

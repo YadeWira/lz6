@@ -65,3 +65,25 @@ kernel 5.6%.
   cycles, +6.2% size; K=8: -58% sequences, -29% cycles, +24% size).
 - Not measured, only estimated: a rewrite of the decode loop to cut register pressure (-10 to -35% instructions),
   reusing buffers across blocks (kernel share, 5-10% of encode).
+
+## Levels 1-5: sweeps, and what was adopted (2026-10-02)
+
+Whole Silesia, one thread, same counters. Ratios are exact; cycles carry 5-15% noise between runs on this machine, so
+only differences measured side by side are trusted. Counters exclude kernel time: page-fault costs only show in wall time.
+
+- **L1 and L2 are polished within their parser.** 36 settings of `fast1` (hash 2^13..2^20, 5-7 hashed bytes, window
+  2^20 or 2^25): none dominates L1; 7 hashed bytes at L2 gives 31.63% against 31.65% on Silesia but +0.10 points on AIT.
+- **The row finder (L3-L6) has a floor of ~48 cycles/byte** whatever its candidates (1-8) and table (2^16..2^22 slots):
+  31.60% at 48.2; fast1 never costs more than ~24. Nothing existed between 24 and 48.
+- **A two-table parser (`fast2`: long table over 8 bytes, short over 5, long candidate tried one byte ahead)** fills it:
+  30.43% at 34.3 cycles/byte (2^21 / 2^18 entries, window 2^25), 30.64% at 29.5, 30.81% at 27.7; smaller tables do not
+  make it cheaper (floor ~25-28). Placed at L3 it compresses worse than the old L3 (30.45% against 28.97%), so it was not
+  adopted (branch parked-fast2-ladder). zstd -4 gets 30.65% at ~21 cycles/byte.
+- **L3 with a 6-byte hash:** 28.87% against 28.97% (AIT 39.62% against 39.73%) at the same cost: adopted.
+- **Order-1 literals at levels 4-7:** with them off the output is byte-identical on Silesia and AIT and the encode ~5%
+  cheaper. They were the reason decode time jumped when a parser change gave the literals more weight (L4 with a 7-byte
+  hash: 13.5 cycles/byte instead of 5.9). Now tried from level 8.
+- **Where a level-1..3 encode spends its time** (dickens, parsers un-inlined): parser 49/58/60%, entropy stage
+  (`compress_normal_ex`) 24/21/20%, kernel 9/5/6%, byte-plane histogram 7/6/6% (the stride-2 division, now fixed).
+  Software prefetch of the next hash slot: +-1.5%, noise.
+
