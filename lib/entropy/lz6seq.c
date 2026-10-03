@@ -44,8 +44,12 @@
 #define OF_BUCKETS 25
 #define OF_CODES ((1 << OF_DIRECT) - 1 + (OF_BUCKETS - OF_DIRECT) * (1 << OF_LOW))
 #define TANS_MAX_SYMS 256   /* the header stores maxSym in one byte */
+#define TANS_MAX_LOG 12     /* tANS tables hold 2^log states, log <= TANS_MAX_LOG */
 #if OF_CODES + 3 > TANS_MAX_SYMS || OF_LOW > OF_DIRECT
 #error "offset alphabet too large"
+#endif
+#if TANS_MAX_LOG > 12
+#error "tANS states are assumed to fit 12 bits (3 * 4096 decode entries)"
 #endif
 
 static const int LL_extra[LL_CODES] = {
@@ -86,6 +90,17 @@ static int code_tabs_ready = 0;
 static void code_tabs_init(void);
 void LZ6_seq_init(void) { if (!code_tabs_ready) code_tabs_init(); }
 
+/* The decoder sizes its bit windows and fields from these bounds: a value
+ * is base + (raw(extra) << shift) and must stay below 2^limit_bits (ll, ml
+ * < 2^26 and md < 2^25, so they fit an int and no sum of them can wrap),
+ * and one extras field (<= 24 bits) plus one state step (<= TANS_MAX_LOG
+ * bits) must fit the 56 bits a bit-reader window is guaranteed to hold
+ * after a reload (57, less one for the sub-byte position). */
+static int code_range_ok(int64_t base, int extra, int shift, int limit_bits) {
+    return extra >= 0 && extra <= 24 && extra + TANS_MAX_LOG <= 56 &&
+           base >= 0 && base + ((((int64_t)1 << extra) - 1) << shift) < ((int64_t)1 << limit_bits);
+}
+
 static void code_tabs_init(void) {
     for (int v = 0; v <= LL_TAB_MAX; v++) ll_tab[v] = (uint8_t)ll_to_code(v);
     for (int v = 0; v <= ML_TAB_MAX; v++) ml_tab[v] = (uint8_t)ml_to_code(v);
@@ -97,6 +112,13 @@ static void code_tabs_init(void) {
             OF_extra[c] = (uint8_t)(direct ? 0 : b - OF_LOW);
         }
     }
+    /* the tables are constants, so a violation is a source edit gone wrong:
+     * fail on the first use rather than decode with broken bounds */
+    int ok = 1;
+    for (int c = 0; c < LL_CODES; c++) ok &= code_range_ok(LL_base[c], LL_extra[c], 0, 26);
+    for (int c = 0; c < ML_CODES; c++) ok &= code_range_ok(ML_base[c], ML_extra[c], 0, 26);
+    for (int c = 0; c < OF_CODES; c++) ok &= code_range_ok(OF_base[c], OF_extra[c], OF_LOW, 25);
+    if (!ok) { fprintf(stderr, "lz6seq: code table bounds violated\n"); abort(); }
     code_tabs_ready = 1;
 }
 
@@ -372,7 +394,6 @@ static void build_seq_price(const seq_collector_t* sc, const uint8_t* src, LZ6HC
  * load plus a bit read (no multiply), and the ll/ml/of states share ONE
  * backward bitstream with the extra bits, so a sequence costs one or two
  * refills in total. Tables hold 2^log states, log <= TANS_MAX_LOG. */
-#define TANS_MAX_LOG 12
 #define TANS_MIN_LOG 5
 
 typedef struct { int32_t deltaFindState; uint32_t deltaNbBits; } tans_symtt;
@@ -2136,6 +2157,8 @@ LZ6SEQ_FORCE_INLINE size_t decode_normal_body(const char* src, size_t srcSize,
         return 0;
     }
 
+    /* a block can end right after its literals: the seq_count field must exist */
+    if ((size_t)(end - p) < 4) { lit_dec_free(&L); return 0; }
     int sc = (int)r32le(&p);
     if (sc < 0 || sc > (1 << 24)) { lit_dec_free(&L); return 0; }
 

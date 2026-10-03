@@ -306,8 +306,11 @@ size_t huf_dec_tables(huf_dstate* s, const uint8_t* in, size_t in_len)
                 table[base | sub] = v;
             }
         } else {
-            /* prefix of the long code fills exactly one slot */
-            table[(uint32_t)code[s2] >> (l - k)] = 0xFFFF;
+            /* prefix of the long code fills exactly one slot; an
+             * oversubscribed length set makes the prefix overflow k bits */
+            uint32_t ix = (uint32_t)code[s2] >> (l - k);
+            if (ix >= tsize) { free(table); return 0; }
+            table[ix] = 0xFFFF;
         }
     }
 
