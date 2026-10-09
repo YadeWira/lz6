@@ -93,11 +93,11 @@ blockwalk: $(LZ6DIR)/lz6.o $(LZ6DIR)/lz6hc.o $(LZ6DIR)/xxhash.o $(LZ6DIR)/entrop
 lz6_32: $(LZ6DIR)/lz6.c $(LZ6DIR)/lz6hc.c $(LZ6DIR)/lz6frame.c $(LZ6DIR)/xxhash.c bench.c lz6io.c lz6cli.c $(ENTROPY32)
 	$(CC) -m32 $(FLAGS) $^ -o $@$(EXT) -lm
 
-fullbench: $(LZ6DIR)/lz6.o $(LZ6DIR)/lz6hc.o $(LZ6DIR)/lz6frame.o $(LZ6DIR)/xxhash.o fullbench.o
-	$(CC) $(FLAGS) $^ -o $@$(EXT)
+fullbench: $(LZ6DIR)/lz6.o $(LZ6DIR)/lz6hc.o $(LZ6DIR)/lz6frame.o $(LZ6DIR)/xxhash.o $(LZ6DIR)/entropy/lz6fse.o $(LZ6DIR)/entropy/lz6rc.o $(LZ6DIR)/entropy/lz6seq.o $(LZ6DIR)/entropy/lz6huf.o fullbench.o
+	$(CC) $(FLAGS) $^ -o $@$(EXT) -lm
 
-fullbench32: $(LZ6DIR)/lz6.c $(LZ6DIR)/lz6hc.c $(LZ6DIR)/lz6frame.c $(LZ6DIR)/xxhash.c fullbench.c
-	$(CC) -m32 $(FLAGS) $^ -o $@$(EXT)
+fullbench32: $(LZ6DIR)/lz6.c $(LZ6DIR)/lz6hc.c $(LZ6DIR)/lz6frame.c $(LZ6DIR)/xxhash.c $(ENTROPY32) fullbench.c
+	$(CC) -m32 $(FLAGS) $^ -o $@$(EXT) -lm
 
 frametest: $(LZ6DIR)/lz6frame.o $(LZ6DIR)/lz6.o $(LZ6DIR)/lz6hc.o $(LZ6DIR)/xxhash.o $(LZ6DIR)/entropy/lz6fse.o $(LZ6DIR)/entropy/lz6rc.o $(LZ6DIR)/entropy/lz6seq.o $(LZ6DIR)/entropy/lz6huf.o frametest.c
 	$(CC) $(FLAGS) $^ -o $@$(EXT) -lm
