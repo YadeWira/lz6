@@ -2284,7 +2284,11 @@ LZ6SEQ_FORCE_INLINE size_t decode_normal_body(const char* src, size_t srcSize,
      * sequence i while stage B executes sequence i - (SEQ_AHEAD - 1). The
      * last sequence has no state update, so it is read outside the loop:
      * the loop carries no per-sequence "more" / "done" bookkeeping. */
-    enum { SEQ_AHEAD = 16 };   /* 8 and 4 measured 4-6% slower on Silesia */
+    /* 64: webster -17%, mozilla -4%, samba -3.5% of decode cycles against 16 (CPU 44, 12 interleaved rounds), weighted Silesia+AIT
+     * -2.6% (L1) .. -9.8% (L3); 128 gains 1-2% more on the weighted total but costs 1-3% on small, cache-resident files (xml, osdb),
+     * 32 gains half of 64; 256 was worse (+8% on cache-resident files). 8 and 4 measured 4-6% slower. A depth chosen at run time
+     * (16 for long sequences) cost 2.5-4% instructions and lost to the flat value. Power of two (slot = index & (SEQ_AHEAD - 1)). */
+    enum { SEQ_AHEAD = 64 };
     uint32_t rll[SEQ_AHEAD], rml[SEQ_AHEAD], rmd[SEQ_AHEAD];   /* ll, ml, md < 2^26: from the fixed tables */
     size_t vpos = 0;   /* output position after the sequences read so far */
     /* The whole sequence's bits are known from the three entries: one refill covers them unless they
