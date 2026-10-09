@@ -87,3 +87,47 @@ only differences measured side by side are trusted. Counters exclude kernel time
   (`compress_normal_ex`) 24/21/20%, kernel 9/5/6%, byte-plane histogram 7/6/6% (the stride-2 division, now fixed).
   Software prefetch of the next hash slot: +-1.5%, noise.
 
+
+## Decoder instruction diet (2026-10-09)
+
+The section above ("Decode: the gap is instruction count, not IPC") ended with the decoder at 232-278 instructions per
+sequence at level 3 (xml / dickens / samba: 253 / 232 / 278; zstd 121-136) and the question of what to do about it. Compiler
+flags were ruled out first, then the decoder was rewritten (details and per-step numbers in NEWS, v1.6.11-pre).
+
+**No build-flag lever** (decode, gcc -O2 = 100%, dickens/samba/xml at L1 and L3, 3 interleaved rounds, medians, CPU 44, same
+instructions and compressed bytes): gcc -O3 +2.4%, -march=native 0%, gcc PGO +2%, clang -O2 +8%, clang -O3 +7%, clang PGO +3%.
+Encode only: -march=native -6% (gcc) / -8% (clang), gcc -O3 -0.6%, gcc PGO -0.4%, clang PGO -2.7%. -march=native is not portable
+(the release binaries are static and must run on any x86-64), so none of it was adopted.
+
+**Result** (decode only, one pinned core, 12 interleaved rounds, 20 files = Silesia + AIT A-H, size-weighted cycles per byte
+against v1.6.10-pre; the compressed streams are byte-identical):
+
+| level | v1.6.10-pre | SEQ_AHEAD 16 | SEQ_AHEAD 64 (shipped) |
+|---|---:|---:|---:|
+| 1 | 5.669 | -36.5% | -38.2% |
+| 3 | 5.878 | -34.4% | -40.9% |
+| 8 | 5.717 | -35.1% | -38.1% |
+| 15 | 5.411 | -34.6% | -37.8% |
+
+Every file is faster at every level (smallest gain AIT G, -18%). Exact instructions per output byte, v1.6.10-pre -> now:
+level 3 dickens 25.78 -> 15.89, samba 13.43 -> 7.89, xml 7.91 -> 5.08, ooffice 24.42 -> 15.22, mr 14.43 -> 6.27.
+
+**What each step bought** (instructions per byte unless noted; each step is gated: exact-size source and destination under
+ASAN/UBSan on both the BMI2 and the plain decoder, 300000 mutants per clone compared with the previous decoder on return code
+and an FNV hash of the output, tiny blocks, edge cases, the two memory-safety PoCs):
+
+- R0, the stage-A/B rewrite: dickens -30..-33%, xml -30%, samba -26..-29%, ooffice -18..-28%, mr -7..-13%.
+- PM (SSE2 plane merge) + H1 (Huffman lockstep): mr -48..-52%, sao -27..-46%, x-ray -36..-43%, mozilla -13..-24%.
+- R1 (negated-position bit reader, bzhi in the BMI2 clone): -1..-8%, -2.2..-2.5% weighted cycles.
+- SEQ_AHEAD 16 -> 64: no instruction change; weighted cycles -2.6% (L1), -9.8% (L3), -4.7% (L8), -4.9% (L15), webster -17%.
+  The per-file effect is large for the files whose matches miss every cache level (webster, mozilla, samba) and within noise for
+  the rest; nci and osdb move by +-3..8% between runs of the same binary at 1.2-3 cycles/byte, so no 16-vs-64 difference on
+  them is believed below that.
+- Not kept: unconditional 2x16 B match copy (R3: -0.8% weighted at L3 but dickens +1.8%, sao +2.1% elsewhere; with a per-block
+  picker the duplicated code lost 1.5-5%), a runtime-chosen SEQ_AHEAD (+2.5-4% instructions), the rep history in two registers
+  (0.6 instructions per sequence), keeping the "explicit offset == rep0 leaves the history alone" exception (+2-4%
+  instructions; the encoder never emits such a code, so the rule was made uniform and pinned by bakeoff/gate/rpzero.c).
+
+Measurement notes that cost time: a stopped workflow does not stop the background jobs its agents started; cycles of 1-3
+cycles/byte files swing +-10% when the box is loaded while instruction counts do not move, so decisions were taken on
+instructions first and on interleaved best-of-12 cycles on an otherwise idle core second.

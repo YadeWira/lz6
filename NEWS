@@ -7,6 +7,43 @@ v1.6.11-pre (unreleased)
   ll/ml < 2^26, offset < 2^25) are checked when the code tables are built. bakeoff/seqgate.sh is the standing gate
   (pocs for both bugs, edge cases, tiny blocks, mutation fuzz from an exact-size copy, differential fuzz against a
   reference tree, ASAN round trips, a 32-bit build), each on both the BMI2 and the plain decoder.
+- speed/decode, compressed streams byte-identical: the seq decoder runs 36-41% fewer instructions per output byte on text-like
+  data and 55-57% fewer on mr (byte planes + Huffman literals), and 34-42% fewer cycles size-weighted over Silesia + AIT A-H
+  (decode only, one pinned core, 12 interleaved rounds, 20 files; levels 1/3/8/15: -38.2% / -40.9% / -38.1% / -37.8%). No file is
+  slower than in v1.6.10-pre at any of the four levels: the smallest gain is AIT G (-18%), the largest sao, AIT A and mr (-50..-55%);
+  level 3: dickens -44%, mozilla -40%, mr -51%, nci -29%, ooffice -35%, osdb -43%, reymont -37%, samba -41%, sao -51%,
+  webster -44%, xml -33%, x-ray -41%. Exact instructions per sequence at level 3 (xml / dickens / samba): 253 / 232 / 278
+  -> 163 / 143 / 163 (zstd's decoder: 121-136 measured earlier). What changed, in decode_normal_body and the literal decoder:
+  * stage B takes a fast path when the sequence fits with room for the wide copies, its literals exist and
+    1 <= offset <= bytes written (zstd's three tests); anything else (end of block, corrupt input, the literals-only last
+    sequence) runs the old exact, fully checked code. The last sequence is read outside the loop, so the loop carries no
+    per-sequence more/done bookkeeping; the pipeline ring is three arrays; every table state carries its table's base
+    (one table pointer); entries are read through pointers; the offset history lives in scalars; the first 16 B of a
+    literal run and match are copied unconditionally. Alone this is -18..-33% instructions on text, -7..-13% on mr.
+  * the BMI2 clone keeps the bit-reader position negated and extracts every field with one bzhi (inline asm: GCC turns the
+    mask into mov/shlx/not/and and never emits bzhi); the plain clone keeps the shift pair. -1..-8% instructions,
+    -2.2..-2.5% weighted cycles. x86-64 GNU C only; every other target gets the portable spelling.
+  * the byte-plane merge uses SSE2 (separate entry below) and the 4-stream Huffman literal decoder runs its streams in
+    lockstep: 4-6 symbols per stream per iteration, one table lookup per symbol, no per-symbol branch, one 8-byte window load
+    per stream per iteration, and a BMI2 clone; it only runs for complete prefix codes (anything else keeps the old
+    path) and only for blocks with several symbols per table entry. PM + this: mr -48..-52% instructions, sao -27..-46%,
+    x-ray -36..-43%, mozilla -13..-24%, ooffice -7..-19%, samba -11..-17%.
+  * SEQ_AHEAD (how many sequences stage A runs ahead of stage B, which is what hides the DRAM miss of a far match) 16 -> 64:
+    webster -17% of cycles, mozilla -4%, samba -3.5%; weighted -2.6% (level 1), -9.8% (3), -4.7% (8), -4.9% (15). 128 gains
+    1-2 points more in aggregate but costs 1-3% on small cache-resident files (xml, osdb); 256 was worse; a depth picked at
+    run time (16 for long sequences) cost 2.5-4% instructions and lost to the flat 64.
+- decoder, format rules made explicit (no encoder output changes): an offset coded EXPLICITLY is always pushed onto the rep
+  stack, even when it equals rep0 (v1.6.10-pre skipped the push in that case; the encoder never emits such a code, it codes
+  rep0, so only hand-built streams differ; keeping the exception cost 2-4% of the decoder's instructions;
+  bakeoff/gate/rpzero.c pins the rule), and a block whose sequences do not produce exactly the declared size is now
+  rejected (it used to return the shorter length). The independent review of the new decoder (five lenses with adversarial
+  verification, differential fuzzing against the old decoder, ASAN/UBSan on exact-size buffers, clang, -m32, aarch64 under
+  qemu, ThreadSanitizer at -T4) found no other difference on valid streams and no memory-safety defect.
+- tried and NOT adopted (decoder): unconditional 2x16 B match copy for offsets >= 16 (-0.8% weighted at level 3, but
+  dickens +1.8% and sao +2.1% at other levels), the same with a per-block picker (the picker's code duplication cost more
+  than it gained: dickens +5%), the offset history in two registers (0.6 instructions per sequence), a forward LSB bitstream,
+  unit-record tables, AVX2 plane/literal lanes, a hot/cold split of stage A, and any compiler flag or PGO (matrix in
+  bakeoff/SINGLE_THREAD_STUDY.md).
 - speed/encode, no output change: the CLI tells glibc to keep freed memory instead of returning it to the kernel and
   faulting the pages back in for every block (mallopt; kernel time was 5-9% of a level 1-3 encode). silesia.tar, -B5,
   one thread, wall time: L1 -5.9%, L2 -9.8%, L3 -6.2%, L4 -4.2%, L5 -3.8%; with 4 threads L3 -7.6%. It costs memory:
