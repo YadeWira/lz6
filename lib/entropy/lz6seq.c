@@ -357,7 +357,7 @@ static void build_seq_price(const seq_collector_t* sc, const uint8_t* src, LZ6HC
         if (of == rp[0]) ri = 0; else if (of == rp[1]) ri = 1; else if (of == rp[2]) ri = 2;
         if (ri < 0) {
             ofc[of_code(of)]++;
-            if (of != rp[0]) { rp[2] = rp[1]; rp[1] = rp[0]; rp[0] = of; }
+            rp[2] = rp[1]; rp[1] = rp[0]; rp[0] = of;   /* of != rp[0] here: an offset equal to rep0 is coded as rep0 */
         } else {
             ofc[OF_CODES + ri]++;
             if (ri > 0) { int t = rp[ri]; for (int k = ri; k > 0; k--) rp[k] = rp[k-1]; rp[0] = t; }
@@ -1279,7 +1279,7 @@ parsed:
             of_syms[i] = pc == 0 ? (unsigned)of_code(of) : (unsigned)(OF_CODES + ri);
             if (pc == 0) lz6_stat_new++; else lz6_stat_rep[pc - 1]++;
             if (pc == 0) {
-                if (of != rp[0]) { rp[2] = rp[1]; rp[1] = rp[0]; rp[0] = of; }
+                rp[2] = rp[1]; rp[1] = rp[0]; rp[0] = of;   /* of != rp[0]: an offset equal to rep0 is coded as rep0 above */
             } else if (ri > 0) {
                 int t = rp[ri];
                 for (int k = ri; k > 0; k--) rp[k] = rp[k-1];
