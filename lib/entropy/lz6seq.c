@@ -638,7 +638,26 @@ static inline void tans_cflush(tans_cstate* st, const tans_ctable* ct, tbw_t* w)
 /* backward bit reader over [start, end): start holds 8 bytes of padding so
  * every 8-byte load stays in bounds; bits consumed past the real stream
  * are detected once at the end (tbr_exact) */
-typedef struct { uint64_t c; unsigned used; const uint8_t* ptr; const uint8_t* start; const uint8_t* end; } tbr_t;
+/* Bit position inside c, counted from its top. The BMI2 clone (bmi == 1) uses `p`, kept negated (p = -consumed):
+ * a field is then bzhi(c >> (p & 63), nb) after p -= nb, 3 instructions with no nb == 0 special case. Without BMI2
+ * (bmi == 0) it uses `used`, the plain consumed count, and the old shift pair is cheaper than shift + mask. bmi is a
+ * compile-time constant in both clones of decode_normal_body. */
+typedef struct { uint64_t c; unsigned used; const uint8_t* ptr; const uint8_t* start; const uint8_t* end; int64_t p; } tbr_t;
+_Static_assert((-1 >> 1) == -1, "tbr_reload_fast needs an arithmetic right shift of negative values");
+static inline unsigned tbr_used(const tbr_t* r, const int bmi) { return bmi ? (unsigned)(-r->p) : r->used; }
+static inline void tbr_set_used(tbr_t* r, unsigned used, const int bmi) { if (bmi) r->p = -(int64_t)used; else r->used = used; }
+/* x & (2^nb - 1) as one bzhi (GCC turns the mask into mov/shlx/not/and, never into bzhi). nb < 64 always: it is an
+ * extra-bit width (<= 24) or a table log (<= TANS_MAX_LOG). Only the BMI2 clone (x86-64 GNU C) reaches the asm. */
+static inline uint64_t tbr_bzhi(uint64_t x, unsigned nb)
+{
+#if (defined(__GNUC__) || defined(__clang__)) && defined(__x86_64__)
+    uint64_t r;
+    __asm__("bzhiq %2, %1, %0" : "=r"(r) : "r"(x), "r"((uint64_t)nb) : "cc");
+    return r;
+#else
+    return x & (((uint64_t)1 << nb) - 1);
+#endif
+}
 static inline uint64_t tbr_load(const uint8_t* q)
 {
     uint64_t v;
@@ -650,47 +669,60 @@ static inline uint64_t tbr_load(const uint8_t* q)
 #endif
     return v;
 }
-static int tbr_init(tbr_t* r, const uint8_t* start, size_t len)
+static int tbr_init(tbr_t* r, const uint8_t* start, size_t len, const int bmi)
 {
     if (len < 9 || start[len - 1] == 0) return 0;
     r->start = start;
     r->end = start + len;
     r->ptr = r->end - 8;
     r->c = tbr_load(r->ptr);
-    r->used = 8 - tans_highbit(start[len - 1]);
+    tbr_set_used(r, 8 - tans_highbit(start[len - 1]), bmi);
     return 1;
 }
-static inline size_t tbr_read(tbr_t* r, unsigned nb)
+static inline size_t tbr_read(tbr_t* r, unsigned nb, const int bmi)
 {
-    const size_t v = (size_t)(((r->c << (r->used & 63)) >> 1) >> ((63 - nb) & 63));
-    r->used += nb;
-    return v;
+    if (bmi) {
+        r->p -= nb;
+        return (size_t)tbr_bzhi(r->c >> (r->p & 63), nb);
+    } else {
+        const size_t v = (size_t)(((r->c << (r->used & 63)) >> 1) >> ((63 - nb) & 63));
+        r->used += nb;
+        return v;
+    }
 }
-static inline void tbr_reload(tbr_t* r)
+static inline void tbr_reload(tbr_t* r, const int bmi)
 {
-    if (r->used > 64) r->used = 64;   /* overrun: tbr_exact fails */
-    const size_t bytes = r->used >> 3;
-    if ((size_t)(r->ptr - r->start) >= bytes) { r->ptr -= bytes; r->used &= 7; }
-    else { const size_t b2 = (size_t)(r->ptr - r->start); r->ptr = r->start; r->used -= (unsigned)(b2 * 8); }
+    unsigned used = tbr_used(r, bmi);
+    if (used > 64) used = 64;   /* overrun: tbr_exact fails */
+    const size_t bytes = used >> 3;
+    if ((size_t)(r->ptr - r->start) >= bytes) { r->ptr -= bytes; used &= 7; }
+    else { const size_t b2 = (size_t)(r->ptr - r->start); r->ptr = r->start; used -= (unsigned)(b2 * 8); }
+    tbr_set_used(r, used, bmi);
     r->c = tbr_load(r->ptr);
 }
 /* branch-free reload while the stream has >= 24 bytes left below ptr (ptr >= lim, lim from
  * tbr_fast_lim, computed once outside the decode loop):
  * even an overrun (used <= 64 + 57) moves ptr by at most 15 bytes */
-static inline void tbr_reload_fast(tbr_t* r, const uint8_t* lim)
+static inline void tbr_reload_fast(tbr_t* r, const uint8_t* lim, const int bmi)
 {
     if (LZ6SEQ_LIKELY(r->ptr >= lim)) {
-        r->ptr -= r->used >> 3;
-        r->used &= 7;
+        if (bmi) {
+            const int64_t t = r->p + 7;   /* -(bytes consumed), rounded down to whole bytes */
+            r->ptr += t >> 3;
+            r->p = (t & 7) - 7;
+        } else {
+            r->ptr -= r->used >> 3;
+            r->used &= 7;
+        }
         r->c = tbr_load(r->ptr);
     } else {
-        tbr_reload(r);
+        tbr_reload(r, bmi);
     }
 }
 /* every real bit consumed, none of the padding */
-static int tbr_exact(const tbr_t* r)
+static int tbr_exact(const tbr_t* r, const int bmi)
 {
-    const size_t consumed = (size_t)(r->end - r->ptr) * 8 - 64 + r->used;
+    const size_t consumed = (size_t)(r->end - r->ptr) * 8 - 64 + tbr_used(r, bmi);
     return consumed == (size_t)(r->end - r->start - 8) * 8;
 }
 
@@ -2054,7 +2086,7 @@ static LZ6SEQ_NOINLINE const uint8_t* tbr_fast_lim(const uint8_t* start, const u
 }
 
 LZ6SEQ_FORCE_INLINE size_t decode_normal_body(const char* src, size_t srcSize,
-                                              char* dst, size_t dstCap) {
+                                              char* dst, size_t dstCap, const int bmi) {
     const uint8_t* p = (const uint8_t*)src;
     const uint8_t* end = p + srcSize;
     if (srcSize < 6) return 0;
@@ -2206,7 +2238,7 @@ LZ6SEQ_FORCE_INLINE size_t decode_normal_body(const char* src, size_t srcSize,
         if ((size_t)(end - p) < 4) goto fail;
         uint32_t blen = (uint32_t)p[0] | ((uint32_t)p[1]<<8) | ((uint32_t)p[2]<<16) | ((uint32_t)p[3]<<24);
         p += 4;
-        if ((size_t)(end - p) < blen || !tbr_init(&br, p, blen)) goto fail;
+        if ((size_t)(end - p) < blen || !tbr_init(&br, p, blen, bmi)) goto fail;
         p += blen;
     }
 
@@ -2238,9 +2270,9 @@ LZ6SEQ_FORCE_INLINE size_t decode_normal_body(const char* src, size_t srcSize,
     const seq_dentry* const dtab = dts;
     size_t sLL = 0, sML = 0, sOF = 0;
     if (sc > 0) {
-        sLL = tbr_read(&br, lgs[0]);
-        sOF = tbr_read(&br, lgs[2]) + ((size_t)2 << TANS_MAX_LOG);
-        sML = tbr_read(&br, lgs[1]) + ((size_t)1 << TANS_MAX_LOG);
+        sLL = tbr_read(&br, lgs[0], bmi);
+        sOF = tbr_read(&br, lgs[2], bmi) + ((size_t)2 << TANS_MAX_LOG);
+        sML = tbr_read(&br, lgs[1], bmi) + ((size_t)1 << TANS_MAX_LOG);
     }
 
     /* Two-stage pipeline: stage A turns symbols + bits into (ll, ml, md)
@@ -2261,32 +2293,32 @@ LZ6SEQ_FORCE_INLINE size_t decode_normal_body(const char* src, size_t srcSize,
     const uint8_t* const br_lim = tbr_fast_lim(br.start, br.end);
     /* Stage A: the three entries are read through pointers (no struct copies: fewer spills). A
      * literals-only sequence (ml symbol 0) reads no offset bits and leaves the offset history alone. */
-#define LZ6SEQ_STAGE_A(MORE, SLOT) do { \
+#define LZ6SEQ_STAGE_A(MORE, SLOT) do {                                                   \
     const seq_dentry* const pL = &dtab[sLL];                                              \
     const seq_dentry* const pM = &dtab[sML];                                              \
     const seq_dentry* const pO = &dtab[sOF];                                              \
     const int split = ((unsigned)pO->nbExtra + pM->nbExtra + pL->nbExtra) > split_thr;    \
-    tbr_reload_fast(&br, br_lim);                                                         \
+    tbr_reload_fast(&br, br_lim, bmi);                                                    \
     size_t ml = 0, md = 0;                                                                \
     if (pM->base) {   /* ML_base >= 3: a match */                                         \
         if (!(pO->base & SEQ_REP)) {                                                      \
-            md = (size_t)pO->base + (tbr_read(&br, pO->nbExtra) << OF_LOW);               \
+            md = (size_t)pO->base + (tbr_read(&br, pO->nbExtra, bmi) << OF_LOW);          \
             rp2 = rp1; rp1 = rp0; rp0 = md;                                               \
-            if (split) tbr_reload(&br);                                                   \
+            if (split) tbr_reload(&br, bmi);                                              \
         } else {                                                                          \
             const unsigned ri = pO->base & 3u;   /* <= 2: the header caps the alphabet */ \
             if (ri == 0) md = rp0;                                                        \
             else if (ri == 1) { md = rp1; rp1 = rp0; rp0 = md; }                          \
             else { md = rp2; rp2 = rp1; rp1 = rp0; rp0 = md; }                            \
         }                                                                                 \
-        ml = (size_t)pM->base + tbr_read(&br, pM->nbExtra);                               \
+        ml = (size_t)pM->base + tbr_read(&br, pM->nbExtra, bmi);                          \
     }                                                                                     \
-    const size_t ll = (size_t)pL->base + tbr_read(&br, pL->nbExtra);                      \
+    const size_t ll = (size_t)pL->base + tbr_read(&br, pL->nbExtra, bmi);                 \
     if (MORE) {                                                                           \
-        if (split) tbr_reload(&br);                                                       \
-        sLL = pL->next + tbr_read(&br, pL->nbBits);                                       \
-        sML = pM->next + tbr_read(&br, pM->nbBits);                                       \
-        sOF = pO->next + tbr_read(&br, pO->nbBits);                                       \
+        if (split) tbr_reload(&br, bmi);                                                  \
+        sLL = pL->next + tbr_read(&br, pL->nbBits, bmi);                                  \
+        sML = pM->next + tbr_read(&br, pM->nbBits, bmi);                                  \
+        sOF = pO->next + tbr_read(&br, pO->nbBits, bmi);                                  \
     }                                                                                     \
     rll[SLOT] = (uint32_t)ll; rml[SLOT] = (uint32_t)ml; rmd[SLOT] = (uint32_t)md;         \
     vpos += ll;                                                                           \
@@ -2406,7 +2438,7 @@ LZ6SEQ_FORCE_INLINE size_t decode_normal_body(const char* src, size_t srcSize,
 seq_done:
 #undef LZ6SEQ_STAGE_A
 #undef LZ6SEQ_STAGE_B
-    if (sc > 0 && !tbr_exact(&br)) goto fail;
+    if (sc > 0 && !tbr_exact(&br, bmi)) goto fail;
     size_t op = (size_t)(o - ostart);
 
     free(litbuf);
@@ -2427,7 +2459,7 @@ fail:
  * targets get the plain build only. */
 static size_t decode_normal_default(const char* src, size_t srcSize, char* dst, size_t dstCap)
 {
-    return decode_normal_body(src, srcSize, dst, dstCap);
+    return decode_normal_body(src, srcSize, dst, dstCap, 0);
 }
 #if (defined(__GNUC__) || defined(__clang__)) && (defined(__x86_64__) || defined(_M_X64)) \
     && !defined(LZ6SEQ_NO_DYNAMIC_BMI2)
@@ -2435,7 +2467,7 @@ static size_t decode_normal_default(const char* src, size_t srcSize, char* dst, 
 __attribute__((target("bmi2")))
 static size_t decode_normal_bmi2(const char* src, size_t srcSize, char* dst, size_t dstCap)
 {
-    return decode_normal_body(src, srcSize, dst, dstCap);
+    return decode_normal_body(src, srcSize, dst, dstCap, 1);
 }
 #endif
 
