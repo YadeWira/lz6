@@ -643,7 +643,8 @@ static inline void tans_cflush(tans_cstate* st, const tans_ctable* ct, tbw_t* w)
  * (bmi == 0) it uses `used`, the plain consumed count, and the old shift pair is cheaper than shift + mask. bmi is a
  * compile-time constant in both clones of decode_normal_body. */
 typedef struct { uint64_t c; unsigned used; const uint8_t* ptr; const uint8_t* start; const uint8_t* end; int64_t p; } tbr_t;
-_Static_assert((-1 >> 1) == -1, "tbr_reload_fast needs an arithmetic right shift of negative values");
+/* tbr_reload_fast needs an arithmetic right shift of negative values (C89-style compile-time assert: the build is -std=gnu99) */
+typedef char lz6seq_arith_shift_check[((-1 >> 1) == -1) ? 1 : -1];
 static inline unsigned tbr_used(const tbr_t* r, const int bmi) { return bmi ? (unsigned)(-r->p) : r->used; }
 static inline void tbr_set_used(tbr_t* r, unsigned used, const int bmi) { if (bmi) r->p = -(int64_t)used; else r->used = used; }
 /* x & (2^nb - 1) as one bzhi (GCC turns the mask into mov/shlx/not/and, never into bzhi). nb < 64 always: it is an
