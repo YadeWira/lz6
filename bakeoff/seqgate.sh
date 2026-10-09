@@ -15,6 +15,11 @@
 #            synthetic streams, decoding from an exact-size copy of the mutant
 #   xdiff    only with REFTREE (a checkout of the reference decoder): the return value and an output hash of
 #            every mutant must equal the reference's. For decoder-only changes: a format change cannot use it.
+#   rpzero   two hand-built blocks with an explicit offset equal to rep0: the rep history rule (always push) is pinned
+#   planemerge  the SSE2 byte-plane merge against a scalar reference, every plane size 0..300 and random larger ones,
+#            exact-size heap buffers (once more with SSE2 compiled out)
+#   hufdiff  Huffman literal blocks (valid, and mutated header/stream/truncation) decoded from exact-size buffers: valid
+#            blocks must round trip; with REFTREE the return code and output hash of every case must equal the reference's
 # Then once: asan (round trips of 6 files x 7 levels + 25000 fuzz iterations, default build) and m32
 # (32-bit build with sanitizers, falling back to none when the toolchain has no 32-bit sanitizer runtime).
 # Prints one PASS/FAIL line per check and a final "GATE PASS" or "GATE FAIL"; the exit status is 0 on a pass.
@@ -23,6 +28,7 @@
 #   GATE_N        mutation-fuzz and xdiff iterations per clone (default 60000, about 10 minutes in all;
 #                 the gate for a finished change uses GATE_N=300000 TINY_N=5000)
 #   TINY_N        tinyrt iterations (default 1000)
+#   HUF_N         hufdiff cases per clone (default 20000)
 #   SILESIA       directory with the Silesia files xml mr ooffice samba x-ray dickens
 #   SEQGATE_CPU   CPU number to pin every run to with taskset (default: not pinned)
 #   SEQGATE_WORK  scratch directory (default: a mktemp directory, removed after a pass)
@@ -34,6 +40,7 @@ GATE="$ROOT/bakeoff/gate"
 REF="${1:-}"
 N="${GATE_N:-60000}"
 TN="${TINY_N:-1000}"
+HN="${HUF_N:-20000}"
 SIL="${SILESIA:-/mnt/IA_LAB/agentes/lz6/silesia}"
 CC="${CC:-gcc}"
 
@@ -82,6 +89,19 @@ for clone in bmi2 default; do
   $CC "${SAN[@]}" "${X[@]}" "${INC[@]}" "$GATE/xfuzz2.c" "${S[@]}" -o "$W/xfuzz2_$clone" -lm || { note "FAIL build xfuzz2 $clone"; continue; }
   out=$(run "$W/xfuzz2_$clone" "$N" "$W"/set/*.seq 2>&1); rc=$?
   if [ $rc -eq 0 ]; then note "PASS xfuzz2 $clone ($N): $(echo "$out" | tail -1)"; else note "FAIL xfuzz2 $clone rc=$rc: $(echo "$out" | flat 500)"; fi
+  for t in rpzero planemerge; do
+    $CC "${SAN[@]}" "${X[@]}" "${INC[@]}" "$GATE/$t.c" "${S[@]}" -o "$W/${t}_$clone" -lm || { note "FAIL build $t $clone"; continue; }
+    out=$(run "$W/${t}_$clone" 2>&1); rc=$?
+    if [ $rc -eq 0 ]; then note "PASS $t $clone: $(echo "$out" | tail -1 | head -c 120)"; else note "FAIL $t $clone rc=$rc: $(echo "$out" | flat 300)"; fi
+  done
+  $CC "${SAN[@]}" "${X[@]}" "${INC[@]}" "$GATE/hufdiff.c" "$ROOT/lib/entropy/lz6huf.c" -o "$W/hufdiff_$clone" -lm || { note "FAIL build hufdiff $clone"; continue; }
+  run "$W/hufdiff_$clone" "$HN" > "$W/hd_new_$clone.out" 2> "$W/hd_new_$clone.err"; rc=$?
+  if [ $rc -eq 0 ]; then note "PASS hufdiff $clone ($HN): $(tail -1 "$W/hd_new_$clone.err")"; else note "FAIL hufdiff $clone rc=$rc: $(flat 300 < "$W/hd_new_$clone.err")"; fi
+  if [ -n "$REF" ] && $CC -O2 -std=gnu11 "${X[@]}" -I"$REF" -I"$REF/lib" -I"$REF/lib/entropy" "$GATE/hufdiff.c" "$REF/lib/entropy/lz6huf.c" -o "$W/hufdiff_ref_$clone" -lm; then
+    run "$W/hufdiff_ref_$clone" "$HN" > "$W/hd_ref_$clone.out" 2> /dev/null
+    if cmp -s "$W/hd_new_$clone.out" "$W/hd_ref_$clone.out"; then note "PASS hufdiff-ref $clone: $HN cases identical to REFTREE (rc + output hash)"
+    else note "FAIL hufdiff-ref $clone: differs from REFTREE: $(cmp "$W/hd_new_$clone.out" "$W/hd_ref_$clone.out" 2>&1 | head -1)"; fi
+  fi
   if [ -n "$REF" ]; then
     RINC=(-I"$REF" -I"$REF/lib" -I"$REF/lib/entropy"); RS=($(srcs "$REF"))
     if $CC -O2 -std=gnu11 "${X[@]}" "${INC[@]}" "$GATE/xdiff.c" "${S[@]}" -o "$W/xdiff_new_$clone" -lm &&
@@ -98,6 +118,14 @@ for clone in bmi2 default; do
     fi
   fi
 done
+
+# the scalar plane merge (what a build without SSE2 runs)
+if $CC "${SAN[@]}" -U__SSE2__ -DLZ6SEQ_NO_DYNAMIC_BMI2 "${INC[@]}" "$GATE/planemerge.c" "${S[@]}" -o "$W/planemerge_scalar" -lm 2> /dev/null; then
+  out=$(run "$W/planemerge_scalar" 2>&1); rc=$?
+  if [ $rc -eq 0 ]; then note "PASS planemerge scalar: $(echo "$out" | tail -1 | head -c 120)"; else note "FAIL planemerge scalar rc=$rc: $(echo "$out" | flat 300)"; fi
+else
+  note "FAIL build planemerge scalar"
+fi
 
 # round trips at the CLI-free level, ASAN+UBSan, default build; and the 32-bit build on the same slices
 for f in xml mr ooffice; do head -c 400000 "$SIL/$f" > "$W/asan/$f.s400k"; done
