@@ -11,9 +11,9 @@ It started as a fork of [LZ5 v1.5] (itself a LZ4 derivative) and grew into its o
 - **x86 branch filter** — CALL/JMP `rel32` operands are converted to absolute addresses on detected code ranges, only where a trial shows it pays (Silesia `ooffice`, a Windows DLL: 44.4% -> 38.2% at level 15).
 - **Multithreaded command line** — `-T#` runs blocks on a worker pool for compression (levels 1-15) and decompression (any frame). The output is identical at any thread count (see [Multithreading](#multithreading)).
 
-Current release: **v1.6.10-pre** ([releases](https://github.com/YadeWira/lz6/releases): static Linux x86-64, win64 and win32 binaries).
+Current release: **v1.6.11-pre** ([releases](https://github.com/YadeWira/lz6/releases): static Linux x86-64, win64 and win32 binaries).
 
-In development, **v1.6.11-pre** (see [NEWS](NEWS)): a rewritten seq decoder that decodes 1.3-1.7x faster with the same compressed bytes (single thread, Silesia and AIT: 1.65-1.7x and 1.3-1.4x), tighter length-code widths that shrink the output by 0.2-0.3% (this one changes the seq block format), and two memory-safety fixes for corrupt input. The [Benchmarks](#benchmarks) section below measures this tree.
+New in v1.6.11-pre (see [NEWS](NEWS)): a rewritten seq decoder that decodes 1.3-1.7x faster with the same compressed bytes (single thread, Silesia and AIT: 1.65-1.7x and 1.3-1.4x), tighter length-code widths that shrink the output by 0.2-0.3% (this one changes the seq block format: streams written by v1.6.10-pre and earlier do not decode), and two memory-safety fixes for corrupt input. The [Benchmarks](#benchmarks) section below measures it.
 
 ## Usage
 
@@ -71,7 +71,7 @@ Windows (mingw-w64 cross-compile from Linux, or MSVC):
 
 ## Benchmarks
 
-Measured with one harness ([lzbench], one thread, mem-to-mem, per file) on 2x Xeon E5-2697A v4, one core pinned with the machine otherwise idle (load average below 3), on 2026-10-09. lz6 is v1.6.11-pre (this tree; the lzbench plugin still labels it 1.6.9-pre) and the competitors (zstd 1.5.7, lizard 2.1, lz5 v1.5, misa77 0.6.0, lz4 1.10.0, memlz 0.2 beta) were run in the same session; the uf-lzma2 row is from the 2026-10-01 session. Speeds of different sessions are not comparable (an idle core boosts higher), so no row here is mixed with older runs. These are single-thread library numbers, not the [Multithreading](#multithreading) ones. The full matrix of the previous release (all levels, plus brotli, xz, zlib and fastlzma2) is in [bakeoff/VS_CODECS.md](bakeoff/VS_CODECS.md), which also has the per-level rows of this tree:
+Measured with one harness ([lzbench], one thread, mem-to-mem, per file) on 2x Xeon E5-2697A v4, one core pinned with the machine otherwise idle (load average below 3), on 2026-10-09. lz6 is v1.6.11-pre (the lzbench plugin still labels it 1.6.9-pre) and the competitors (zstd 1.5.7, lizard 2.1, lz5 v1.5, misa77 0.6.0, lz4 1.10.0, memlz 0.2 beta) were run in the same session; the uf-lzma2 row is from the 2026-10-01 session. Speeds of different sessions are not comparable (an idle core boosts higher), so no row here is mixed with older runs. These are single-thread library numbers, not the [Multithreading](#multithreading) ones. The full matrix of the previous release (all levels, plus brotli, xz, zlib and fastlzma2) is in [bakeoff/VS_CODECS.md](bakeoff/VS_CODECS.md), which also has the per-level rows of this tree:
 
 **Silesia** (212 MB, 12 files)
 

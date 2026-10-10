@@ -1,4 +1,4 @@
-v1.6.11-pre (unreleased)
+v1.6.11-pre
 - fix/decoder safety, no format change and no output change: two memory-safety bugs on corrupt input, found by fuzzing
   with an exact-size source and destination. A Huffman literal header whose code lengths oversubscribe the code space
   made huf_dec_tables store one uint16 past its lookup table (heap write); a seq block that ends right after its
