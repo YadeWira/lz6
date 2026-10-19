@@ -14,7 +14,8 @@
 #   xfuzz2   mutation fuzz (flips, truncation, random runs, header bytes) on real slices and on small
 #            synthetic streams, decoding from an exact-size copy of the mutant
 #   xdiff    only with REFTREE (a checkout of the reference decoder): the return value and an output hash of
-#            every mutant must equal the reference's. For decoder-only changes: a format change cannot use it.
+#            every mutant must equal the reference's. For decoder-only changes. For a backward-compatible format extension
+#            (XDIFF_EXT=1) a mutant the reference rejects may be accepted, but one the reference decodes must come out identical.
 #   rpzero   two hand-built blocks with an explicit offset equal to rep0: the rep history rule (always push) is pinned
 #   planemerge  the SSE2 byte-plane merge against a scalar reference, every plane size 0..300 and random larger ones,
 #            exact-size heap buffers (once more with SSE2 compiled out)
@@ -33,6 +34,7 @@
 #                 the gate for a finished change uses GATE_N=300000 TINY_N=5000)
 #   TINY_N        tinyrt iterations (default 1000)
 #   HUF_N         hufdiff cases per clone (default 20000)
+#   XDIFF_EXT     1: xdiff accepts mutants that only the new decoder decodes (a format extension that keeps every old stream valid)
 #   SILESIA       directory with the Silesia files xml mr ooffice samba x-ray dickens
 #   SEQGATE_CPU   CPU number to pin every run to with taskset (default: not pinned)
 #   SEQGATE_WORK  scratch directory (default: a mktemp directory, removed after a pass)
@@ -114,6 +116,9 @@ for clone in bmi2 default; do
       run "$W/xdiff_ref_$clone" "$N" "$W"/set/*.seq > "$W/xd_ref_$clone.out" 2> /dev/null
       if cmp -s "$W/xd_new_$clone.out" "$W/xd_ref_$clone.out" && [ -s "$W/xd_new_$clone.out" ]; then
         note "PASS xdiff $clone: $(wc -l < "$W/xd_new_$clone.out") mutants identical to REFTREE (rc + output hash)"
+      elif [ -n "$XDIFF_EXT" ] && [ -s "$W/xd_new_$clone.out" ] && paste -d'|' "$W/xd_new_$clone.out" "$W/xd_ref_$clone.out" |
+           awk -F'|' '{ split($2, r, " "); if ($1 != $2) { if (r[2] != 0) bad++; else ext++ } } END { print ext + 0, bad + 0 > "/dev/stderr"; exit bad > 0 }' 2> "$W/xd_ext_$clone.txt"; then
+        note "PASS xdiff $clone (extension): $(wc -l < "$W/xd_new_$clone.out") mutants, every one the reference decodes is identical, $(cut -d' ' -f1 "$W/xd_ext_$clone.txt") more accepted only by the new decoder"
       else
         note "FAIL xdiff $clone: differs from REFTREE: $(cmp "$W/xd_new_$clone.out" "$W/xd_ref_$clone.out" 2>&1 | head -1)"
       fi
