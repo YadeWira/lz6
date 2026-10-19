@@ -1,5 +1,7 @@
 # Single thread: where lz6 stands against zstd, and why
 
+> **Level labels (v1.6.12-pre).** This document was written before v1.6.12-pre renumbered the seq levels, and its measurements are not repeated: where it says `lz6 -N` or "level N" for the seq engine with N >= 3, that is `-(N-2)` now (old `-3` = `-1`, old `-15` = `-13`), and the old `-1` and `-2` are `--fast=2` and `--fast=1` (a smaller, slower fast tier now: 32.56% and 30.45% on Silesia). `--hc` levels did not move. The study measured v1.6.9-pre; the decoder it led to is v1.6.11-pre's, and v1.6.12-pre's delta between the two is in [V1612_VS_V1611.md](V1612_VS_V1611.md).
+
 Measured on 2026-10-02 with lz6 v1.6.9-pre (the engine is unchanged in v1.6.10-pre), Intel Xeon E5-2697A v4,
 one core pinned, library API with one block per file. The counters are read around the codec call only, with
 [stdh.c](stdh.c) (build instructions in its header); the round trip is verified on every decode. Summing the

@@ -94,7 +94,7 @@ Sizes are exact and do not depend on the session. The decode speeds of single fi
 
 The price: encode is 21-24% slower on the two `--fast` rows (the polish of the fast parser), 7-8% slower at `-1` and `-3` (AIT at `-3`: 24%, the level guard's second parse on AIT A), 5-7% at `-6` and `-10`, and the same at `-13`.
 
-**Larger than before**, in bytes: AIT F +24 B (+0.001%) at every row; AIT G +98 B (+0.013%) at `-1`..`-13`, +54 B (+0.007%) at `--fast=2` and +507 B (+0.069%) at `--fast=1`; AIT A +153 B and +151 B (+0.022%) at `--fast=2` and `-1`. Every other file of the 19 is the same size or smaller at every row (`ait_A` -4.0% to -5.4% at `-2`..`-13`, `mr` -5.7% from `-2`, `x-ray` up to -2.2%, 14 of 19 files byte-identical from `-1` up). Per file and row: [NEWS](NEWS).
+**Larger than before**, in bytes: AIT F +24 B (+0.001%) at every row; AIT G +98 B (+0.013%) at `-1`..`-13`, +54 B (+0.007%) at `--fast=2` and +507 B (+0.069%) at `--fast=1`; AIT A +153 B and +151 B (+0.022%) at `--fast=2` and `-1`. Every other file of the 19 is the same size or smaller at every row (`ait_A` -4.0% to -5.4% at `-2`..`-13`, `mr` -5.7% from `-2`, `x-ray` up to -2.2%, 14 of 19 files byte-identical from `-1` up). Per file and row: [bakeoff/V1612_VS_V1611.md](bakeoff/V1612_VS_V1611.md).
 
 ### Against the LZMA family and zpaq
 
@@ -111,7 +111,7 @@ Same harness and machine, one thread on CPU 44, the 19 files, 2026-10-19; lz6 as
 | RAR -m5 | 25.07% | 159 (process) | 48.62% | 71 (process) |
 | zpaq -m5 / zpaqfranz -m5 | 18.45% | 0.35 | 40.79% | 0.36 |
 
-lz6 `-13` decodes 9-13x faster than the LZMA family on Silesia (19-27x on AIT), at a size about 2 points (8-9%) larger: 24.98% against 23.02% for xz -9 and 22.88% for uf-lzma2 -11. The gaps against xz -9 per file: sao +15%, mozilla +15%, samba +12%, mr +12% (it was +19% before the byte-delta lanes), xml +10%; lz6 is ahead on `ooffice`, AIT E and F, and on AIT as a whole against xz, lzma and RAR. RAR -m5 (25.07% on Silesia, 48.62% on AIT) is level with lz6 `-13` on Silesia and 3 points behind on AIT; its decode figure is whole-process wall clock, not comparable with the in-memory ones. zpaq -m5 is 19-26% smaller than the rest and about 3,000x slower to decode. Entry level: lz6 `-1` (28.77%) against `xz -1` (27.70%, 17 MB/s encode, 97 decode) and `lzma -1` (27.58%, 22/74): 4% bigger, 3x the encode speed and 11-14x the decode speed. Per file and the raw tables: `bakeoff/` and the lab notes.
+lz6 `-13` decodes 9-13x faster than the LZMA family on Silesia (19-27x on AIT), at a size about 2 points (8-9%) larger: 24.98% against 23.02% for xz -9 and 22.88% for uf-lzma2 -11. The gaps against xz -9 per file: sao +15%, mozilla +15%, samba +12%, mr +12% (it was +19% before the byte-delta lanes), xml +10%; lz6 is ahead on `ooffice`, AIT E and F, and on AIT as a whole against xz, lzma and RAR. RAR -m5 (25.07% on Silesia, 48.62% on AIT) is level with lz6 `-13` on Silesia and 3 points behind on AIT; its decode figure is whole-process wall clock, not comparable with the in-memory ones. zpaq -m5 is 19-26% smaller than the rest and about 3,000x slower to decode. Entry level: lz6 `-1` (28.77%) against `xz -1` (27.70%, 17 MB/s encode, 97 decode) and `lzma -1` (27.58%, 22/74): 4% bigger, 3x the encode speed and 11-14x the decode speed. Per file and the raw tables: [bakeoff/VS_LZMA_ZPAQ.md](bakeoff/VS_LZMA_ZPAQ.md).
 
 **Level labels.** The numbers below were measured with v1.6.11-pre; the labels are v1.6.12-pre's (renumbered: v1.6.11-pre's `-N` is `-(N-2)` for N >= 3, and its `-2` and `-1` are `--fast=1` and `--fast=2`). The two `--fast` rows below are v1.6.11-pre's fast levels (its `-1` and `-2`): v1.6.12-pre's are 0.5 and 1.1 points smaller (`--fast=2` 32.56%, `--fast=1` 30.45% on Silesia) and encode 21-24% slower, see the comparison above and [NEWS](NEWS).
 
@@ -170,6 +170,8 @@ Where lz6 leads is in its transforms. On `ooffice` (x86 code) lz6 -13 reaches 38
 - [lz6_Block_format.md](lz6_Block_format.md) — raw block format
 - [lz6_Frame_format.md](lz6_Frame_format.md) — frame format (block codec flags, per-block dispatch)
 - [bakeoff/COMPETITORS.md](bakeoff/COMPETITORS.md) — competitive analysis vs zstd, lizard, misa77
+- [bakeoff/VS_LZMA_ZPAQ.md](bakeoff/VS_LZMA_ZPAQ.md) — lz6 against xz, lzma, fast-lzma2, uf-lzma2, zpaq, zpaqfranz and RAR (first level and top levels, per file)
+- [bakeoff/V1612_VS_V1611.md](bakeoff/V1612_VS_V1611.md) — v1.6.12-pre against v1.6.11-pre, every row and file (size, speed, exact decode cycles)
 - [NEWS](NEWS) — what changed in each release, including measured costs and refuted ideas
 - `lib/entropy/lz6seq.h` — the seq codec API
 - [Wiki](https://github.com/YadeWira/lz6/wiki) — architecture, seq stream format, decoder internals, development workflow, roadmap

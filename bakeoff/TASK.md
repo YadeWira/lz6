@@ -1,5 +1,7 @@
 # Task: speed up the lz6 decompression hot loop
 
+> **Level labels (v1.6.12-pre).** This document was written before v1.6.12-pre renumbered the seq levels, and its measurements are not repeated: where it says `lz6 -N` or "level N" for the seq engine with N >= 3, that is `-(N-2)` now (old `-3` = `-1`, old `-15` = `-13`), and the old `-1` and `-2` are `--fast=2` and `--fast=1` (a smaller, slower fast tier now: 32.56% and 30.45% on Silesia). `--hc` levels did not move. Level arguments in the commands below use the old numbers; `-N` for N >= 3 is `-(N-2)` today.
+
 You are optimizing **decode throughput** of the lz6 compressor (a byte-oriented LZ77
 codec, fork of LZ5 v1.5). Repo builds with `make -C programs` → `programs/lz6`.
 

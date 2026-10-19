@@ -1,5 +1,7 @@
 # lz6 vs the field - one harness head-to-head
 
+> **Level labels (v1.6.12-pre).** This document was written before v1.6.12-pre renumbered the seq levels, and its measurements are not repeated: where it says `lz6 -N` or "level N" for the seq engine with N >= 3, that is `-(N-2)` now (old `-3` = `-1`, old `-15` = `-13`), and the old `-1` and `-2` are `--fast=2` and `--fast=1` (a smaller, slower fast tier now: 32.56% and 30.45% on Silesia). `--hc` levels did not move. The v1.6.12-pre against v1.6.11-pre comparison is in [V1612_VS_V1611.md](V1612_VS_V1611.md), and lz6 against the LZMA family, zpaq and RAR in [VS_LZMA_ZPAQ.md](VS_LZMA_ZPAQ.md).
+
 All numbers below come from a single harness: **lzbench 2.3.1**, one thread
 (`-t1,1`), memory-to-memory per file, on an Intel Xeon E5-2697A v4 @ 2.60GHz.
 lz6 and lz5 are integrated as lzbench plugins (see

@@ -1,5 +1,7 @@
 # Competitive analysis: zstd, lizard, misa77 (vs lz6)
 
+> **Level labels (v1.6.12-pre).** This document was written before v1.6.12-pre renumbered the seq levels, and its measurements are not repeated: where it says `lz6 -N` or "level N" for the seq engine with N >= 3, that is `-(N-2)` now (old `-3` = `-1`, old `-15` = `-13`), and the old `-1` and `-2` are `--fast=2` and `--fast=1` (a smaller, slower fast tier now: 32.56% and 30.45% on Silesia). `--hc` levels did not move. The current comparison against the LZMA family, zpaq and RAR is in [VS_LZMA_ZPAQ.md](VS_LZMA_ZPAQ.md).
+
 > **Update 2026-09-13:** the complete head-to-head comparison, with every
 > codec in a single harness (lzbench) and Silesia as well as AIT, is in
 > **[VS_CODECS.md](VS_CODECS.md)**. It includes lz5 v1.5 and lz6 as lzbench
