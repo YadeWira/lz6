@@ -16,6 +16,9 @@
 #include <limits.h>
 #include <math.h>
 #include <stdio.h>
+#if defined(__SSE2__)
+#  include <emmintrin.h>
+#endif
 
 #if defined(__GNUC__) || defined(__clang__)
 #  define LZ6SEQ_PREFETCH(p) __builtin_prefetch(p)
@@ -1654,6 +1657,112 @@ static void lane_entropy256(const uint8_t* src, size_t n, int stride, unsigned e
     }
 }
 
+/* Codes one lane (a byte stream of n bytes with entropy ent, in 1/256 bits): *payload is the coded lane (malloc'd) with
+ * *csize bytes and *mode 1 (LZ) or 2 (Huffman), or NULL when the lane is better stored raw. */
+static void plane_lane_code(const uint8_t* lane, size_t plane_size, unsigned ent, int level,
+                            uint8_t** payload_out, size_t* csize_out, int* mode_out) {
+    uint8_t* payload = NULL;
+    size_t csize = 0;
+    int mode = 0;
+    if (ent < 3 * 256) {
+        /* very low entropy lane: try pure Huffman (small alphabet,
+         * random order — E's exponent plane) and LZ (long runs —
+         * G's constant lanes); pick the smaller. */
+        unsigned counts[256] = {0};
+        unsigned* syms = (unsigned*)malloc(plane_size * sizeof(unsigned));
+        uint8_t* hb = NULL;
+        if (syms) {
+            for (size_t j = 0; j < plane_size; j++) { syms[j] = lane[j]; counts[lane[j]]++; }
+            hb = (uint8_t*)malloc(plane_size + 1024);
+        }
+        if (hb) {
+            int k = 0;
+            size_t hhdr = huf_build_header(counts, 255, hb, plane_size + 1024, &k, NULL, 16);
+            if (hhdr > 0 && k <= 10) {
+                size_t hstr = huf_encode_stream(hb, syms, plane_size,
+                                                hb + hhdr, plane_size + 1024 - hhdr);
+                if (hstr > 0 && hhdr + hstr < plane_size) {
+                    payload = hb;
+                    csize = hhdr + hstr;
+                    mode = 2;
+                }
+            }
+        }
+        /* LZ candidate */
+        size_t lz_cap = plane_size + (plane_size >> 1) + 4096;
+        uint8_t* lz_buf = (uint8_t*)malloc(lz_cap);
+        if (lz_buf) {
+            size_t lz_size = compress_normal_ex((const char*)lane, plane_size,
+                                                (char*)lz_buf, lz_cap, level, 1);
+            if (lz_size > 0 && lz_size < plane_size - 32 &&
+                (csize == 0 || lz_size < csize)) {
+                payload = lz_buf;   /* hb (if any) is freed below */
+                csize = lz_size;
+                mode = 1;
+            } else {
+                free(lz_buf);
+            }
+        }
+        if (payload != hb) free(hb);   /* Huffman built but LZ (or nothing) won */
+        free(syms);
+    } else if (ent < 7 * 256) {
+        size_t tmp_cap = plane_size + (plane_size >> 1) + 4096;
+        payload = (uint8_t*)malloc(tmp_cap);
+        if (payload) {
+            /* lanes are byte streams: L1 lazy matching is near-optimal
+             * and much faster than the outer level (which also hurts
+             * ratio here — F/G lanes compress best at L1) */
+            csize = compress_normal_ex((const char*)lane, plane_size,
+                                       (char*)payload, tmp_cap, 1, 1);
+            /* no single lane level wins: F/G lanes are best at L1 (the
+             * single-pass parser), x-ray's at L4 (row hash, -3%). From
+             * outer level 4, try L4 too and keep the smaller. */
+            if (level >= 4) {
+                uint8_t* alt = (uint8_t*)malloc(tmp_cap);
+                if (alt) {
+                    const size_t a4 = compress_normal_ex((const char*)lane, plane_size,
+                                                         (char*)alt, tmp_cap, 4, 1);
+                    if (a4 > 0 && (csize == 0 || a4 < csize)) {
+                        free(payload); payload = alt; csize = a4;
+                    } else free(alt);
+                }
+            }
+            if (csize == 0 || csize >= plane_size - 32) {
+                free(payload);
+                payload = NULL;
+                csize = 0;
+            }
+        }
+        if (payload) mode = 1;
+    }
+    *payload_out = payload; *csize_out = csize; *mode_out = mode;
+}
+
+/* byte delta along a lane: d[0] = b[0], d[j] = b[j] - b[j-1]; plane_undelta is its inverse (a prefix sum) */
+static void plane_delta(uint8_t* dst, const uint8_t* src, size_t n) {
+    if (!n) return;
+    dst[0] = src[0];
+    for (size_t j = 1; j < n; j++) dst[j] = (uint8_t)(src[j] - src[j - 1]);
+}
+static void plane_undelta(uint8_t* p, size_t n) {
+    size_t i = 0;
+#if defined(__SSE2__)
+    __m128i carry = _mm_setzero_si128();
+    for (; i + 16 <= n; i += 16) {
+        __m128i x = _mm_loadu_si128((const __m128i*)(p + i));
+        x = _mm_add_epi8(x, _mm_slli_si128(x, 1));
+        x = _mm_add_epi8(x, _mm_slli_si128(x, 2));
+        x = _mm_add_epi8(x, _mm_slli_si128(x, 4));
+        x = _mm_add_epi8(x, _mm_slli_si128(x, 8));
+        x = _mm_add_epi8(x, carry);
+        _mm_storeu_si128((__m128i*)(p + i), x);
+        carry = _mm_set1_epi8((char)_mm_cvtsi128_si32(_mm_srli_si128(x, 15)));
+    }
+#endif
+    uint8_t acc = i ? p[i - 1] : 0;
+    for (; i < n; i++) { acc = (uint8_t)(acc + p[i]); p[i] = acc; }
+}
+
 /* Returns bytes written to dst, or 0 if the plane transform does not help.
  * *decisive_out (optional) is set to 1 when the lane skew is so extreme the
  * plane block is guaranteed to beat the normal block — caller may skip the
@@ -1693,85 +1802,47 @@ static size_t plane_encode(const uint8_t* src, size_t srcSize,
     w8(&p, 0x08 | (stride == 4 ? 2 : 0));
     w32le(&p, (uint32_t)srcSize);
 
+    /* from row 4 (level 2) up: below it the lanes are coded with the fast parser, whose delta lanes carry more sequences
+     * (mr: +11..17% decode cycles at levels -1 and 1; from level 2 it decodes 11% faster as well as smaller) */
+    const int delta_ok = level >= 4 && getenv("LZ6_NO_PLANEDELTA") == NULL;
+    const int delta_force = delta_ok && getenv("LZ6_PLANEDELTA_FORCE") != NULL;
     for (int i = 0; i < stride; i++) {
         for (size_t j = 0; j < plane_size; j++) plane_buf[j] = src[j * (size_t)stride + (size_t)i];
         uint8_t* payload = NULL;
         size_t csize = 0;
         int mode = 0;
-        if (lane_ent[i] < 3 * 256) {
-            /* very low entropy lane: try pure Huffman (small alphabet,
-             * random order — E's exponent plane) and LZ (long runs —
-             * G's constant lanes); pick the smaller. */
-            unsigned counts[256] = {0};
-            unsigned* syms = (unsigned*)malloc(plane_size * sizeof(unsigned));
-            uint8_t* hb = NULL;
-            if (syms) {
-                for (size_t j = 0; j < plane_size; j++) { syms[j] = plane_buf[j]; counts[plane_buf[j]]++; }
-                hb = (uint8_t*)malloc(plane_size + 1024);
-            }
-            if (hb) {
-                int k = 0;
-                size_t hhdr = huf_build_header(counts, 255, hb, plane_size + 1024, &k, NULL, 16);
-                if (hhdr > 0 && k <= 10) {
-                    size_t hstr = huf_encode_stream(hb, syms, plane_size,
-                                                    hb + hhdr, plane_size + 1024 - hhdr);
-                    if (hstr > 0 && hhdr + hstr < plane_size) {
-                        payload = hb;
-                        csize = hhdr + hstr;
-                        mode = 2;
+        plane_lane_code(plane_buf, plane_size, lane_ent[i], level, &payload, &csize, &mode);
+        /* a smooth lane (image samples, sensor values, a counter) codes smaller as byte deltas: try them when their entropy is
+         * clearly lower, keep the smaller; the mode byte's bit 7 tells the decoder to sum them back up. A lane that is already
+         * compressed needs the deltas to save 3% (a few percent is the price of more sequences for the decoder: x-ray's high
+         * bytes, -0.1..-1.7% of the file for +11..26% decode cycles); a raw lane needs 20% (turning a memcpy into an LZ decode
+         * is only worth it for a big gain: x-ray's noisy low bytes would save 6% of the file for nearly twice its decode cycles,
+         * a random walk saves 40-60%) */
+        int use_delta = 0;
+        if (delta_ok) {
+            uint8_t* db = (uint8_t*)malloc(plane_size);
+            if (db) {
+                plane_delta(db, plane_buf, plane_size);
+                unsigned dent[4] = {0, 0, 0, 0};
+                lane_entropy256(db, plane_size, 1, dent);
+                if (dent[0] + 77 < lane_ent[i] || delta_force) {
+                    uint8_t* p2 = NULL; size_t c2 = 0; int m2 = 0;
+                    plane_lane_code(db, plane_size, dent[0], level, &p2, &c2, &m2);
+                    const size_t cost1 = payload ? csize : plane_size, cost2 = p2 ? c2 : plane_size;
+                    /* a few percent is the price of more sequences for the decoder (x-ray: -0.1..-1.7% of the file, +11..26% decode) */
+                    if (delta_force) {   /* test hook (planedelta.c): always code the deltas, raw or not, so the decoder's path is exercised */
+                        free(payload); payload = p2; csize = c2; mode = m2; use_delta = 1;
+                        if (!p2) memcpy(plane_buf, db, plane_size);
                     }
+                    else if (p2 && cost2 + (payload ? cost1 / 32 : cost1 / 5) < cost1) { free(payload); payload = p2; csize = c2; mode = m2; use_delta = 1; }
+                    else free(p2);
                 }
+                free(db);
             }
-            /* LZ candidate */
-            size_t lz_cap = plane_size + (plane_size >> 1) + 4096;
-            uint8_t* lz_buf = (uint8_t*)malloc(lz_cap);
-            if (lz_buf) {
-                size_t lz_size = compress_normal_ex((const char*)plane_buf, plane_size,
-                                                    (char*)lz_buf, lz_cap, level, 1);
-                if (lz_size > 0 && lz_size < plane_size - 32 &&
-                    (csize == 0 || lz_size < csize)) {
-                    payload = lz_buf;   /* hb (if any) is freed below */
-                    csize = lz_size;
-                    mode = 1;
-                } else {
-                    free(lz_buf);
-                }
-            }
-            if (payload != hb) free(hb);   /* Huffman built but LZ (or nothing) won */
-            free(syms);
-        } else if (lane_ent[i] < 7 * 256) {
-            size_t tmp_cap = plane_size + (plane_size >> 1) + 4096;
-            payload = (uint8_t*)malloc(tmp_cap);
-            if (payload) {
-                /* lanes are byte streams: L1 lazy matching is near-optimal
-                 * and much faster than the outer level (which also hurts
-                 * ratio here — F/G lanes compress best at L1) */
-                csize = compress_normal_ex((const char*)plane_buf, plane_size,
-                                           (char*)payload, tmp_cap, 1, 1);
-                /* no single lane level wins: F/G lanes are best at L1 (the
-                 * single-pass parser), x-ray's at L4 (row hash, -3%). From
-                 * outer level 4, try L4 too and keep the smaller. */
-                if (level >= 4) {
-                    uint8_t* alt = (uint8_t*)malloc(tmp_cap);
-                    if (alt) {
-                        const size_t a4 = compress_normal_ex((const char*)plane_buf, plane_size,
-                                                             (char*)alt, tmp_cap, 4, 1);
-                        if (a4 > 0 && (csize == 0 || a4 < csize)) {
-                            free(payload); payload = alt; csize = a4;
-                        } else free(alt);
-                    }
-                }
-                if (csize == 0 || csize >= plane_size - 32) {
-                    free(payload);
-                    payload = NULL;
-                    csize = 0;
-                }
-            }
-            if (payload) mode = 1;
         }
         if (payload) {
             if ((size_t)(dst_end - p) < 4 + csize) { free(payload); free(plane_buf); return 0; }
-            w8(&p, mode);                    /* mode: 1=lz lane, 2=huffman lane */
+            w8(&p, mode | (use_delta ? 0x80 : 0));   /* mode: 1=lz lane, 2=huffman lane, bit 7: byte deltas */
             w32le(&p, (uint32_t)csize);
             memcpy(p, payload, csize);
             p += csize;
@@ -2825,6 +2896,8 @@ size_t LZ6_decompress_seq(const char* src, size_t srcSize,
         for (int lane = 0; lane < stride; lane++, plane_buf += plane_size) {
             if (q >= end) { free(planes); return 0; }
             int mode = *q++;
+            const int delta = mode & 0x80;   /* the lane was coded as byte deltas */
+            mode &= 0x7f;
             if (mode == 1) {  /* compressed lane */
                 if ((size_t)(end - q) < 4) { free(planes); return 0; }
                 uint32_t csize = (uint32_t)q[0] | ((uint32_t)q[1] << 8) |
@@ -2850,6 +2923,7 @@ size_t LZ6_decompress_seq(const char* src, size_t srcSize,
                 memcpy(plane_buf, q, plane_size);
                 q += plane_size;
             } else { free(planes); return 0; }
+            if (delta) plane_undelta(plane_buf, plane_size);
         }
         const uint8_t *l0 = planes, *l1 = planes + plane_size;
         if (stride == 2) {

@@ -1,4 +1,16 @@
 v1.6.12-pre (unreleased)
+- ratio/encoder, FORMAT EXTENSION (v1.6.11-pre and older streams decode as before; a stream with delta lanes needs v1.6.12-pre): a byte-plane
+  block (stride 2 or 4: samples, floats, ints) may code a lane as byte deltas (d[0] = b[0], d[j] = b[j] - b[j-1]), flagged by bit 7 of the
+  lane's mode byte; the decoder sums them back up (an SSE2 prefix sum). Tried from level 2 up (the fast parser's lanes decode slower with it:
+  mr +11..17% decode cycles at levels -1 and 1), and only when the deltas' entropy is clearly lower: a lane that was compressed already must
+  shrink by 3%, a raw lane (a memcpy that becomes an LZ decode) by 20%. Silesia: mr -5.7% at every level from 2 (decode 6-18% FASTER), x-ray
+  -2.2% at level 13 (decode 24% faster; its noisy low bytes would shrink 6% as deltas but decode nearly twice as slowly, so they stay raw);
+  every other Silesia and AIT file writes the same bytes. Smooth synthetic data (a random walk): -49% (16-bit) and -63% (32-bit). Level 13
+  Silesia 25.12% -> 24.98%, level 6 26.99% -> 26.91%. bakeoff/gate/planedelta.c (in seqgate.sh) covers it with 32000 mutants.
+  Measured and not adopted: word deltas with carry (worse than byte deltas on mr), 2D predictors from the row above (mr +, x-ray 0), a stride-N
+  split of record data (sao N=28: +3.4% larger), an order-0 Huffman code for noisy lanes (the single-stream decoder takes 5x the cycles of a copy).
+  The literal stream of sao would code 10% smaller with a (position mod 28, byte 28 back) context, 6.6% of the file, but the literals are decoded
+  before the sequences that tell their positions: it needs a decoder that interleaves them.
 - CLI and API, THE LEVEL NUMBERS MOVE (no format change): the seq levels were 1-15 with 1 and 2 the fast tier; the scale is now
   1-13 plus a fast tier. v1.6.11-pre's -N for N >= 3 is -(N-2) now (old -3 = -1, old -9 = -7, old -15 = -13: same bytes), its -2 and
   -1 are --fast=1 and --fast=2 (level -1 and -2 of LZ6_compress_seq; a larger N is faster, as in LZ4 and zstd; N > 2 is 2). Why: the
