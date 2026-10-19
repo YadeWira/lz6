@@ -10,7 +10,7 @@
 set -e
 cd "$(dirname "$0")/.."
 
-LEVEL=2
+LEVEL=-1   # row 2 of the pre-v1.6.12-pre scale (the fast tier, --fast=1)
 FUZZ=0
 FFUZZ=0
 ASAN=""

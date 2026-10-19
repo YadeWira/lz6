@@ -90,7 +90,7 @@ only the latest one will be applied.
 .TP
 .BR \-\-hc
 Compress with the classic LZ6-HC frame codec (hash chains + binary
-tree, levels 1-15) instead of the default seq engine. Decompression is
+tree, levels 1-15, a scale of its own that did not change) instead of the seq engine. Decompression is
 codec-agnostic: the frame magic selects the block coder automatically.
 .TP
 .BR \-z ", " \-\-compress
@@ -129,11 +129,17 @@ No files are created nor removed.
 .
 .SS "Operation modifiers"
 .TP
-.B \-1
- fast compression (default)
+.B \-0
+ fast compression with the classic LZ frame codec (default)
 .TP
-.B \-9
- high compression
+.B \-1 ... \-13
+ the seq engine. \-1 compresses like the first level of the LZMA family (about 28.8% on the Silesia corpus) at several times
+ their speed; a higher number compresses more and is slower; \-7 is a middle level. 14 and 15 are accepted and mean 13.
+ Before v1.6.12-pre the scale was 1-15 and \-1 and \-2 were the fast tier: the old \-N (N >= 3) is \-(N-2) now.
+.TP
+.B \--fast[=N]
+ the seq engine's fast tier, for speed over ratio: N = 1 (default, about 30.5%, 110 MB/s encode) or N = 2 (about 32.6%,
+ 140 MB/s); a larger N is faster. The old \-2 and \-1.
 
 .TP
 .BR \-f ", " --[no-]force
@@ -180,7 +186,7 @@ independently, and the resulting name of the compressed file will be
 .TP
 .B \-T#
  worker threads (default : 1; 0 = one per CPU core).
- Compression uses them for levels 1-15 (the seq engine); with
+ Compression uses them for the seq engine (\-1 to \-13 and \-\-fast); with
 .B --hc
 or
 .B -0

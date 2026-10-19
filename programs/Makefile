@@ -239,19 +239,25 @@ test-lz6-multiple: lz6 datagen
 test-lz6-basic: lz6 datagen
 	@echo "\n ---- test lz6 basic compression/decompression ----"
 	./datagen -g0     | ./lz6 -v     | ./lz6 -t
-	./datagen -g16KB  | ./lz6 -9     | ./lz6 -t
+	./datagen -g16KB  | ./lz6 -7     | ./lz6 -t
+	./datagen -g16KB  | ./lz6 --fast | ./lz6 -t
+	./datagen -g6M -P99 | ./lz6 --fast=2 | ./lz6 -t
+	./datagen -g6M -P99 | ./lz6 --fast=1 | ./lz6 -t
+	./datagen -g6M -P99 | ./lz6 -1 | ./lz6 -t
+	./datagen -g6M -P99 | ./lz6 -13 | ./lz6 -t
+	./datagen -g1M -P99 | ./lz6 -15 | ./lz6 -t
 	./datagen -g20KB > tmpSrc
 	./lz6 < tmpSrc | ./lz6 -d > tmpRes
 	diff -q tmpSrc tmpRes
 	./lz6 --no-frame-crc < tmpSrc | ./lz6 -d > tmpRes
 	diff -q tmpSrc tmpRes
 	./datagen         | ./lz6        | ./lz6 -t
-	./datagen -g6M -P99 | ./lz6 -9B | ./lz6 -t
-	./datagen -g17M   | ./lz6 -9v    | ./lz6 -qt
+	./datagen -g6M -P99 | ./lz6 -7B | ./lz6 -t
+	./datagen -g17M   | ./lz6 -7v    | ./lz6 -qt
 	./datagen -g33M   | ./lz6 --no-frame-crc | ./lz6 -t
 	./datagen -g256MB | ./lz6 -vqB4 | ./lz6 -t
 	./datagen -g6GB   | ./lz6 -vqB5 | ./lz6 -qt
-	./datagen -g6GB   | ./lz6 -vq9B | ./lz6 -qt
+	./datagen -g6GB   | ./lz6 -vq7B | ./lz6 -qt
 	@rm tmp*
 
 test-lz6: lz6 datagen test-lz6-basic test-lz6-multiple test-lz6-sparse test-lz6-contentSize test-lz6-frame-concatenation
@@ -260,17 +266,17 @@ test-lz6: lz6 datagen test-lz6-basic test-lz6-multiple test-lz6-sparse test-lz6-
 
 test-interop-32-64: lz6 lz6_32 datagen
 	@echo "\n ---- test interoperability 32-bits -vs- 64 bits ----"
-	./datagen -g16KB  | ./lz6_32 -9     | ./lz6    -t
-	./datagen -P10    | ./lz6    -9B4   | ./lz6_32 -t
+	./datagen -g16KB  | ./lz6_32 -7     | ./lz6    -t
+	./datagen -P10    | ./lz6    -7B4   | ./lz6_32 -t
 	./datagen         | ./lz6_32        | ./lz6    -t
 	./datagen -g1M    | ./lz6    -3B5   | ./lz6_32 -t
 	./datagen -g256MB | ./lz6_32 -vqB4  | ./lz6    -qt
 	./datagen -g1G -P90 | ./lz6         | ./lz6_32 -t
-	./datagen -g6GB   | ./lz6_32 -vq9B  | ./lz6    -qt
+	./datagen -g6GB   | ./lz6_32 -vq7B  | ./lz6    -qt
 
 test-lz6_32-basic: lz6_32 datagen
 	@echo "\n ---- test lz6_32 32-bits version ----"
-	./datagen -g16KB  | ./lz6_32 -9     | ./lz6_32 -t
+	./datagen -g16KB  | ./lz6_32 -7     | ./lz6_32 -t
 	./datagen         | ./lz6_32        | ./lz6_32 -t
 	./datagen -g256MB | ./lz6_32 -vqB4  | ./lz6_32 -qt
 	./datagen -g6GB   | ./lz6_32 -vqB5  | ./lz6_32 -qt
@@ -303,7 +309,7 @@ test-mem: lz6 datagen frametest fullbench
 	@echo "\n ---- valgrind tests : memory analyzer ----"
 	valgrind --leak-check=yes --error-exitcode=1 ./datagen -g50M > $(VOID)
 	./datagen -g16KB > tmp
-	valgrind --leak-check=yes --error-exitcode=1 ./lz6 -9 -B -f tmp $(VOID)
+	valgrind --leak-check=yes --error-exitcode=1 ./lz6 -7 -B -f tmp $(VOID)
 	./datagen -g16KB -s2 > tmp2
 	./datagen -g16KB -s3 > tmp3
 	valgrind --leak-check=yes --error-exitcode=1 ./lz6 --force --multiple tmp tmp2 tmp3

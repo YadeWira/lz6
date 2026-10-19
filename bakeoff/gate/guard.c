@@ -2,10 +2,10 @@
  *
  * Data: independent symbols from a skewed 21-letter alphabet (about 4.17 bits each, the statistics of a protein
  * file). Matches on it save little: a 3-byte match saves 12 bits and costs about 16. Before the guard the optimal
- * and the row parsers (levels 4-15) took thousands of them and the output was 2.5-6% LARGER than level 1's (a protein
- * file of the AIT set: levels 4-15 were 4-5% larger than level 1, and 6% above zstd -19).
- * Checks, for levels 3..15: the stream decodes (exact-size source and destination), and levels 4..15 are at most 2%
- * larger than level 1 (the unguarded encoder gives +2.5% at level 8, +3.1% at level 4, +6.2% at level 7).
+ * and the row parsers (rows 4-15) took thousands of them and the output was 2.5-6% LARGER than the fast tier's fastest
+ * (a protein file of the AIT set: rows 4-15 were 4-5% larger than row 1, and 6% above zstd -19).
+ * Checks, for levels -1 and 1..13 (rows 2..15): the stream decodes (exact-size source and destination), and levels 2..13 (rows
+ * 4..15) are at most 2% larger than level -2 (row 1: the unguarded encoder gives +2.5% at row 8, +3.1% at row 4, +6.2% at row 7).
  * Build with ASAN/UBSan like the other gate tests:
  *   cc -O1 -g -fsanitize=address,undefined -I. -Ilib -Ilib/entropy bakeoff/gate/guard.c lib/lz6.c lib/lz6hc.c \
  *      lib/entropy/lz6seq.c lib/entropy/lz6fse.c lib/entropy/lz6rc.c lib/entropy/lz6huf.c -lm -o guard && ./guard */
@@ -45,14 +45,15 @@ int main(void)
     for (size_t i = 0; i < n; i++) { const unsigned r = rnd() % tot; int c = 0; while (cum[c] <= r) c++; s[i] = (unsigned char)('A' + c); }
     LZ6_seq_init();
     int ok1;
-    const size_t base = compress_rt(s, n, 1, &ok1);
+    const size_t base = compress_rt(s, n, -2, &ok1);
     int bad = !ok1 || !base;
-    printf("level  1: %zu bytes%s\n", base, ok1 ? "" : "  ROUND TRIP FAILED");
-    for (int level = 3; level <= 15; level++) {
+    printf("level -2: %zu bytes%s\n", base, ok1 ? "" : "  ROUND TRIP FAILED");
+    for (int level = -1; level <= 13; level++) {
+        if (level == 0) continue;
         int ok;
         const size_t cs = compress_rt(s, n, level, &ok);
-        const int big = level >= 4 && (double)cs > 1.02 * (double)base;
-        printf("level %2d: %zu bytes (%+.2f%% vs level 1)%s%s\n", level, cs, 100.0 * ((double)cs / (double)base - 1),
+        const int big = level >= 2 && (double)cs > 1.02 * (double)base;
+        printf("level %2d: %zu bytes (%+.2f%% vs level -2)%s%s\n", level, cs, 100.0 * ((double)cs / (double)base - 1),
                ok ? "" : "  ROUND TRIP FAILED", big ? "  TOO LARGE" : "");
         bad |= !ok || !cs || big;
     }

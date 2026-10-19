@@ -10,7 +10,7 @@
 # (-DLZ6SEQ_NO_DYNAMIC_BMI2). Per clone, under ASAN+UBSan:
 #   pocs     hufpoc + scpoc, the two memory-safety bugs fixed by S0; both must run clean
 #   edge     synthetic round trips (sizes 0..300 and 1000..1000000, runs, repeats, random) at 7 levels
-#   tinyrt   round trips of tiny blocks (8..707 bytes) at levels 1 2 3 5 8 12 15
+#   tinyrt   round trips of tiny blocks (8..707 bytes) at levels -2 -1 1 3 6 10 13 (rows 1 2 3 5 8 12 15)
 #   xfuzz2   mutation fuzz (flips, truncation, random runs, header bytes) on real slices and on small
 #            synthetic streams, decoding from an exact-size copy of the mutant
 #   xdiff    only with REFTREE (a checkout of the reference decoder): the return value and an output hash of
@@ -18,7 +18,7 @@
 #   rpzero   two hand-built blocks with an explicit offset equal to rep0: the rep history rule (always push) is pinned
 #   planemerge  the SSE2 byte-plane merge against a scalar reference, every plane size 0..300 and random larger ones,
 #            exact-size heap buffers (once more with SSE2 compiled out)
-#   guard    the level guard of the encoder (seq_guard): skewed 21-symbol data, levels 4-15 must round trip and come out at
+#   guard    the level guard of the encoder (seq_guard): skewed 21-symbol data, rows 4-15 (levels 2-13) must round trip and come out at
 #            most 2% larger than level 1 (they were up to 7% larger before the guard)
 #   hufdiff  Huffman literal blocks (valid, and mutated header/stream/truncation) decoded from exact-size buffers: valid
 #            blocks must round trip; with REFTREE the return code and output hash of every case must equal the reference's
@@ -67,10 +67,10 @@ S=($(srcs "$ROOT"))
 $CC -O2 -std=gnu11 "${INC[@]}" "$GATE/mkseq.c" "${S[@]}" -o "$W/mkseq" -lm || { echo "GATE FAIL (build mkseq)"; exit 8; }
 $CC -O2 -std=gnu11 "${INC[@]}" "$GATE/mkset.c" "${S[@]}" -o "$W/mkset" -lm || { echo "GATE FAIL (build mkset)"; exit 8; }
 
-# fuzz corpus: slices of real files at four levels, plus small synthetic streams
+# fuzz corpus: slices of real files at four levels (-2 1 6 13), plus small synthetic streams
 for f in xml mr ooffice samba x-ray; do head -c 300000 "$SIL/$f" > "$W/$f.s"; done
 head -c 200000 "$SIL/dickens" > "$W/dickens.s"
-for L in 1 3 8 15; do for f in "$W"/*.s; do run "$W/mkseq" $L "$f" "$W/set/$(basename "$f").L$L.seq"; done; done
+for L in -2 1 6 13; do for f in "$W"/*.s; do run "$W/mkseq" $L "$f" "$W/set/$(basename "$f").L$L.seq"; done; done
 "$W/mkset" "$W/set" > /dev/null
 
 grep -qw bmi2 /proc/cpuinfo 2>/dev/null || note "FAIL bmi2: this CPU has no BMI2, the BMI2 clone is not exercised"
@@ -136,11 +136,11 @@ SLICES=("$W"/asan/*.s400k "$W"/asan/dickens.s "$W"/asan/samba.s "$W"/asan/x-ray.
 if $CC "${SAN[@]}" "${INC[@]}" "$GATE/rt.c" "${S[@]}" -o "$W/rt" -lm &&
    $CC "${SAN[@]}" "${INC[@]}" "$GATE/xfuzz.c" "${S[@]}" -o "$W/xfuzz" -lm; then
   bad=0
-  for L in 1 2 3 5 8 12 15; do for f in "${SLICES[@]}"; do
+  for L in -2 -1 1 3 6 10 13; do for f in "${SLICES[@]}"; do
     out=$(run "$W/rt" $L "$f" 2>&1); rc=$?
     if [ $rc -ne 0 ]; then bad=1; note "FAIL asan rt L$L $f rc=$rc: $(echo "$out" | flat 300)"; fi
   done; done
-  for L in 1 3 8 15; do for f in "$W"/asan/xml.s400k "$W"/asan/mr.s400k "$W"/asan/ooffice.s400k "$W"/asan/samba.s; do
+  for L in -2 1 6 13; do for f in "$W"/asan/xml.s400k "$W"/asan/mr.s400k "$W"/asan/ooffice.s400k "$W"/asan/samba.s; do
     run "$W/mkseq" $L "$f" "$W/asan/$(basename "$f").L$L.seq"
   done; done
   out=$(run "$W/xfuzz" 25000 "$W"/asan/*.seq 2>&1); rc=$?
@@ -157,7 +157,7 @@ fi
 if $CC "${M32[@]}" "${INC[@]}" "$GATE/rt.c" "${S[@]}" -o "$W/m32/rt" -lm &&
    $CC "${M32[@]}" "${INC[@]}" "$GATE/edge.c" "${S[@]}" -o "$W/m32/edge" -lm; then
   bad=0
-  for L in 1 3 8 15; do for f in "${SLICES[@]}"; do
+  for L in -2 1 6 13; do for f in "${SLICES[@]}"; do
     out=$(run "$W/m32/rt" $L "$f" 2>&1); rc=$?
     if [ $rc -ne 0 ]; then bad=1; note "FAIL m32 rt L$L $f rc=$rc: $(echo "$out" | flat 300)"; fi
   done; done

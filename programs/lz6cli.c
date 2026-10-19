@@ -133,7 +133,8 @@ static int usage(void)
     DISPLAY( "          with no FILE, or when FILE is - or %s, read standard input\n", stdinmark);
     DISPLAY( "Arguments :\n");
     DISPLAY( " -0       : Fast compression (default) \n");
-    DISPLAY( " -1...-%d : High compression; higher number == more compression but slower\n", LZ6HC_MAX_CLEVEL);
+    DISPLAY( " -1...-13 : seq engine: -1 compresses like the LZMA family's first level, higher == more compression but slower\n");
+    DISPLAY( " --fast[=N] : seq engine, fast tier (N = 1 or 2, larger is faster)\n");
     DISPLAY( " -d       : decompression (default for %s extension)\n", LZ6_EXTENSION);
     DISPLAY( " -z       : force compression\n");
     DISPLAY( " -f       : overwrite output without prompting \n");
@@ -194,8 +195,12 @@ static int usage_longhelp(void)
     DISPLAY( "\n");
     DISPLAY( "Compression levels : \n");
     DISPLAY( "---------------------\n");
-    DISPLAY( "-0 => Fast compression\n");
-    DISPLAY( "-1 ... -%d => High compression; higher number == more compression but slower\n", LZ6HC_MAX_CLEVEL);
+    DISPLAY( "-0 => Fast compression (the classic LZ frame codec)\n");
+    DISPLAY( "-1 ... -13 => the seq engine; higher number == more compression but slower. -1 compresses like the LZMA\n");
+    DISPLAY( "              family's first level (about 28.8%% on Silesia) several times faster; -7 is a middle level\n");
+    DISPLAY( "--fast[=N] => the seq engine's fast tier: --fast=1 (about 30.5%%, ~110 MB/s) or --fast=2 (about 32.6%%,\n");
+    DISPLAY( "              ~140 MB/s); a larger N is faster. Before v1.6.12-pre -1 and -2 were these two and -N was -(N+2) now\n");
+    DISPLAY( "--hc       => levels 1-%d of the classic LZ6-HC frame codec (its own scale, unchanged)\n", LZ6HC_MAX_CLEVEL);
     DISPLAY( "\n");
     DISPLAY( "stdin, stdout and the console : \n");
     DISPLAY( "--------------------------------\n");
@@ -305,6 +310,11 @@ int main(int argc, char** argv)
         if (!strcmp(argument,  "--quiet")) { if (displayLevel) displayLevel--; continue; }
         if (!strcmp(argument,  "--version")) { DISPLAY(WELCOME_MESSAGE); return 0; }
         if (!strcmp(argument,  "--keep")) { continue; }   /* keep source file (default anyway; just for xz/lzma compatibility) */
+        if (!strncmp(argument, "--fast", 6) && (argument[6] == 0 || argument[6] == '=')) {   /* the seq engine's fast tier: level -N */
+            int n = argument[6] == '=' ? atoi(argument + 7) : 1;
+            cLevel = n >= 2 ? -2 : -1;
+            continue;
+        }
         if (!strcmp(argument,  "--hc")) { forceHC = 1; continue; }   /* classic LZ6-HC frame codec instead of the seq engine */
 
 
@@ -558,10 +568,11 @@ int main(int argc, char** argv)
 
     /* IO Stream/File */
     LZ6IO_setNotificationLevel(displayLevel);
-    /* Level mapping: 0 (default) = fast LZ frame; levels 1-15 = the seq
-     * entropy engine unless --hc selects the classic LZ6-HC frame codec.
+    /* Level mapping: 0 (default) = fast LZ frame; levels 1-15 and --fast=N (level -N) = the seq
+     * entropy engine unless --hc selects the classic LZ6-HC frame codec. The seq scale is
+     * 1..13 (14 and 15 are 13 for now) and -1, -2: see LZ6_compress_seq.
      * Decode is codec-agnostic: the frame layer dispatches on the magic. */
-    if (cLevel >= 1 && !forceHC) LZ6IO_setBlockCodec(1);
+    if (cLevel != 0 && !forceHC) LZ6IO_setBlockCodec(1);
     if (decode)
     {
       if (multiple_inputs)

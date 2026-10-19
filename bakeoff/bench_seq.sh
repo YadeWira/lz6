@@ -1,7 +1,7 @@
 #!/bin/sh
 # bench_seq.sh - measure lz6 seq-coded frames against the AIT training set.
 # Usage: bench_seq.sh [level] [dir]
-LEVEL=${1:-15}
+LEVEL=${1:-13}
 DIR=${2:-/tmp/ait_train}
 total=0
 for f in A B C D E F G H; do

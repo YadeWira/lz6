@@ -1,4 +1,14 @@
 v1.6.12-pre (unreleased)
+- CLI and API, THE LEVEL NUMBERS MOVE (no format change): the seq levels were 1-15 with 1 and 2 the fast tier; the scale is now
+  1-13 plus a fast tier. v1.6.11-pre's -N for N >= 3 is -(N-2) now (old -3 = -1, old -9 = -7, old -15 = -13: same bytes), its -2 and
+  -1 are --fast=1 and --fast=2 (level -1 and -2 of LZ6_compress_seq; a larger N is faster, as in LZ4 and zstd; N > 2 is 2). Why: the
+  first level that compresses like the LZMA family's first (Silesia 28.8%, lzma -0 28.6%, xz -0 29.7%, at 2.6x their encode speed and 15x
+  their decode speed) was -3, so a "level 1 against level 1" comparison put lz6's fast tier against their entry level. Levels 14 and 15
+  are accepted and mean 13 until the two places left at the top get stronger levels; 0 in the library is the default (old 9 = -7);
+  the CLI's default level 0 is still the classic fast LZ frame codec, and --hc keeps its own scale (1-15, unchanged, same bytes as
+  before). The test Makefile, the gate programs and the README labels moved with it (README tables keep v1.6.11-pre's measurements
+  under the new labels; the two --fast rows are the old fast levels, see the note there). bakeoff/ results, the older NEWS entries and
+  the wiki use the old numbers.
 - ratio/encoder, NO FORMAT CHANGE (streams decode with any v1.6.11 decoder): the fast parser of levels 1 and 2 (fast1) gets
   2-way hash buckets (the longest verified candidate wins), rep1/rep2 probes right after a match (level 2) and 2-3 indexed
   positions at each end of every match (the plain scheme indexed one). Silesia / AIT, size of the output: level 1 33.09% / 47.90%

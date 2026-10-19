@@ -10,7 +10,7 @@ int main(int argc, char** argv)
 {
     long N = atol(argv[1]); int nf = argc - 2; uint8_t* data[16]; long dsz[16];
     for (int i = 0; i < nf; i++) { FILE* f = fopen(argv[2 + i], "rb"); fseek(f, 0, SEEK_END); long n = ftell(f); if (n > 4000000) n = 4000000; fseek(f, 0, SEEK_SET); data[i] = malloc(n); if (fread(data[i], 1, n, f) != (size_t)n) return 1; fclose(f); dsz[i] = n; }
-    static const int lv[] = { 1, 2, 3, 5, 8, 12, 15 };
+    static const int lv[] = { -2, -1, 1, 3, 6, 10, 13 };   /* the fast tier and rows 3, 5, 8, 12, 15 */
     long blocks = 0, total = 0, bad = 0;
     for (long it = 0; it < N; it++) {
         size_t n = 8 + rnd() % 700; uint8_t* src = malloc(n);

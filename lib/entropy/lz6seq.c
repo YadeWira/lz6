@@ -2667,8 +2667,21 @@ static size_t decode_normal(const char* src, size_t srcSize, char* dst, size_t d
 }
 
 
+/* The public level scale and the rows of LZ6HC_seqParameters. Rows 1-2 are the fast tier (the fast1 parser), rows 3-15 the
+ * entry tier and up (row-hash, lazy and optimal parsers). Level 1 is row 3, ..., level 13 is row 15: level 1 is the first level
+ * that compresses like the LZMA family's first (Silesia 28.8%). The fast tier is level -N (`--fast=N` in the CLI; a larger N is
+ * faster, as in LZ4 and zstd): -1 is row 2, -2 and below row 1. Levels 14 and 15 are the strongest row for now (reserved for
+ * stronger levels); 0 is the default, row 9 (level 7). Everything inside this file works on rows. */
+static int seq_row(int level)
+{
+    if (level == 0) return 9;
+    if (level < 0) return level == -1 ? 2 : 1;
+    return level + 2 > LZ6HC_MAX_CLEVEL ? LZ6HC_MAX_CLEVEL : level + 2;
+}
+
 size_t LZ6_compress_seq(const char* src, size_t srcSize,
                         char* dst, size_t dstCap, int level) {
+    level = seq_row(level);
     if (!code_tabs_ready) code_tabs_init();   /* the BCJ trial below runs the encoder before compress_seq_core would build them */
     if (srcSize >= 16384 && srcSize <= 0x7FFFFFFFu && dstCap > 64) {
         const size_t maxr = srcSize / BCJ_CHUNK + 1;

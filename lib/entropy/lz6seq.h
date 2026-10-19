@@ -33,7 +33,10 @@ extern "C" {
 #endif
 
 /* Compress `src` (srcSize bytes) into `dst` (dstCap bytes).
- * `level` selects the lz6 HC level (1..15; 9 default-ish).
+ * `level`: 1..13, higher compresses more and is slower (1 is the entry level, about the ratio of the LZMA family's first;
+ * 7 is the default when `level` is 0; 14 and 15 are 13 for now); -1 and -2 are the fast tier (-2 faster than -1, the CLI's
+ * --fast=1 and --fast=2). Before v1.6.12-pre the scale was 1..15 with 1 and 2 the fast tier: its levels 3..15 are 1..13 here,
+ * its 2 and 1 are -1 and -2.
  * Returns bytes written, or 0 on failure / if dst is too small.
  * Guaranteed to fit if dstCap >= LZ6_COMPRESSBOUND(srcSize) + 65536.
  */

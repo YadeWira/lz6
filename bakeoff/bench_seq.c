@@ -281,7 +281,7 @@ int main(int argc, char** argv) {
     int file_arg_start = argc;
 
     for (argi = 1; argi < argc; argi++) {
-        if (!strcmp(argv[argi], "--level") && argi + 1 < argc) { g_level = atoi(argv[++argi]); if (g_level < 1) g_level = 1; if (g_level > 15) g_level = 15; }
+        if (!strcmp(argv[argi], "--level") && argi + 1 < argc) { g_level = atoi(argv[++argi]); if (g_level < -2) g_level = -2; if (g_level > 15) g_level = 15; }
         else if (!strcmp(argv[argi], "--fuzz") && argi + 1 < argc) { fuzz_n = (unsigned long)atol(argv[++argi]); }
         else if (!strcmp(argv[argi], "--ffuzz") && argi + 1 < argc) { ffuzz_n = (unsigned long)atol(argv[++argi]); }
         else if (!strcmp(argv[argi], "--fuzz-seed") && argi + 1 < argc) { fuzz_seed = argv[++argi]; }

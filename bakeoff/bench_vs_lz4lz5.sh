@@ -89,6 +89,6 @@ $LZ6 -b $FILES 2>&1 | sum_lines
 echo "== lz6 --hc -15 (HC frame)"
 $LZ6 --hc -15 -b $FILES 2>&1 | sum_lines
 echo "== lz6 -2 seq frame (bench_seq)"
-"$BS" --level 2 $FILES | grep -E "^TOTAL"
+"$BS" --level -1 $FILES | grep -E "^TOTAL"
 echo "== lz6 -15 seq frame (bench_seq)"
-"$BS" --level 15 $FILES | grep -E "^TOTAL"
+"$BS" --level 13 $FILES | grep -E "^TOTAL"
