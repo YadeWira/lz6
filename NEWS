@@ -18,6 +18,22 @@ v1.6.12-pre (unreleased)
   on the sizes of an encoder with empty tables: 51 MB mozilla gave different bytes on its first and second call. The tables are now
   built first, and the trial always runs the level-1 parser as it was before this change, so that its verdict does not move with
   the level-1 options.
+- ratio/encoder, NO FORMAT CHANGE (the streams decode with any v1.6.11 decoder; only the encoder's choice of parse changes): a level
+  guard for levels 3-15. On data whose literals are already cheap and whose matches are short (protein: 21 symbols, 4.2 bits each; any
+  small alphabet with little structure) the row and optimal parsers took thousands of 3-5 byte matches that save about 12 bits and cost
+  about 16, and the output of levels 4-15 came out up to 16% LARGER than level 1's. The optimal parser makes it worse: it prices a match
+  with the statistics of an earlier parse, so once short matches dominate they look cheap (3-byte matches at 0.2 bits) and the next parse
+  repeats them. A parse whose matches save less than 25% more than they cost (length x the entropy of the block's bytes against 5 + the
+  offset bits) is now compared with the plain level-1 parse of the same block, by ideal size, and the cheaper one is kept; every other
+  block is untouched and pays nothing. AIT A (a protein file): level 8 723,813 -> 691,853 bytes (-4.4%; -4.0% to -5.4% at levels 4, 5,
+  6, 7, 10, 12 and 15), and 52-59% fewer decode instructions (3-byte matches were 90% of its sequences). The other 18 files of Silesia +
+  AIT A-H give the SAME bytes at levels 3, 4, 5, 6, 7, 8, 10, 12 and 15, and so do 146 more files at levels 4, 8 and 12 (the 96-file
+  corpus sample and 50 sequence/alignment/PDB/GenBank text files); 43 synthetic files (small alphabets, skewed or flat, with planted
+  repeats, an order-1 chain) x 3 levels: 63 smaller (-0.1% to -13.5%), 66 the same, 0 larger. bakeoff/gate/guard.c (part of seqgate.sh)
+  pins it: 21-symbol data, levels 4-15 within 2% of level 1 (the unguarded encoder: +3.0% at level 4, +6.1% at level 7, +7.4% at 15).
+  Not fixed: level 15 on AIT A now equals level 1 (691,853), while seeding the optimal parse with level 1's parse by the HC engine
+  reaches 687,515 there; and the ladder still has per-file inversions that this guard does not address (L7 -> L8 on nci +4.5%, osdb
+  +3.8%, webster +1.9%).
 
 v1.6.11-pre
 - fix/decoder safety, no format change and no output change: two memory-safety bugs on corrupt input, found by fuzzing

@@ -351,11 +351,19 @@ static void fill_literals(seq_collector_t* s) {
  * plus extra bits, and the order-0 entropy of the literals, in 1/16 bit.
  * The optimal parser then re-parses with what the seq coder will really
  * charge instead of the frame codec's codeword bytes. */
-static void build_seq_price(const seq_collector_t* sc, const uint8_t* src, LZ6HC_seqPrice* sp)
+typedef struct {
+    unsigned llc[LL_CODES], mlc[ML_CODES + 1], ofc[OF_CODES + 3];
+    size_t lh[256];
+    size_t nlit, nseq;
+} seq_stats_t;
+
+/* symbol counts of a parse: the same rep-stack walk as the encoder */
+static void seq_stats(const seq_collector_t* sc, const uint8_t* src, seq_stats_t* st)
 {
-    unsigned llc[LL_CODES] = {0}, mlc[ML_CODES + 1] = {0}, ofc[OF_CODES + 3] = {0};
-    size_t lh[256] = {0};
-    size_t nlit = 0, abs = 0, nseq = sc->n;
+    memset(st, 0, sizeof(*st));
+    unsigned* const llc = st->llc; unsigned* const mlc = st->mlc; unsigned* const ofc = st->ofc;
+    size_t* const lh = st->lh;
+    size_t nlit = 0, abs = 0;
     int rp[3] = {0, 0, 0};
     for (size_t i = 0; i < sc->n; i++) {
         const size_t ll = (size_t)sc->lit_lens[i], ml = (size_t)sc->match_lens[i];
@@ -376,6 +384,38 @@ static void build_seq_price(const seq_collector_t* sc, const uint8_t* src, LZ6HC
             if (ri > 0) { int t = rp[ri]; for (int k = ri; k > 0; k--) rp[k] = rp[k-1]; rp[0] = t; }
         }
     }
+    st->nlit = nlit;
+    st->nseq = sc->n;
+}
+
+/* Ideal size in bits of a parse under its own statistics: order-0 entropy of the literals and of the
+ * ll / ml / offset symbols, plus the extra bits. Not the coded size, but it orders two parses of
+ * one block as the coder does when they differ by a few percent. */
+static double seq_ideal_bits(const seq_collector_t* sc, const uint8_t* src)
+{
+    seq_stats_t st;
+    seq_stats(sc, src, &st);
+    double bits = 0;
+    for (int c = 0; c < 256; c++)
+        if (st.lh[c]) bits += (double)st.lh[c] * log2((double)st.nlit / (double)st.lh[c]);
+    size_t nof = 0;
+    for (int c = 0; c < OF_CODES + 3; c++) nof += st.ofc[c];
+    for (int c = 0; c < LL_CODES; c++)
+        if (st.llc[c]) bits += (double)st.llc[c] * (log2((double)st.nseq / st.llc[c]) + LL_extra[c]);
+    for (int c = 0; c < ML_CODES + 1; c++)
+        if (st.mlc[c]) bits += (double)st.mlc[c] * (log2((double)st.nseq / st.mlc[c]) + (c ? ML_extra[c - 1] : 0));
+    for (int c = 0; c < OF_CODES + 3; c++)
+        if (st.ofc[c]) bits += (double)st.ofc[c] * (log2((double)nof / st.ofc[c]) + (c < OF_CODES ? OF_extra[c] : 0));
+    return bits;
+}
+
+static void build_seq_price(const seq_collector_t* sc, const uint8_t* src, LZ6HC_seqPrice* sp)
+{
+    seq_stats_t st;
+    seq_stats(sc, src, &st);
+    const unsigned* const llc = st.llc; const unsigned* const mlc = st.mlc; const unsigned* const ofc = st.ofc;
+    const size_t* const lh = st.lh;
+    const size_t nlit = st.nlit, nseq = st.nseq;
 #define SP_COST(cnt, tot, alpha) \
     ((unsigned)(16.0 * log2(((double)(tot) + 0.5 * (alpha)) / ((double)(cnt) + 0.5)) + 0.5))
     double h0 = 0;
@@ -884,6 +924,71 @@ static int fast1_parse(seq_collector_t* sc, const uint8_t* src, size_t n,
     return fast1_parse_w(sc, src, n, hlog, mls, wlog, 1, rep3, insp);
 }
 
+static void collector_free_parse(seq_collector_t* c)
+{
+    free(c->lit_lens); free(c->match_lens); free(c->offsets);
+    c->lit_lens = c->match_lens = c->offsets = NULL;
+    c->n = c->cap = 0;
+}
+
+/* dst takes over the parse of src (the literals are rebuilt from the source by fill_literals) */
+static void collector_take_parse(seq_collector_t* dst, seq_collector_t* src)
+{
+    collector_free_parse(dst);
+    dst->lit_lens = src->lit_lens; dst->match_lens = src->match_lens; dst->offsets = src->offsets;
+    dst->n = src->n; dst->cap = src->cap; dst->lit_sum = src->lit_sum; dst->lit_built = 0;
+    src->lit_lens = src->match_lens = src->offsets = NULL;
+    src->n = src->cap = 0;
+}
+
+/* Level guard. The parsers of levels 4-15 take 3-5 byte matches that the level-1 parser (6-byte hash)
+ * never sees, and the optimal parser (8-15) prices matches with the statistics of an earlier parse, so
+ * once short matches dominate they look cheap and the parse repeats them. On data whose literals are
+ * already cheap (protein: 21 symbols, 4.2 bits each) a 3-byte match saves 12 bits and costs about 16:
+ * the output came out 4-6% larger than level 1's. Such a parse is recognised by its economics: the bits
+ * its matches save (length x the entropy of the block's bytes) against a crude price (5 + the bits of the
+ * offset); when they save less than 25% more than they cost, the parse is compared with the plain level-1
+ * parse of the same block, by ideal size, and the cheaper one is kept. Blocks whose matches
+ * pay for themselves are not touched and pay nothing. */
+static void seq_guard(seq_collector_t* sc, const char* src, size_t srcSize)
+{
+    enum { GUARD_MIN_BLOCK = 4096, GUARD_SAMPLE = 65536 };
+    unsigned h, m, w;
+    if (srcSize < GUARD_MIN_BLOCK || sc->n == 0 || !LZ6HC_seqFast1Params(1, &h, &m, &w)) return;
+    double bits = 0;   /* entropy of the bytes, bits per byte, from a prefix */
+    {
+        size_t hist[256] = {0};
+        const size_t pn = srcSize < GUARD_SAMPLE ? srcSize : GUARD_SAMPLE;
+        for (size_t i = 0; i < pn; i++) hist[(uint8_t)src[i]]++;
+        for (int c = 0; c < 256; c++)
+            if (hist[c]) bits -= (double)hist[c] * log2((double)hist[c] / (double)pn);
+        bits /= (double)pn;
+    }
+    if (bits < 2.5) return;   /* cheap literals: matches nearly always pay */
+    double saved = 0, paid = 0;
+    for (size_t i = 0; i < sc->n; i++) {
+        const int ml = sc->match_lens[i];
+        if (!ml) continue;
+        const unsigned off = (unsigned)sc->offsets[i];
+        saved += (double)ml * bits;
+        paid += 5.0 + (double)(off ? 32 - __builtin_clz(off) : 0);
+    }
+    if (saved == 0 || saved - paid >= 0.25 * saved) return;
+    seq_collector_t cb;
+    memset(&cb, 0, sizeof(cb));
+    cb.src = (const uint8_t*)src;
+    cb.lits = (uint8_t*)malloc(srcSize + 65536);
+    if (!cb.lits) return;
+    unsigned ways, rep3, insp;
+    LZ6HC_seqFast1Opts(1, &ways, &rep3, &insp);
+    if (fast1_parse(&cb, (const uint8_t*)src, srcSize, h, m, w, ways, rep3, insp)) { free(cb.lits); collector_free_parse(&cb); return; }
+    free(cb.lits);
+    cb.lits = NULL;
+    if (seq_ideal_bits(&cb, (const uint8_t*)src) < seq_ideal_bits(sc, (const uint8_t*)src))
+        collector_take_parse(sc, &cb);
+    collector_free_parse(&cb);
+}
+
 /* legacy_f1: the fast parser runs with the options it had before the level-1 retune (1 way, rep0 only, 2 indexed
  * positions): the BCJ trial below decides on level 1's size, and it has to decide the same way whatever level 1 is */
 static size_t compress_normal_x(const char* src, size_t srcSize,
@@ -993,6 +1098,7 @@ static size_t compress_normal_x(const char* src, size_t srcSize,
     LZ6_free_mem_HC(hc);   /* free internal hash tables (64MB with max hashLog) */
     free(hc);              /* free the state struct itself */
     if (rc) { free(sc.lits); free(sc.lit_lens); free(sc.match_lens); free(sc.offsets); return 0; }
+    if (level >= 3 && !getenv("LZ6_NO_SEQGUARD")) seq_guard(&sc, src, srcSize);
     fill_literals(&sc);
 parsed:
 #ifdef LZ6_SEQ_DUMP
