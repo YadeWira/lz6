@@ -18,6 +18,8 @@
 #   rpzero   two hand-built blocks with an explicit offset equal to rep0: the rep history rule (always push) is pinned
 #   planemerge  the SSE2 byte-plane merge against a scalar reference, every plane size 0..300 and random larger ones,
 #            exact-size heap buffers (once more with SSE2 compiled out)
+#   guard    the level guard of the encoder (seq_guard): skewed 21-symbol data, levels 4-15 must round trip and come out at
+#            most 2% larger than level 1 (they were up to 7% larger before the guard)
 #   hufdiff  Huffman literal blocks (valid, and mutated header/stream/truncation) decoded from exact-size buffers: valid
 #            blocks must round trip; with REFTREE the return code and output hash of every case must equal the reference's
 # Then once: asan (round trips of 6 files x 7 levels + 25000 fuzz iterations, default build) and m32
@@ -89,7 +91,7 @@ for clone in bmi2 default; do
   $CC "${SAN[@]}" "${X[@]}" "${INC[@]}" "$GATE/xfuzz2.c" "${S[@]}" -o "$W/xfuzz2_$clone" -lm || { note "FAIL build xfuzz2 $clone"; continue; }
   out=$(run "$W/xfuzz2_$clone" "$N" "$W"/set/*.seq 2>&1); rc=$?
   if [ $rc -eq 0 ]; then note "PASS xfuzz2 $clone ($N): $(echo "$out" | tail -1)"; else note "FAIL xfuzz2 $clone rc=$rc: $(echo "$out" | flat 500)"; fi
-  for t in rpzero planemerge; do
+  for t in rpzero planemerge guard; do
     $CC "${SAN[@]}" "${X[@]}" "${INC[@]}" "$GATE/$t.c" "${S[@]}" -o "$W/${t}_$clone" -lm || { note "FAIL build $t $clone"; continue; }
     out=$(run "$W/${t}_$clone" 2>&1); rc=$?
     if [ $rc -eq 0 ]; then note "PASS $t $clone: $(echo "$out" | tail -1 | head -c 120)"; else note "FAIL $t $clone rc=$rc: $(echo "$out" | flat 300)"; fi
