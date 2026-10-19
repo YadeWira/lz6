@@ -1,3 +1,24 @@
+v1.6.12-pre (unreleased)
+- ratio/encoder, NO FORMAT CHANGE (streams decode with any v1.6.11 decoder): the fast parser of levels 1 and 2 (fast1) gets
+  2-way hash buckets (the longest verified candidate wins), rep1/rep2 probes right after a match (level 2) and 2-3 indexed
+  positions at each end of every match (the plain scheme indexed one). Silesia / AIT, size of the output: level 1 33.09% / 47.90%
+  -> 32.56% / 47.70%, level 2 31.58% / 47.52% -> 30.45% / 47.10% (per file, level 1: xml -7.4%, nci -4.3%, reymont -4.3%, ait_B -4.0%,
+  webster -3.0%, dickens -1.6%, mozilla -0.4%; level 2: xml -11.6%, nci -10.8%, ait_B -7.0%, reymont -6.8%, webster -6.5%,
+  dickens -5.3%). Cost, lzbench in memory, one thread on a pinned idle core (CPU 44), A/B/B/A against v1.6.11-pre: encode
+  level 1 168 -> 137 MB/s, level 2 141 -> 113 MB/s; decode 1035 -> 1087 and 951 -> 1000 MB/s (exact decode cycles, size-weighted
+  over the 19 files: -3.3% and -3.2%; the file where a rep1/rep2 match hurts the decoder's offset history, x-ray, is why level 1
+  does not use them: +9% decode cycles for -1% size). Levels 3-8 write the same bytes, except x-ray -0.8% (its byte-plane lanes
+  compress with the level-1 parser at every level) and ait_G +0.013% / ait_F +0.001% (the same lanes). Larger than before at
+  level 1: ait_G +0.007%, ait_F +0.001%; at level 2: ait_G +0.07%.
+  Measured and not adopted: lazy matching at level 3 (28.3% on Silesia but sao +2.6%), a packed record per row-hash row (three
+  cache misses became one in a cold single call, but 13% slower in steady state), thinned inserts after long matches (nci +1.6%),
+  a branchless offset-history update in the decoder (12-21% slower: the cmov chain serialises the sequences).
+- fix/encoder: LZ6_compress_seq ran the BCJ trial (which encodes samples) before the code tables were built, so the first
+  direct call on an input of 16 KB or more (lzbench, bakeoff/stdh; the frame API builds the tables when a context is created) decided
+  on the sizes of an encoder with empty tables: 51 MB mozilla gave different bytes on its first and second call. The tables are now
+  built first, and the trial always runs the level-1 parser as it was before this change, so that its verdict does not move with
+  the level-1 options.
+
 v1.6.11-pre
 - fix/decoder safety, no format change and no output change: two memory-safety bugs on corrupt input, found by fuzzing
   with an exact-size source and destination. A Huffman literal header whose code lengths oversubscribe the code space

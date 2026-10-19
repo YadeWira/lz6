@@ -1280,6 +1280,16 @@ int LZ6HC_seqFast1Params(int level, unsigned* hashLog, unsigned* hashBytes, unsi
     return 1;
 }
 
+void LZ6HC_seqFast1Opts(int level, unsigned* ways, unsigned* rep3, unsigned* insPairs)
+{
+    *ways = 1; *rep3 = 0; *insPairs = 1;
+    if (level < 1 || level > LZ6HC_MAX_CLEVEL) return;
+    const LZ6HC_parameters* p = &LZ6HC_seqParameters[level];
+    *ways = p->searchNum >= 4 ? 4 : p->searchNum == 2 ? 2 : 1;
+    *rep3 = p->fullSearch != 0;
+    *insPairs = p->hashLog3 < 1 ? 1 : p->hashLog3 > 3 ? 3 : p->hashLog3;
+}
+
 void LZ6HC_setSeqPrice(void* state, const LZ6HC_seqPrice* sp)
 {
     ((LZ6HC_Data_Structure*)state)->seqPrice = sp;

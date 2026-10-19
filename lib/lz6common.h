@@ -254,7 +254,8 @@ typedef struct
     U32 searchNum;     /* nb of searches : larger == more compression, slower*/
     U32 searchLength;  /* size of matches : larger == faster decompression */
     U32 sufficientLength;  /* used only by optimal parser: size of matches which is acceptable: larger == more compression, slower */
-    U32 fullSearch;    /* used only by optimal parser: perform full search of matches: 1 == more compression, slower */
+    U32 fullSearch;    /* used only by optimal parser: perform full search of matches: 1 == more compression, slower.
+                        * LZ6HC_row: lazy depth. LZ6HC_fast1: rep1/rep2 probes */
     LZ6HC_strategy strategy;
 } LZ6HC_parameters;
 
@@ -395,8 +396,8 @@ static const LZ6HC_parameters LZ6HC_seqParameters[LZ6HC_MAX_CLEVEL+1] =
      * every step smaller than the one before.
      * windLog, contentLog,  H, H3,  Snum, SL, SuffL, FS, Strategy                   subset ratio / MB/s */
     {        0,          0,  0,  0,     0,  0,     0,  0, LZ6HC_fast             }, // level 0 - never used
-    { MAXD_LOG,   MAXD_LOG, 15,  0,     0,  6,    20,  0, LZ6HC_fast1            }, // level 1   full Silesia 33.33% / 150
-    { MAXD_LOG,   MAXD_LOG, 20,  0,     0,  6,    25,  0, LZ6HC_fast1            }, // level 2   full Silesia 31.84% / 128
+    { MAXD_LOG,   MAXD_LOG, 15,  2,     2,  6,    20,  0, LZ6HC_fast1            }, // level 1   fast1: H15, 2 ways, no rep1/rep2, 2 indexed per end (hashLog3 = positions, searchNum = ways, fullSearch = rep3)
+    { MAXD_LOG,   MAXD_LOG, 19,  3,     2,  6,    22,  1, LZ6HC_fast1            }, // level 2   fast1: H19, 2 ways, rep3, 3 indexed per end, 4 MB window
     { MAXD_LOG,   MAXD_LOG, 10,  0,     8,  6,    22,  0, LZ6HC_row              }, // level 3   full Silesia 28.87% (6-byte hash: was 28.97% with 5; AIT 39.73 -> 39.62%)
     { MAXD_LOG,   MAXD_LOG, 10,  0,     8,  5,    22,  1, LZ6HC_row              }, // level 4   28.12% / 45
     { MAXD_LOG,   MAXD_LOG, 10,  5,    24,  5,    23,  2, LZ6HC_row              }, // level 5   full Silesia 27.81% (32-slot rows)

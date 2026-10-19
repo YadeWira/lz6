@@ -742,10 +742,17 @@ static int tbr_exact(const tbr_t* r, const int bmi)
 
 /* ---- fast1: single-pass fast parser (zstd "fast"-style) ----
  * Writes sequences and literals straight into the collector (no HC
- * context, no callback, no second literal pass): one small hash table of
- * 2^hlog positions over mls-byte hashes, no lazy matching, a rep0 check
- * one byte ahead, an accelerating step through literal runs, and matches
- * only within 2^wlog bytes so verifying a candidate stays in cache. */
+ * context, no callback, no second literal pass): one small hash table over
+ * mls-byte hashes, no lazy matching, an accelerating step through literal
+ * runs, and matches only within 2^wlog bytes so verifying a candidate stays
+ * in cache. What it adds to the plain fast scheme (each option is a field of the
+ * level's row, see LZ6HC_seqFast1Opts):
+ *  - buckets of `ways` slots (1, 2 or 4) in one cache line, newest first: the
+ *    longest verified candidate wins (2 ways: -0.36 points for +11% instructions);
+ *  - three rep offsets, as in the format: rep0 is tried at every position, rep1 and
+ *    rep2 only within 8 bytes of the last match, where they pay (-0.25 points). A rep1/rep2
+ *    match makes the decoder's offset history take its less predictable path: x-ray +9% decode cycles;
+ *  - `insp` positions at each end of every match are indexed (1 = the plain scheme: -0.3 points for 3). */
 static inline uint32_t fast1_hash(const uint8_t* p, unsigned mls, unsigned hlog)
 {
     uint64_t v;
@@ -767,10 +774,13 @@ static inline size_t fast1_count(const uint8_t* a, const uint8_t* b, const uint8
     return (size_t)(a - a0);
 }
 
-static int fast1_parse(seq_collector_t* sc, const uint8_t* src, size_t n,
-                       unsigned hlog, unsigned mls, unsigned wlog)
+#define FAST1_REP_WINDOW 8   /* rep1/rep2 are probed only this close to the last match */
+static inline __attribute__((always_inline))
+int fast1_parse_w(seq_collector_t* sc, const uint8_t* src, size_t n,
+                  unsigned hlog, unsigned mls, unsigned wlog, const unsigned ways, const unsigned rep3, const unsigned insp)
 {
     const size_t cap = n / 4 + 16;
+    while (hlog > 10 && ((size_t)1 << hlog) > 2 * n) hlog--;   /* never more than two slots per input byte */
     sc->lit_lens = (int*)malloc(cap * sizeof(int));
     sc->match_lens = (int*)malloc(cap * sizeof(int));
     sc->offsets = (int*)malloc(cap * sizeof(int));
@@ -784,51 +794,73 @@ static int fast1_parse(seq_collector_t* sc, const uint8_t* src, size_t n,
     const uint8_t* const ilimit = n > 16 ? iend - 16 : src;   /* hash reads 8 bytes */
     const uint8_t* const mlimit = n > 8 ? iend - 8 : src;     /* match end: last bytes stay literals */
     const size_t wmax = ((size_t)1 << wlog) - 1;
-    size_t rep = 0;
+    size_t rp[3] = {0, 0, 0};   /* rep offsets, the same stack the encoder walks; 0 = none */
     unsigned miss = 0;
+#define FAST1_SLOT(p) (fast1_hash((p), mls, hlog) & ~(uint32_t)(ways - 1))
+#define FAST1_PUT(slot, pos) do {                                           \
+        for (unsigned w_ = ways - 1; w_ > 0; w_--) ht[(slot) + w_] = ht[(slot) + w_ - 1]; \
+        ht[(slot)] = (uint32_t)(pos) + 1;                                   \
+    } while (0)
 #define FAST1_EMIT(mstart, ml, off) do {                                    \
         const size_t ll_ = (size_t)((mstart) - anchor);                    \
         memcpy(sc->lits + nl, anchor, ll_); nl += ll_;                     \
         sc->lit_lens[ns] = (int)ll_; sc->match_lens[ns] = (int)(ml);       \
         sc->offsets[ns] = (int)(off); ns++;                                 \
+        if ((size_t)(off) != rp[0]) {                                       \
+            if ((size_t)(off) == rp[1]) { rp[1] = rp[0]; rp[0] = (size_t)(off); } \
+            else { rp[2] = rp[1]; rp[1] = rp[0]; rp[0] = (size_t)(off); }   \
+        }                                                                   \
     } while (0)
     if (n > 16) ip++;
     while (ip < ilimit) {
         const size_t pos = (size_t)(ip - src);
-        const uint32_t h = fast1_hash(ip, mls, hlog);
-        const uint32_t cand = ht[h];
-        ht[h] = (uint32_t)pos + 1;
-        const uint8_t* mstart;
-        size_t ml, off;
-        if (rep && pos + 1 >= rep && fast1_r32(ip + 1 - rep) == fast1_r32(ip + 1)) {
-            mstart = ip + 1; off = rep;
-            ml = 4 + fast1_count(mstart + 4, mstart + 4 - off, mlimit);
-        } else if (cand && pos - (cand - 1) <= wmax && fast1_r32(src + cand - 1) == fast1_r32(ip)) {
-            const uint8_t* m = src + cand - 1;
-            mstart = ip; off = (size_t)(ip - m);
-            ml = 4 + fast1_count(ip + 4, m + 4, mlimit);
+        const uint32_t slot = FAST1_SLOT(ip);
+        uint32_t cs[4];
+        for (unsigned w = 0; w < ways; w++) cs[w] = ht[slot + w];
+        FAST1_PUT(slot, pos);
+        const uint8_t* mstart = NULL;
+        size_t ml = 0, off = 0;
+        const unsigned nrep = rep3 && (size_t)(ip - anchor) < FAST1_REP_WINDOW ? 3 : 1;
+        for (unsigned ri = 0; ri < nrep; ri++)
+            if (rp[ri] && pos + 1 >= rp[ri] && fast1_r32(ip + 1 - rp[ri]) == fast1_r32(ip + 1)) {
+                mstart = ip + 1; off = rp[ri];
+                ml = 4 + fast1_count(mstart + 4, mstart + 4 - off, mlimit);
+                break;
+            }
+        if (!mstart) {
+            for (unsigned w = 0; w < ways; w++) {
+                const uint32_t c = cs[w];
+                if (c && pos - (c - 1) <= wmax && fast1_r32(src + c - 1) == fast1_r32(ip)) {
+                    const size_t l = 4 + fast1_count(ip + 4, src + c + 3, mlimit);
+                    if (l > ml) { ml = l; off = (size_t)(ip - (src + c - 1)); mstart = ip; }
+                }
+            }
+            if (!mstart) { ip += 1 + (miss++ >> 6); continue;   /* accelerate through literal runs */ }
+        }
+        {   /* extend backwards over the pending literals */
+            const uint8_t* m = mstart - off;
             while (mstart > anchor && m > src && mstart[-1] == m[-1]) { mstart--; m--; ml++; }
-        } else {
-            ip += 1 + (miss++ >> 6);   /* accelerate through literal runs */
-            continue;
         }
         miss = 0;
         FAST1_EMIT(mstart, ml, off);
-        rep = off;
         ip = anchor = mstart + ml;
-        /* index two positions inside the match for later matches */
-        if (ip < ilimit) {
-            ht[fast1_hash(ip - 2, mls, hlog)] = (uint32_t)(ip - 2 - src) + 1;
-            ht[fast1_hash(mstart + 1, mls, hlog)] = (uint32_t)(mstart + 1 - src) + 1;
+        if (ip < ilimit) {   /* index `insp` positions at the start of the match and `insp` at its end */
+            for (unsigned j = 0; j < insp; j++) {
+                const uint8_t* const q1 = ip - 2 - j; const uint8_t* const q2 = mstart + 1 + j;
+                const uint32_t s1 = FAST1_SLOT(q1); FAST1_PUT(s1, q1 - src);
+                const uint32_t s2 = FAST1_SLOT(q2); FAST1_PUT(s2, q2 - src);
+            }
         }
         /* immediate rep0 right after the match */
-        while (ip < ilimit && fast1_r32(ip) == fast1_r32(ip - rep)) {
-            const size_t rl = 4 + fast1_count(ip + 4, ip + 4 - rep, mlimit);
-            FAST1_EMIT(ip, rl, rep);
+        while (ip < ilimit && rp[0] && fast1_r32(ip) == fast1_r32(ip - rp[0])) {
+            const size_t rl = 4 + fast1_count(ip + 4, ip + 4 - rp[0], mlimit);
+            FAST1_EMIT(ip, rl, rp[0]);
             ip = anchor = ip + rl;
         }
         if (ns + 2 >= cap) break;   /* cannot happen with 4-byte minimum matches; guard */
     }
+#undef FAST1_SLOT
+#undef FAST1_PUT
 #undef FAST1_EMIT
     /* last literals: a literals-only sequence */
     {
@@ -842,10 +874,21 @@ static int fast1_parse(seq_collector_t* sc, const uint8_t* src, size_t n,
     free(ht);
     return 0;
 }
+static int fast1_parse(seq_collector_t* sc, const uint8_t* src, size_t n,
+                       unsigned hlog, unsigned mls, unsigned wlog, unsigned ways, unsigned rep3, unsigned insp)
+{
+    if (insp < 1) insp = 1;
+    if (insp > 3) insp = 3;
+    if (ways >= 4) return fast1_parse_w(sc, src, n, hlog, mls, wlog, 4, rep3, insp);
+    if (ways == 2) return fast1_parse_w(sc, src, n, hlog, mls, wlog, 2, rep3, insp);
+    return fast1_parse_w(sc, src, n, hlog, mls, wlog, 1, rep3, insp);
+}
 
-static size_t compress_normal_ex(const char* src, size_t srcSize,
+/* legacy_f1: the fast parser runs with the options it had before the level-1 retune (1 way, rep0 only, 2 indexed
+ * positions): the BCJ trial below decides on level 1's size, and it has to decide the same way whatever level 1 is */
+static size_t compress_normal_x(const char* src, size_t srcSize,
                               char* dst, size_t dstCap, int level,
-                                 int fast_lits) {
+                                 int fast_lits, int legacy_f1) {
     /* Phase 1: lz6 match finding */
     size_t state_sz = (size_t)LZ6_sizeofStateHC();
     seq_collector_t sc;
@@ -901,7 +944,15 @@ static size_t compress_normal_ex(const char* src, size_t srcSize,
             if (m > 8) m = 8;
             if (w < 10) w = 10;
             if (w > 25) w = 25;
-            if (fast1_parse(&sc, (const uint8_t*)src, srcSize, h, m, w)) {
+            unsigned ways, rep3, insp;
+            LZ6HC_seqFast1Opts(level, &ways, &rep3, &insp);
+            if (legacy_f1) { h = 15; m = 6; w = 20; ways = 1; rep3 = 0; insp = 1; }
+#ifdef LZ6_SEQ_TUNING
+            if (getenv("LZ6_F1_WAYS")) ways = (unsigned)atoi(getenv("LZ6_F1_WAYS"));
+            if (getenv("LZ6_F1_REP")) rep3 = (unsigned)atoi(getenv("LZ6_F1_REP"));
+            if (getenv("LZ6_F1_INS")) insp = (unsigned)atoi(getenv("LZ6_F1_INS"));
+#endif
+            if (fast1_parse(&sc, (const uint8_t*)src, srcSize, h, m, w, ways, rep3, insp)) {
                 free(sc.lits); free(sc.lit_lens); free(sc.match_lens); free(sc.offsets); return 0;
             }
             goto parsed;
@@ -1437,6 +1488,11 @@ oom:
 /* fast_lits = 1: literals only as Huffman (or raw), never the order-1 /
  * order-0 rANS coders -- they decode several times slower (byte-plane lanes:
  * mr at L8 decoded 780 -> 240 MB/s with order-1 lanes) */
+static size_t compress_normal_ex(const char* src, size_t srcSize, char* dst, size_t dstCap, int level, int fast_lits)
+{
+    return compress_normal_x(src, srcSize, dst, dstCap, level, fast_lits, 0);
+}
+
 static size_t compress_normal(const char* src, size_t srcSize,
                               char* dst, size_t dstCap, int level)
 {
@@ -1745,8 +1801,8 @@ static int bcj_detect(const uint8_t* src, size_t n, uint32_t* rs, uint32_t* rl, 
         uint8_t* flt = buf; uint8_t* o1 = buf + sl; uint8_t* o2 = o1 + cap;
         memcpy(flt, src + s0, sl);
         x86_bcj(flt, sl, 1, (uint32_t)s0);
-        size_t a = compress_normal_ex((const char*)(src + s0), sl, (char*)o1, cap, 1, 0);
-        size_t b = compress_normal_ex((const char*)flt, sl, (char*)o2, cap, 1, 0);
+        size_t a = compress_normal_x((const char*)(src + s0), sl, (char*)o1, cap, 1, 0, 1);
+        size_t b = compress_normal_x((const char*)flt, sl, (char*)o2, cap, 1, 0, 1);
         free(buf);
         if (a == 0) a = sl;
         if (b == 0) b = sl;
@@ -2507,6 +2563,7 @@ static size_t decode_normal(const char* src, size_t srcSize, char* dst, size_t d
 
 size_t LZ6_compress_seq(const char* src, size_t srcSize,
                         char* dst, size_t dstCap, int level) {
+    if (!code_tabs_ready) code_tabs_init();   /* the BCJ trial below runs the encoder before compress_seq_core would build them */
     if (srcSize >= 16384 && srcSize <= 0x7FFFFFFFu && dstCap > 64) {
         const size_t maxr = srcSize / BCJ_CHUNK + 1;
         uint32_t* rs = (uint32_t*)malloc(maxr * 2 * sizeof(uint32_t));

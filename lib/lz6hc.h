@@ -140,6 +140,10 @@ int LZ6HC_seqLevelIsOptimal(int level);
 /* 1 when seq level `level` uses the single-pass fast parser (lz6seq.c
  * fast1_parse); fills its hash log, hashed bytes and window log */
 int LZ6HC_seqFast1Params(int level, unsigned* hashLog, unsigned* hashBytes, unsigned* windowLog);
+/* the fast parser's other options at `level`: slots per hash bucket (1, 2 or 4: the row's searchNum),
+ * whether rep1/rep2 are probed right after a match (fullSearch) and how many positions at each end of a
+ * match are indexed (1..3: hashLog3) */
+void LZ6HC_seqFast1Opts(int level, unsigned* ways, unsigned* rep3, unsigned* insPairs);
 int LZ6HC_compress_sequences(void* state, const char* src, size_t srcSize,
                               LZ6HC_seq_cb cb, void* opaque);
 
