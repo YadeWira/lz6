@@ -10,7 +10,7 @@ int main(int argc, char** argv)
 {
     long N = atol(argv[1]); int nf = argc - 2; uint8_t* data[16]; long dsz[16];
     for (int i = 0; i < nf; i++) { FILE* f = fopen(argv[2 + i], "rb"); fseek(f, 0, SEEK_END); long n = ftell(f); if (n > 4000000) n = 4000000; fseek(f, 0, SEEK_SET); data[i] = malloc(n); if (fread(data[i], 1, n, f) != (size_t)n) return 1; fclose(f); dsz[i] = n; }
-    static const int lv[] = { -2, -1, 1, 3, 6, 10, 13 };   /* the fast tier and rows 3, 5, 8, 12, 15 */
+    static const int lv[] = { -2, -1, 1, 2, 3, 4, 5, 6, 7, 10, 13 };   /* the fast tier and levels 1-7, 10, 13 */
     long blocks = 0, total = 0, bad = 0;
     for (long it = 0; it < N; it++) {
         size_t n = 8 + rnd() % 700; uint8_t* src = malloc(n);
@@ -18,7 +18,7 @@ int main(int argc, char** argv)
         if (kind < nf) { long p = rnd() % (dsz[kind] - n); memcpy(src, data[kind] + p, n); }
         else if (kind == nf) { memset(src, 'a' + rnd() % 3, n); }
         else { size_t per = 1 + rnd() % 9; for (size_t i = 0; i < n; i++) src[i] = (uint8_t)("abcdefghijk"[(i % per) + (i / (per * 7)) % 2]); }
-        for (int li = 0; li < 7; li++) {
+        for (unsigned li = 0; li < sizeof lv / sizeof *lv; li++) {
             size_t cap = n + n / 2 + 4096; uint8_t* c = malloc(cap);
             size_t cs = LZ6_compress_seq((const char*)src, n, (char*)c, cap, lv[li]);
             total++;

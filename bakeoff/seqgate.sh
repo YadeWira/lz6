@@ -10,7 +10,7 @@
 # (-DLZ6SEQ_NO_DYNAMIC_BMI2). Per clone, under ASAN+UBSan:
 #   pocs     hufpoc + scpoc, the two memory-safety bugs fixed by S0; both must run clean
 #   edge     synthetic round trips (sizes 0..300 and 1000..1000000, runs, repeats, random) at 7 levels
-#   tinyrt   round trips of tiny blocks (8..707 bytes) at levels -2 -1 1 3 6 10 13 (rows 1 2 3 5 8 12 15)
+#   tinyrt   round trips of tiny blocks (8..707 bytes) at levels -2 -1 1 2 3 4 5 6 7 10 13
 #   xfuzz2   mutation fuzz (flips, truncation, random runs, header bytes) on real slices and on small
 #            synthetic streams, decoding from an exact-size copy of the mutant
 #   xdiff    only with REFTREE (a checkout of the reference decoder): the return value and an output hash of
@@ -143,7 +143,7 @@ SLICES=("$W"/asan/*.s400k "$W"/asan/dickens.s "$W"/asan/samba.s "$W"/asan/x-ray.
 if $CC "${SAN[@]}" "${INC[@]}" "$GATE/rt.c" "${S[@]}" -o "$W/rt" -lm &&
    $CC "${SAN[@]}" "${INC[@]}" "$GATE/xfuzz.c" "${S[@]}" -o "$W/xfuzz" -lm; then
   bad=0
-  for L in -2 -1 1 3 6 10 13; do for f in "${SLICES[@]}"; do
+  for L in -2 -1 1 2 3 4 5 6 7 10 13; do for f in "${SLICES[@]}"; do
     out=$(run "$W/rt" $L "$f" 2>&1); rc=$?
     if [ $rc -ne 0 ]; then bad=1; note "FAIL asan rt L$L $f rc=$rc: $(echo "$out" | flat 300)"; fi
   done; done

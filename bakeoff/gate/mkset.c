@@ -6,9 +6,9 @@
 #include "lib/entropy/lz6seq.h"
 static uint64_t st=0x1234567887654321ull; static uint64_t rnd(void){st^=st<<13;st^=st>>7;st^=st<<17;return st;}
 int main(int argc, char** argv){
-  int idx = 0; static const int lv[] = {-2,1,6,10};   /* rows 1, 3, 8, 12 */
+  int idx = 0; static const int lv[] = {-2,1,2,4,5,7,10};   /* the fast tier and levels 1, 2, 4, 5, 7, 10 */
   static const size_t sz[] = {19, 40, 100, 333, 1000, 3000, 20000, 100000};
-  for (unsigned si = 0; si < sizeof sz/sizeof *sz; si++) for (int k = 0; k < 6; k++) for (unsigned li = 0; li < 4; li++) {
+  for (unsigned si = 0; si < sizeof sz/sizeof *sz; si++) for (int k = 0; k < 6; k++) for (unsigned li = 0; li < sizeof lv / sizeof *lv; li++) {
     size_t n = sz[si]; uint8_t* b = malloc(n);
     for (size_t i = 0; i < n; i++) switch (k) {
       case 0: b[i] = "the quick brown fox jumps over the lazy dog "[(i + (rnd()%7==0)) % 44]; break;
