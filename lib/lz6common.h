@@ -409,8 +409,8 @@ static const LZ6HC_parameters LZ6HC_seqParameters[LZ6HC_MAX_CLEVEL+1] =
     { MAXD_LOG,   MAXD_LOG, 10,  5,    32,  5,    23,  2, LZ6HC_row              }, // row 5 = -3   v1.6.13: 32 candidates instead of 24 (Silesia 27.45% -> 27.35%)
     { MAXD_LOG,   MAXD_LOG, 10,  5,    32,  5,    24,  2, LZ6HC_row, LZ6_ROWREP(3, 16) }, // row 6 = -4   v1.6.13: rep probes (Silesia 27.32% -> 27.23%)
     { MAXD_LOG,   MAXD_LOG, 15, 13,    16,  6,     0,  0, LZ6HC_lowest_price     }, // row 7 = -5   v1.6.13: 16 candidates instead of 8 (Silesia 27.21% -> 26.97%)
-    { MAXD_LOG, MAXD_LOG+1, 23, 16,     8,  4,    32,  0, LZ6HC_optimal_price_bt }, // level 8   27.07% / 7.1
-    { MAXD_LOG, MAXD_LOG+1, 23, 16,     8,  4,    32,  1, LZ6HC_optimal_price_bt }, // level 9   26.67% / 5.0
+    { MAXD_LOG, MAXD_LOG+1, 23, 16,    10,  4,    48,  0, LZ6HC_optimal_price_bt }, // row 8 = -6   v1.6.13: 10 searches, sufficient length 48 (Silesia 26.90% -> 26.44%)
+    { MAXD_LOG, MAXD_LOG+1, 23, 16,    10,  4,    48,  1, LZ6HC_optimal_price_bt }, // row 9 = -7   v1.6.13: 10 searches, sufficient length 48 (Silesia 26.60% -> 26.08%)
     { MAXD_LOG, MAXD_LOG+1, 23, 16,    16,  4,    48,  1, LZ6HC_optimal_price_bt }, // level 10  25.57% / 3.6
     { MAXD_LOG, MAXD_LOG+1, 23, 16,    32,  4,    48,  1, LZ6HC_optimal_price_bt }, // level 11  25.39% / 3.3
     { MAXD_LOG, MAXD_LOG+1, 23, 16,    64,  4,    64,  2, LZ6HC_optimal_price_bt }, // level 12  25.28% / 2.7
