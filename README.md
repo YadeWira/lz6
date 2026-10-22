@@ -11,9 +11,11 @@ It started as a fork of [LZ5 v1.5] (itself a LZ4 derivative) and grew into its o
 - **x86 branch filter** — CALL/JMP `rel32` operands are converted to absolute addresses on detected code ranges, only where a trial shows it pays (Silesia `ooffice`, a Windows DLL: 44.4% -> 38.2% at level 15).
 - **Multithreaded command line** — `-T#` runs blocks on a worker pool for compression (the seq levels and `--fast`) and decompression (any frame). The output is identical at any thread count (see [Multithreading](#multithreading)).
 
-Current release: **v1.6.12-pre** ([releases](https://github.com/YadeWira/lz6/releases): static Linux x86-64, win64 and win32 binaries).
+Current release: **v1.6.13-pre** ([releases](https://github.com/YadeWira/lz6/releases): static Linux x86-64, win64 and win32 binaries).
 
-New in v1.6.12-pre (see [NEWS](NEWS)): **the seq level numbers move** (`-1`..`-13`, plus a `--fast[=N]` tier: v1.6.11-pre's `-N` is `-(N-2)` for N >= 3, same bytes), a polished fast tier (Silesia 33.09% -> 32.56% and 31.58% -> 30.45%), a **level guard** that stops levels 3-15 from losing to level 1 on small-alphabet data (AIT A -4%, 2x faster to decode), and **byte-delta plane lanes** (`mr` -5.7%, `x-ray` -2.2% at level 13, both decode faster; a seq format extension: streams that use them need v1.6.12-pre, every older stream still decodes). Silesia level 13: 25.12% -> 24.98%. The [Benchmarks](#benchmarks) section starts with the v1.6.12-pre against v1.6.11-pre comparison.
+New in v1.6.13-pre (see [NEWS](NEWS)): **levels `-2` to `-7` are retuned** (encoder only: no format change and no decoder change, every stream decodes with v1.6.12-pre; the fast tier, `-1` and `-8` to `-13` write the same bytes). Silesia: `-2` 28.09% -> 27.65%, `-3` 27.45% -> 27.35%, `-4` 27.32% -> 27.23%, `-5` 27.21% -> 26.98%, `-6` 26.90% -> 26.44%, `-7` 26.60% -> 26.08%, with the decode cycles 0.4-1.5% lower at every one of them and the encode 1-24% dearer. The [Benchmarks](#benchmarks) section starts with the comparison.
+
+Earlier, v1.6.12-pre (see [NEWS](NEWS)): **the seq level numbers move** (`-1`..`-13`, plus a `--fast[=N]` tier: v1.6.11-pre's `-N` is `-(N-2)` for N >= 3, same bytes), a polished fast tier (Silesia 33.09% -> 32.56% and 31.58% -> 30.45%), a **level guard** that stops levels 3-15 from losing to level 1 on small-alphabet data (AIT A -4%, 2x faster to decode), and **byte-delta plane lanes** (`mr` -5.7%, `x-ray` -2.2% at level 13, both decode faster; a seq format extension: streams that use them need v1.6.12-pre, every older stream still decodes). Silesia level 13: 25.12% -> 24.98%. The [Benchmarks](#benchmarks) section starts with the v1.6.12-pre against v1.6.11-pre comparison.
 
 Earlier, v1.6.11-pre: a rewritten seq decoder that decodes 1.3-1.7x faster with the same compressed bytes, tighter length-code widths (-0.2..-0.3% bytes, a seq format change: streams written by v1.6.10-pre and earlier do not decode) and two memory-safety fixes for corrupt input.
 
@@ -75,6 +77,23 @@ Windows (mingw-w64 cross-compile from Linux, or MSVC):
 ## Benchmarks
 
 Measured with one harness ([lzbench], one thread, mem-to-mem, per file) on 2x Xeon E5-2697A v4, one core pinned with the machine otherwise idle (load average below 3), on 2026-10-09. lz6 is v1.6.11-pre (the lzbench plugin still labels it 1.6.9-pre) and the competitors (zstd 1.5.7, lizard 2.1, lz5 v1.5, misa77 0.6.0, lz4 1.10.0, memlz 0.2 beta) were run in the same session; the uf-lzma2 row is from the 2026-10-01 session. Speeds of different sessions are not comparable (an idle core boosts higher), so no row here is mixed with older runs. These are single-thread library numbers, not the [Multithreading](#multithreading) ones. The full matrix of the previous release (all levels, plus brotli, xz, zlib and fastlzma2) is in [bakeoff/VS_CODECS.md](bakeoff/VS_CODECS.md), which also has the per-level rows of this tree:
+
+### v1.6.13-pre against v1.6.12-pre
+
+Levels `-2` to `-7` only (the other levels write the same bytes in both versions). One pinned core, the 19 files of Silesia and AIT A, B, C, E, F, G, H (AIT D left out); sizes are exact, the decode and encode costs are exact user-mode cycle counts (perf counters around the decode loop and around the compress call, interleaved rounds, size-weighted), because the wall-clock speed of lzbench on this shared machine moves by 10-20% between sessions.
+
+| level | Silesia size | AIT size | decode cycles | encode cycles |
+|---|---:|---:|---:|---:|
+| `-2` | 28.09% -> **27.65%** | 46.32% -> 46.25% | -0.4% | +14% |
+| `-3` | 27.45% -> **27.35%** | 46.21% -> 46.20% | -0.6% | +6% |
+| `-4` | 27.32% -> **27.23%** | 46.20% -> 46.18% | -0.5% | +1% |
+| `-5` | 27.21% -> **26.98%** | 46.13% -> 46.10% | -0.4% | +24% |
+| `-6` | 26.90% -> **26.44%** | 45.86% -> 45.80% | -1.5% | +12% |
+| `-7` | 26.60% -> **26.08%** | 45.66% -> 45.58% | -0.8% | +19% |
+
+What changed: the row-hash parser of `-2` and `-4` probes rep1 and rep2 (a rep1/rep2 match is charged 16 bits, because the decoder's offset history takes more cycles on them), `-2` searches its 16 slots (was 8), `-3` 32 candidates (was 24), `-5` follows 16 chain candidates (was 8), and the binary tree of `-6` and `-7` searches 10 candidates (was 8). **Larger than before** (all within 0.11%): `-3` `sao` +0.014%; `-4` `x-ray` +0.104%, `sao` +0.012%; `-5` `sao` +0.063%, `mr` +0.008%. Files that decode more than 3% slower than at the same level before: `-2` `sao` +5.4%, `-3` `sao` +4.2%, `-4` `ait_H` +3.1%, `-7` `nci` +3.9%. Per file and level: [bakeoff/V1613_VS_V1612.md](bakeoff/V1613_VS_V1612.md).
+
+Against the LZMA family (measured 2026-10-22, one thread, lzbench in memory; sizes are Silesia): xz -2/-3/-4/-5 give 26.88/26.38/24.70/23.67% at 12/8.6/5.1/3.7 MB/s, fast-lzma2 and uf-lzma2 -2/-3/-4/-5 26.59/25.46/24.57/24.12% at 17/11/9.3/7.9 MB/s, lzma (SDK) -2/-3/-4/-5 26.93/26.53/26.39/23.41% at 21/20/15/3.4 MB/s. Read against lz6's own curve at the same encode speed (`-4` 27.23% at about 26 MB/s, `-5` 26.98% at about 12, `-6` 26.44% at about 7, `-7` 26.08% at about 5): xz -2 and lzma -2 are level with lz6, lzma -3/-4 and xz -3 are 1-2% smaller, xz -4/-5, fast-lzma2 and uf-lzma2 -3 to -5 are 5-9% smaller. They decode at 80-120 MB/s; lz6 decodes at about 1,000.
 
 ### v1.6.12-pre against v1.6.11-pre
 
@@ -178,7 +197,7 @@ Where lz6 leads is in its transforms. On `ooffice` (x86 code) lz6 -13 reaches 38
 
 ## Status
 
-Experimental: the seq block format can change between `-pre` versions without a compatibility shim (see [NEWS](NEWS)); v1.6.10-pre did not change it, v1.6.11-pre does (tighter length-code widths: streams written by earlier builds do not decode), and v1.6.12-pre extends it (byte-delta plane lanes: every v1.6.11-pre stream still decodes, but a stream that uses them needs v1.6.12-pre). The frame HC levels (`--hc`) are stable. The seq codec and the frame layer are fuzz-tested (corrupt raw streams + corrupted frames through the full `LZ6F_decompress` path), and the multithreaded paths were run under AddressSanitizer, UBSan and ThreadSanitizer. Windows binaries (win64 and win32) are VM-tested on Windows 7 SP1 and Windows 10.
+Experimental: the seq block format can change between `-pre` versions without a compatibility shim (see [NEWS](NEWS)); v1.6.10-pre did not change it, v1.6.11-pre does (tighter length-code widths: streams written by earlier builds do not decode), and v1.6.12-pre extends it (byte-delta plane lanes: every v1.6.11-pre stream still decodes, but a stream that uses them needs v1.6.12-pre). v1.6.13-pre changes only the encoder. The frame HC levels (`--hc`) are stable. The seq codec and the frame layer are fuzz-tested (corrupt raw streams + corrupted frames through the full `LZ6F_decompress` path), and the multithreaded paths were run under AddressSanitizer, UBSan and ThreadSanitizer. Windows binaries (win64 and win32) are VM-tested on Windows 7 SP1 and Windows 10.
 
 [LZ5 v1.5]: https://github.com/inikep/lz5
 [zstd]: https://github.com/facebook/zstd
