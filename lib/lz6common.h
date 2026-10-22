@@ -257,7 +257,13 @@ typedef struct
     U32 fullSearch;    /* used only by optimal parser: perform full search of matches: 1 == more compression, slower.
                         * LZ6HC_row: lazy depth. LZ6HC_fast1: rep1/rep2 probes */
     LZ6HC_strategy strategy;
+    U32 rowRep;        /* LZ6HC_row: LZ6_ROWREP(mask, penalty), the repeat offsets the parser probes (0 = rep0 after the first literal only) */
 } LZ6HC_parameters;
+
+/* rep probes of the row parser: mask bit 0 = rep0, rep1 and rep2 one byte ahead and inside the lazy steps, bit 1 = the three at the
+ * position itself (a match with no literal); penalty = bits charged to a rep1/rep2 match against rep0 and new offsets: the decoder's
+ * offset history is slower on them (a rep1/rep2 sequence costs more cycles than a rep0 one) */
+#define LZ6_ROWREP(mask, penalty) ((mask) | ((penalty) << 8))
 
 
 struct LZ6HC_Data_s
@@ -399,10 +405,10 @@ static const LZ6HC_parameters LZ6HC_seqParameters[LZ6HC_MAX_CLEVEL+1] =
     { MAXD_LOG,   MAXD_LOG, 15,  2,     2,  6,    20,  0, LZ6HC_fast1            }, // level 1   fast1: H15, 2 ways, no rep1/rep2, 2 indexed per end (hashLog3 = positions, searchNum = ways, fullSearch = rep3)
     { MAXD_LOG,   MAXD_LOG, 19,  3,     2,  6,    22,  1, LZ6HC_fast1            }, // level 2   fast1: H19, 2 ways, rep3, 3 indexed per end, 4 MB window
     { MAXD_LOG,   MAXD_LOG, 10,  0,     8,  6,    22,  0, LZ6HC_row              }, // level 3   full Silesia 28.87% (6-byte hash: was 28.97% with 5; AIT 39.73 -> 39.62%)
-    { MAXD_LOG,   MAXD_LOG, 10,  0,     8,  5,    22,  1, LZ6HC_row              }, // level 4   28.12% / 45
-    { MAXD_LOG,   MAXD_LOG, 10,  5,    24,  5,    23,  2, LZ6HC_row              }, // level 5   full Silesia 27.81% (32-slot rows)
-    { MAXD_LOG,   MAXD_LOG, 10,  5,    32,  5,    24,  2, LZ6HC_row              }, // level 6   full Silesia 27.69% (32-slot rows)
-    { MAXD_LOG,   MAXD_LOG, 15, 13,     8,  6,     0,  0, LZ6HC_lowest_price     }, // level 7   27.19% / 14
+    { MAXD_LOG,   MAXD_LOG, 10,  0,    16,  5,    22,  1, LZ6HC_row, LZ6_ROWREP(3, 16) }, // row 4 = -2   v1.6.13: 16 candidates and rep probes (Silesia 28.09% -> 27.65%)
+    { MAXD_LOG,   MAXD_LOG, 10,  5,    32,  5,    23,  2, LZ6HC_row              }, // row 5 = -3   v1.6.13: 32 candidates instead of 24 (Silesia 27.45% -> 27.35%)
+    { MAXD_LOG,   MAXD_LOG, 10,  5,    32,  5,    24,  2, LZ6HC_row, LZ6_ROWREP(3, 16) }, // row 6 = -4   v1.6.13: rep probes (Silesia 27.32% -> 27.23%)
+    { MAXD_LOG,   MAXD_LOG, 15, 13,    16,  6,     0,  0, LZ6HC_lowest_price     }, // row 7 = -5   v1.6.13: 16 candidates instead of 8 (Silesia 27.21% -> 26.97%)
     { MAXD_LOG, MAXD_LOG+1, 23, 16,     8,  4,    32,  0, LZ6HC_optimal_price_bt }, // level 8   27.07% / 7.1
     { MAXD_LOG, MAXD_LOG+1, 23, 16,     8,  4,    32,  1, LZ6HC_optimal_price_bt }, // level 9   26.67% / 5.0
     { MAXD_LOG, MAXD_LOG+1, 23, 16,    16,  4,    48,  1, LZ6HC_optimal_price_bt }, // level 10  25.57% / 3.6

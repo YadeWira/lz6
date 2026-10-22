@@ -2351,6 +2351,14 @@ FORCE_INLINE size_t LZ6HC_rowSearch(LZ6HC_Data_Structure* ctx, LZ6HC_rows* r,
 }
 
 
+/* length of the match at p against the repeat offset rep (0 when it is shorter than 4 or does not exist) */
+FORCE_INLINE size_t LZ6HC_rowRepLen(const BYTE* p, U32 rep, const BYTE* lowPrefixPtr, const BYTE* matchlimit)
+{
+    if (!rep || (size_t)(p - lowPrefixPtr) < rep) return 0;
+    if (MEM_read32(p) != MEM_read32(p - rep)) return 0;
+    return MEM_count(p + 4, p - rep + 4, matchlimit) + 4;
+}
+
 static int LZ6HC_compress_row (
     LZ6HC_Data_Structure* ctx,
     const char* source,
@@ -2369,6 +2377,8 @@ static int LZ6HC_compress_row (
     BYTE* op = (BYTE*)dest;
     BYTE* const oend = op + maxOutputSize;
     const U32 depth = ctx->params.fullSearch;
+    const U32 reps = ctx->params.rowRep & 3;                 /* LZ6_ROWREP: which repeat offsets to probe, see lz6common.h */
+    const int r12 = (int)((ctx->params.rowRep >> 8) & 255);   /* bits charged to a rep1/rep2 match */
 
     /* rows sized to the input (~ one slot per 4 bytes) but capped at
      * 2^hashLog slots: every position is inserted, so a table that
@@ -2398,19 +2408,37 @@ static int LZ6HC_compress_row (
     while (ip < mflimit) {
         size_t ml = 0; U32 off = 0;
         const BYTE* start = ip;
-        /* rep0 at ip+1 first (zstd): a hit there costs almost nothing */
-        if (ctx->last_off && (size_t)(ip + 1 - lowPrefixPtr) >= ctx->last_off
-            && MEM_read32(ip + 1) == MEM_read32(ip + 1 - ctx->last_off)) {
-            ml = MEM_count(ip + 1 + 4, ip + 1 - ctx->last_off + 4, matchlimit) + 4;
-            off = ctx->last_off; start = ip + 1;
+        const U32 rr[3] = { ctx->last_off, ctx->rep_off2, ctx->rep_off3 };
+        /* rep0 at ip+1 first (zstd): a hit there costs almost nothing; with reps & 1 rep1 and rep2 too (gain 4 per byte, rep1/rep2 minus
+         * r12) */
+        int gB = 0;
+        {
+            const int nrep = (reps & 1) ? 3 : 1;
+            for (int k = 0; k < nrep; k++) {
+                const size_t l = LZ6HC_rowRepLen(ip + 1, rr[k], lowPrefixPtr, matchlimit);
+                const int g = (int)l * 4 - (k ? r12 : 0);
+                if (l && (!ml || g > gB)) { ml = l; off = rr[k]; start = ip + 1; gB = g; }
+            }
         }
         {
-            U32 o2 = 0;
-            const size_t l2 = LZ6HC_rowSearch(ctx, &r, ip, matchlimit, &o2);
-            /* a new offset has to beat the rep by its cost (~log2 bits) */
-            if (l2 > ml && (ml == 0 || (int)(l2 * 4) - (int)LZ6HC_highbit32(o2) > (int)(ml * 4) + 1)) {
-                ml = l2; off = o2; start = ip;
+            size_t lI = 0; U32 oI = 0; int gI = 0;
+            if (reps & 2) {   /* a rep match at ip itself: no literal before it */
+                for (int k = 0; k < 3; k++) {
+                    const size_t l = LZ6HC_rowRepLen(ip, rr[k], lowPrefixPtr, matchlimit);
+                    const int g = (int)l * 4 - (k ? r12 : 0);
+                    if (l && (!lI || g > gI)) { lI = l; oI = rr[k]; gI = g; }
+                }
             }
+            {
+                U32 o2 = 0;
+                const size_t l2 = LZ6HC_rowSearch(ctx, &r, ip, matchlimit, &o2);
+                if (l2) {
+                    const int g2 = (int)(l2 * 4) - (int)LZ6HC_highbit32(o2);
+                    if (!lI || g2 > gI) { lI = l2; oI = o2; gI = g2; }
+                }
+            }
+            /* a new offset has to beat the rep by its cost (~log2 bits) */
+            if (lI && (!ml || gI > gB + 1)) { ml = lI; off = oI; start = ip; }
         }
         if (ml < 4) {
             ip += ((size_t)(ip - anchor) >> 8) + 1;   /* accelerate through incompressible runs */
@@ -2421,10 +2449,13 @@ static int LZ6HC_compress_row (
             const BYTE* const nip = start + 1;
             U32 o2 = 0;
             size_t l2 = 0;
-            if (off != ctx->last_off && ctx->last_off && (size_t)(nip - lowPrefixPtr) >= ctx->last_off
-                && MEM_read32(nip) == MEM_read32(nip - ctx->last_off)) {
-                l2 = MEM_count(nip + 4, nip - ctx->last_off + 4, matchlimit) + 4;
-                o2 = ctx->last_off;
+            {
+                const int nrep = (reps & 1) ? 3 : 1;
+                for (int k = 0; k < nrep; k++) {
+                    if (k == 0 && off == ctx->last_off) continue;   /* the match we hold is rep0 already */
+                    const size_t l = LZ6HC_rowRepLen(nip, rr[k], lowPrefixPtr, matchlimit);
+                    if (l > l2) { l2 = l; o2 = rr[k]; }
+                }
             }
             {
                 U32 o3 = 0;
