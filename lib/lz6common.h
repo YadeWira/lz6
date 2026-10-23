@@ -411,7 +411,7 @@ static const LZ6HC_parameters LZ6HC_seqParameters[LZ6HC_MAX_CLEVEL+1] =
     { MAXD_LOG,   MAXD_LOG, 15, 13,    16,  6,     0,  0, LZ6HC_lowest_price     }, // row 7 = -5   v1.6.13: 16 candidates instead of 8 (Silesia 27.21% -> 26.97%)
     { MAXD_LOG, MAXD_LOG+1, 23, 16,    10,  4,    48,  0, LZ6HC_optimal_price_bt }, // row 8 = -6   v1.6.13: 10 searches, sufficient length 48 (Silesia 26.90% -> 26.44%)
     { MAXD_LOG, MAXD_LOG+1, 23, 16,    10,  4,    48,  1, LZ6HC_optimal_price_bt }, // row 9 = -7   v1.6.13: 10 searches, sufficient length 48 (Silesia 26.60% -> 26.08%)
-    { MAXD_LOG, MAXD_LOG+1, 23, 16,    16,  4,    48,  1, LZ6HC_optimal_price_bt }, // level 10  25.57% / 3.6
+    { MAXD_LOG, MAXD_LOG+1, 23, 14,    16,  4,    64,  1, LZ6HC_optimal_price_bt }, // row 10 = -8   v1.6.15: sufficient length 64, 14-bit 3-byte hash (Silesia 25.55% -> 25.42%)
     { MAXD_LOG, MAXD_LOG+1, 23, 12,    32,  4,    64,  1, LZ6HC_optimal_price_bt }, // row 11 = -9   v1.6.14: sufficient length 64, 12-bit 3-byte hash (Silesia 25.33% -> 25.19%)
     { MAXD_LOG, MAXD_LOG+1, 23, 12,    48,  4,   128,  2, LZ6HC_optimal_price_bt }, // row 12 = -10  v1.6.14: 48 searches, sufficient length 128, 12-bit 3-byte hash (25.09% -> 25.01%)
     { MAXD_LOG, MAXD_LOG+1, 23, 12,    64,  4,   128,  2, LZ6HC_optimal_price_bt }, // row 13 = -11  v1.6.14: sufficient length 128, 12-bit 3-byte hash (+1 refine; 25.01% -> 24.92%)
