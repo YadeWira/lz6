@@ -1,3 +1,24 @@
+v1.6.14-pre (unreleased)
+- ratio/encoder, NO FORMAT CHANGE AND NO DECODER CHANGE (every stream decodes with v1.6.13-pre; only the level table moves): levels -9 to -13 (the
+  optimal parser over the binary tree) are retuned; the fast tier and levels -1 to -8 write the same bytes as before (all 19 files of Silesia + AIT
+  A B C E F G H byte-identical). Silesia / AIT, size of the output, v1.6.13-pre -> now: -9 25.33% / 45.51% -> 25.19% / 45.48%, -10 25.09% / 45.48% -> 25.00% / 45.45%,
+  -11 25.01% / 45.40% -> 24.92% / 45.38%, -12 24.99% / 45.37% -> 24.90% / 45.35%, -13 24.98% / 45.36% -> 24.87% / 45.35%. Per file the change is -0.0% to -6.5%
+  (nci -4.5% to -6.5%, xml -1.3% to -2.0%, ooffice -0.3% to -0.9%, mr -0.4% to -1.0%, samba -0.4%, mozilla -0.1% to -0.2%, osdb -0.1% to -0.3%); the only
+  file that is larger is sao, by 4 to 18 bytes at levels -9 to -13.
+  What moved: (1) the sufficient length (the match length from which the parser stops looking for something better) is 64 at -9 and 128 at -10 to -12,
+  256 at -13 (it was 48, 64, 64, 64 and 64): -0.07 points for +10% instructions, the cheapest gain of the tree; (2) the tree's 3-byte hash has 12 bits
+  instead of 16 (levels -9 to -13): with fewer short matches in its table the tree finds longer ones, -0.01 for nothing; (3) -10 searches 48 candidates
+  instead of 64 (-9 keeps 32, -11 to -13 64): 9% fewer instructions for 0.01 points. Level -8 is unchanged: the 12-bit hash made osdb 0.15% larger there.
+  Measured: a refinement pass costs +95% instructions for -0.08 points (the second and third of the old -12 and -13: +49% and +33% for -0.02 and -0.01), so the sufficient length
+  does what the passes did, cheaper; the passes stay where they are because the text files (reymont, dickens, webster) keep gaining from them.
+  Decode, exact cycles (perf counters, pinned core, interleaved rounds, size-weighted over the 19 files): -9 -0.8%, -10 -0.2%, -11 -0.2%, -12 -0.1%,
+  -13 -0.2% (AIT -0.4% to +0.6%); files more than 3% slower than at the same level before: -11 x-ray +4.6%, -12 x-ray +7.6%, -13 x-ray +3.3% (per file and level:
+  bakeoff/V1614_VS_V1613.md). Encode, exact cycles of the compress call (8 files of Silesia): -9 +16%, -10 +8%, -11 +9%, -12 +11%, -13 +22%. gate: seqgate.sh at its default
+  size (60000 mutants per decoder clone; the decoder is byte-identical to v1.6.13-pre's) against v1.6.13-pre: GATE PASS, with edge, tinyrt and the asan round trips covering levels -9 to -13.
+  Measured and not adopted: pricing the optimal parse from the level -5 parse instead of the cheap price_fast one (-0.03 points for +8% instructions, but dickens
+  +0.12% and reymont +0.25% larger than the shipped levels), a 5- or 6-byte tree hash (+0.06 and +0.2 points, but 2% fewer decode instructions), 96 to 256
+  searches instead of 64 (-0.003 to -0.007 points for +5% to +21%), insertion of fewer positions (fullSearch 1 instead of 2: +0.10 points for -27% instructions), more refinement passes at
+  the sufficient length of 256 (4 passes at -13: 24.86% for +25% encode).
 v1.6.13-pre
 - ratio/encoder, NO FORMAT CHANGE AND NO DECODER CHANGE (every stream decodes with v1.6.12-pre; only the encoder's choice of parse and the
   level table move): levels -2 to -7 (v1.6.12-pre numbering) are retuned; the fast tier, level -1 and levels -8 to -13 write the same bytes as
