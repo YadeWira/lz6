@@ -1,4 +1,4 @@
-v1.6.14-pre (unreleased)
+v1.6.14-pre
 - ratio/encoder, NO FORMAT CHANGE AND NO DECODER CHANGE (every stream decodes with v1.6.13-pre; only the level table moves): levels -9 to -13 (the
   optimal parser over the binary tree) are retuned; the fast tier and levels -1 to -8 write the same bytes as before (all 19 files of Silesia + AIT
   A B C E F G H byte-identical). Silesia / AIT, size of the output, v1.6.13-pre -> now: -9 25.33% / 45.51% -> 25.19% / 45.48%, -10 25.09% / 45.48% -> 25.00% / 45.45%,
