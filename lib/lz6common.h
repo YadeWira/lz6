@@ -416,7 +416,7 @@ static const LZ6HC_parameters LZ6HC_seqParameters[LZ6HC_MAX_CLEVEL+1] =
     { MAXD_LOG, MAXD_LOG+1, 23, 12,    48,  4,   128,  2, LZ6HC_optimal_price_bt }, // row 12 = -10  v1.6.14: 48 searches, sufficient length 128, 12-bit 3-byte hash (25.09% -> 25.01%)
     { MAXD_LOG, MAXD_LOG+1, 23, 12,    64,  4,   128,  2, LZ6HC_optimal_price_bt }, // row 13 = -11  v1.6.14: sufficient length 128, 12-bit 3-byte hash (+1 refine; 25.01% -> 24.92%)
     { MAXD_LOG, MAXD_LOG+1, 23, 12,    64,  4,   128,  2, LZ6HC_optimal_price_bt }, // row 14 = -12  v1.6.14: sufficient length 128, 12-bit 3-byte hash (+2 refine; 24.99% -> 24.90%)
-    { MAXD_LOG, MAXD_LOG+1, 23, 16,    64,  4,    64,  2, LZ6HC_optimal_price_bt }, // level 15  25.18% / 0.7  (+3 refine)
+    { MAXD_LOG, MAXD_LOG+1, 23, 12,    64,  4,   256,  2, LZ6HC_optimal_price_bt }, // row 15 = -13  v1.6.14: sufficient length 256, 12-bit 3-byte hash (+3 refine; 24.98% -> 24.87%)
 };
 
 
