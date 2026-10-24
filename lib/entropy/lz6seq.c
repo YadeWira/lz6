@@ -1052,6 +1052,148 @@ static void seq_guard(seq_collector_t* sc, const char* src, size_t srcSize)
     collector_free_parse(&cb);
 }
 
+/* ---- what the block format can hold, which the parsers do not know ----
+ * A literal run or a match length is a code plus at most 24 extra bits (the last code is open-ended: at most 256 + 2^24 - 1 literals, 259 + 2^24 - 1
+ * bytes), and the decoder refuses a block of more than 2^24 sequences. A parse beyond one of them gave a stream that did not decode: a run of more
+ * than 16 MiB of incompressible bytes inside a block of 256 MB (a compressed ISO), a 40 MB run of zeros, 20 million short matches; the CLI gives a
+ * file larger than 16 MiB blocks of 256 MB. seq_fit_limits rewrites such a parse into one the format can hold, without changing the format or any
+ * parse that was already inside the limits: a match over the limit is cut in pieces with the same offset, the shortest matches are turned back into
+ * literals until the count fits, and a literal run over the limit is split by a short match found inside it (a repeat of 3 bytes or more within 64 KB).
+ * It returns 1 when no such match exists (adversarial data): the block is then stored. The limits can be shrunk at build time, to test the
+ * rewriting on small blocks. */
+#ifndef LZ6SEQ_LIMIT_LL
+#define LZ6SEQ_LIMIT_LL ((size_t)LL_base[LL_CODES - 1] + ((size_t)1 << LL_extra[LL_CODES - 1]) - 1)
+#endif
+#ifndef LZ6SEQ_LIMIT_ML
+#define LZ6SEQ_LIMIT_ML ((size_t)ML_base[ML_CODES - 1] + ((size_t)1 << ML_extra[ML_CODES - 1]) - 1)
+#endif
+#ifndef LZ6SEQ_LIMIT_SC
+#define LZ6SEQ_LIMIT_SC ((size_t)1 << 24)
+#endif
+
+static int seq_over_limits(const seq_collector_t* sc) {
+    if (sc->n > LZ6SEQ_LIMIT_SC) return 1;
+    for (size_t i = 0; i < sc->n; i++)
+        if ((size_t)sc->lit_lens[i] > LZ6SEQ_LIMIT_LL || (size_t)sc->match_lens[i] > LZ6SEQ_LIMIT_ML) return 1;
+    return 0;
+}
+
+typedef struct { int* ll; int* ml; int* of; size_t n, cap; } seq_vec_t;
+
+static int seq_vec_push(seq_vec_t* v, size_t ll, size_t ml, size_t of) {
+    if (v->n == v->cap) {
+        size_t nc = v->cap ? v->cap * 2 : 4096;
+        int* a = (int*)realloc(v->ll, nc * sizeof(int)); if (!a) return 1; v->ll = a;
+        int* b = (int*)realloc(v->ml, nc * sizeof(int)); if (!b) return 1; v->ml = b;
+        int* c = (int*)realloc(v->of, nc * sizeof(int)); if (!c) return 1; v->of = c;
+        v->cap = nc;
+    }
+    v->ll[v->n] = (int)ll; v->ml[v->n] = (int)ml; v->of[v->n] = (int)of; v->n++;
+    return 0;
+}
+
+static inline uint32_t seq_h3(const uint8_t* p) {
+    return (((uint32_t)p[0] | ((uint32_t)p[1] << 8) | ((uint32_t)p[2] << 16)) * 2654435761u) >> 16;
+}
+
+/* the first position p in [from, to - 3] holding a repeat of 3 or more bytes at a distance of at most 65535, as *pos, its *dist and *len (it ends
+ * by `to` at the latest); 1 when there is none */
+static int seq_find_repeat(const uint8_t* src, size_t from, size_t to, size_t* pos, size_t* dist, size_t* len) {
+    enum { WIN = 65535, MAXLEN = 4096 };
+    uint32_t* tab = (uint32_t*)malloc((size_t)65536 * sizeof(uint32_t));
+    if (!tab) return 1;
+    memset(tab, 0xFF, (size_t)65536 * sizeof(uint32_t));
+    for (size_t q = from > WIN ? from - WIN : 0; q < from; q++) tab[seq_h3(src + q)] = (uint32_t)q;
+    for (size_t p = from; p + 3 <= to; p++) {
+        const uint32_t h = seq_h3(src + p), c = tab[h];
+        if (c != 0xFFFFFFFFu && p - c <= WIN && src[c] == src[p] && src[c + 1] == src[p + 1] && src[c + 2] == src[p + 2]) {
+            size_t l = 3;
+            while (p + l < to && l < MAXLEN && src[c + l] == src[p + l]) l++;
+            *pos = p; *dist = p - c; *len = l;
+            free(tab);
+            return 0;
+        }
+        tab[h] = (uint32_t)p;
+    }
+    free(tab);
+    return 1;
+}
+
+/* the literals [*rs, litend) as sequences no longer than the limit: each cut is a short match found past the middle of the allowed run;
+ * on return *rs is where the last piece starts (the caller emits it with the match that follows, or alone) */
+static int seq_split_run(seq_vec_t* out, const uint8_t* src, size_t* rs, size_t litend) {
+    while (litend - *rs > LZ6SEQ_LIMIT_LL) {
+        const size_t from = *rs + LZ6SEQ_LIMIT_LL / 2;
+        size_t scanend = *rs + LZ6SEQ_LIMIT_LL;
+        if (scanend + 3 > litend) scanend = litend - 3;
+        size_t p, d, l;
+        if (from > scanend || seq_find_repeat(src, from, scanend + 3, &p, &d, &l)) return 1;
+        if (seq_vec_push(out, p - *rs, l, d)) return 1;
+        *rs = p + l;
+    }
+    return 0;
+}
+
+/* a match as pieces no longer than the limit (the first carries the literals, the others none; they share the offset) */
+static int seq_emit_match(seq_vec_t* out, size_t ll, size_t ml, size_t of) {
+    if (ml <= LZ6SEQ_LIMIT_ML) return seq_vec_push(out, ll, ml, of);
+    const size_t pieces = (ml + LZ6SEQ_LIMIT_ML - 1) / LZ6SEQ_LIMIT_ML, base = ml / pieces, extra = ml % pieces;
+    for (size_t k = 0; k < pieces; k++)
+        if (seq_vec_push(out, k ? 0 : ll, base + (k < extra ? 1 : 0), of)) return 1;
+    return 0;
+}
+
+static int seq_fit_limits(seq_collector_t* sc, const uint8_t* src, size_t srcSize) {
+    seq_vec_t out;
+    memset(&out, 0, sizeof(out));
+    const size_t n = sc->n;
+    /* the room the rewriting itself may need: a cut per half run, a piece per match limit */
+    const size_t margin = srcSize / (LZ6SEQ_LIMIT_LL / 2 + 1) + srcSize / LZ6SEQ_LIMIT_ML + 64;
+    if (margin >= LZ6SEQ_LIMIT_SC) return 1;
+    int drop_all = 0;
+    size_t thr = 0, quota = 0;
+    if (n > LZ6SEQ_LIMIT_SC - margin) {                         /* too many sequences: the shortest matches go back to literals */
+        const size_t excess = n - (LZ6SEQ_LIMIT_SC - margin);
+        size_t hist[258], cum = 0;
+        memset(hist, 0, sizeof(hist));
+        for (size_t i = 0; i < n; i++) if (sc->match_lens[i] > 0) hist[(size_t)sc->match_lens[i] < 257 ? (size_t)sc->match_lens[i] : 257]++;
+        drop_all = 1;
+        for (size_t t = 0; t <= 256; t++) {
+            if (cum + hist[t] >= excess) { thr = t; quota = excess - cum; drop_all = 0; break; }
+            cum += hist[t];
+        }
+    }
+    size_t abs = 0, runstart = 0;
+    for (size_t i = 0; i < n; i++) {
+        const size_t ll = (size_t)sc->lit_lens[i], ml = (size_t)sc->match_lens[i], of = (size_t)sc->offsets[i];
+        const size_t litend = abs + ll;
+        if (ml > 0 && (drop_all || ml < thr || (ml == thr && quota > 0 && quota--))) { abs = litend + ml; continue; }   /* the match joins the run */
+        size_t rs = runstart;
+        if (seq_split_run(&out, src, &rs, litend)) goto fail;
+        if (ml == 0 ? seq_vec_push(&out, litend - rs, 0, 0) : seq_emit_match(&out, litend - rs, ml, of)) goto fail;
+        abs = litend + ml;
+        runstart = abs;
+    }
+    if (runstart < abs) {                                        /* the parse ended with dropped matches: the literals that remain */
+        size_t rs = runstart;
+        if (seq_split_run(&out, src, &rs, abs) || seq_vec_push(&out, abs - rs, 0, 0)) goto fail;
+    }
+    {   /* the rewritten parse must still cover the block exactly */
+        size_t total = 0;
+        for (size_t i = 0; i < out.n; i++) total += (size_t)out.ll[i] + (size_t)out.ml[i];
+        if (total != srcSize || out.n > LZ6SEQ_LIMIT_SC) goto fail;
+    }
+    free(sc->lit_lens); free(sc->match_lens); free(sc->offsets);
+    sc->lit_lens = out.ll; sc->match_lens = out.ml; sc->offsets = out.of;
+    sc->n = out.n; sc->cap = out.cap;
+    sc->lit_sum = 0;
+    for (size_t i = 0; i < sc->n; i++) sc->lit_sum += (size_t)sc->lit_lens[i];
+    return 0;
+fail:
+    free(out.ll); free(out.ml); free(out.of);
+    return 1;
+}
+
 /* legacy_f1: the fast parser runs with the options it had before the level-1 retune (1 way, rep0 only, 2 indexed
  * positions): the BCJ trial below decides on level 1's size, and it has to decide the same way whatever level 1 is */
 static size_t compress_normal_x(const char* src, size_t srcSize,
@@ -1164,6 +1306,16 @@ static size_t compress_normal_x(const char* src, size_t srcSize,
     if (level >= 3 && !getenv("LZ6_NO_SEQGUARD")) seq_guard(&sc, src, srcSize);
     fill_literals(&sc);
 parsed:;
+    if (seq_over_limits(&sc)) {   /* rare: see seq_fit_limits */
+        if (seq_fit_limits(&sc, (const uint8_t*)src, srcSize)) {
+            size_t stored = 0;   /* no parse the format can hold: store the block */
+            if (srcSize + 5 <= dstCap) { uint8_t* rop = (uint8_t*)dst; w8(&rop, 1); w32le(&rop, (uint32_t)srcSize); memcpy(rop, src, srcSize); stored = srcSize + 5; }
+            free(sc.lits); free(sc.lit_lens); free(sc.match_lens); free(sc.offsets);
+            return stored;
+        }
+        sc.lit_built = 0;         /* the literals follow the rewritten parse */
+        fill_literals(&sc);
+    }
 #ifdef LZ6_SEQ_DUMP
     if (getenv("LZ6_SEQ_DUMP")) {   /* experiment hook: raw (ll, ml, offset) triples */
         FILE* df = fopen(getenv("LZ6_SEQ_DUMP"), "ab");

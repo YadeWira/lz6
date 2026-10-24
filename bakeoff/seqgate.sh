@@ -25,7 +25,8 @@
 #            as the encoder chooses and forced on every lane (LZ6_PLANEDELTA_FORCE), the delta bit on every forced lane, a size win, and 32000 mutants
 #   hufdiff  Huffman literal blocks (valid, and mutated header/stream/truncation) decoded from exact-size buffers: valid
 #            blocks must round trip; with REFTREE the return code and output hash of every case must equal the reference's
-# Then once: prngtab (the table of first glibc random() draws the encoder scans, against the generator for all 65536 seeds), blockdec (the plain block decoder, LZ6_decompress_safe and _partial, on the empty input, every 1- and 2-byte input and
+# Then once: limits (the block format's limits on a literal run, a match and the sequence count: the rewriting of the parse on small blocks with the limits
+# shrunk at build time, and seqbig: real-size blocks that did not decode), prngtab (the table of first glibc random() draws the encoder scans, against the generator for all 65536 seeds), blockdec (the plain block decoder, LZ6_decompress_safe and _partial, on the empty input, every 1- and 2-byte input and
 # mutants of valid blocks of levels 0-15, from exact-size buffers; ASAN+UBSan), asan (round trips of 6 files x 7 levels + 25000 fuzz iterations, default build) and m32
 # (32-bit build with sanitizers, falling back to none when the toolchain has no 32-bit sanitizer runtime).
 # Prints one PASS/FAIL line per check and a final "GATE PASS" or "GATE FAIL"; the exit status is 0 on a pass.
@@ -145,6 +146,30 @@ if $CC "${SAN[@]}" -DLZ6SEQ_TEST_HOOKS -D_DEFAULT_SOURCE "${INC[@]}" "$GATE/prng
   if [ $rc -eq 0 ]; then note "PASS prngtab: $(echo "$out" | tail -1)"; else note "FAIL prngtab rc=$rc: $(echo "$out" | flat 300)"; fi
 else
   note "FAIL build prngtab"
+fi
+
+# the limits of the block format (a literal run or a match over 2^24, more than 2^24 sequences): the rewriting of the parse on small blocks with the
+# limits shrunk at build time (edge cases and round trips of the slices), and the real-size blocks that used to give streams that did not decode
+LIM=(-DLZ6SEQ_LIMIT_LL=600 -DLZ6SEQ_LIMIT_ML=300 -DLZ6SEQ_LIMIT_SC=20000)
+if $CC "${SAN[@]}" "${LIM[@]}" "${INC[@]}" "$GATE/edge.c" "${S[@]}" -o "$W/edge_lim" -lm &&
+   $CC "${SAN[@]}" "${LIM[@]}" "${INC[@]}" "$GATE/rt.c" "${S[@]}" -o "$W/rt_lim" -lm; then
+  out=$(run "$W/edge_lim" 2>&1); rc=$?
+  if [ $rc -eq 0 ]; then note "PASS limits edge (600/300/20000): $(echo "$out" | tail -1 | head -c 120)"; else note "FAIL limits edge rc=$rc: $(echo "$out" | flat 300)"; fi
+  bad=0
+  for L in -2 -1 1 3 5 8 13; do for f in "$W"/asan/*.s400k "$W"/asan/dickens.s "$W"/asan/samba.s; do
+    [ -f "$f" ] || continue
+    out=$(run "$W/rt_lim" $L "$f" 2>&1); rc=$?
+    if [ $rc -ne 0 ]; then bad=1; note "FAIL limits rt L$L $f rc=$rc: $(echo "$out" | flat 300)"; fi
+  done; done
+  [ $bad -eq 0 ] && note "PASS limits rt (600/300/20000): 7 levels x the slices"
+else
+  note "FAIL build limits"
+fi
+if $CC "${SAN[@]}" "${INC[@]}" "$GATE/seqbig.c" "${S[@]}" -o "$W/seqbig" -lm; then
+  out=$(run "$W/seqbig" 2>&1); rc=$?
+  if [ $rc -eq 0 ]; then note "PASS seqbig: $(echo "$out" | tail -1)"; else note "FAIL seqbig rc=$rc: $(echo "$out" | grep -E 'FAIL|ERROR|runtime' | head -3 | flat 400)"; fi
+else
+  note "FAIL build seqbig"
 fi
 
 # the scalar plane merge (what a build without SSE2 runs)
