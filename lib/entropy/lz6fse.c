@@ -153,25 +153,7 @@ static inline uint32_t rans_enc_renorm(uint32_t x, int L_bits, unsigned f, uint8
  * libdivide on x86-64. The Lemire routine documents the shape so
  * a future patch can swap it in. */
 #if defined(__SIZEOF_INT128__)
-static inline uint32_t lemire_q(uint32_t x, uint64_t M, int l) {
-    __uint128_t p = (__uint128_t)x * M;
-    return (uint32_t)(p >> (32 + l));
-}
 #endif
-static inline uint32_t lemire_compute_M(unsigned f, int* l_out) {
-    int l = 0; while ((f >> l) > 1) l++;
-    uint64_t M = ((1ULL << (32 + l)) - 1) / f + 1;
-    *l_out = l; return M;
-}
-
-static inline uint32_t rans_enc_put(uint32_t x, unsigned f, unsigned cumul,
-                                    unsigned M)
-{
-    /* Default path: GCC's div lowering on x86-64. Lemire fast path
-     * is selected inside fse_encode via `use_inv` branch below. */
-    return (x / f) * M + cumul + (x % f);
-}
-
 /* Public helper: compute Lemire reciprocal for each freq value. Returns
  * the common `l` shift (all calls in a single block share it). freq[s]
  * for s > maxSym may be uninitialized; we only set `inv_M[s]` for
@@ -211,18 +193,6 @@ int fse_lemire_inv(const unsigned* freq, int maxSym, uint64_t* inv_M) {
         inv_M[s] = (numer + d - 1) / d;
     }
     return l;
-}
-
-static inline unsigned int rans_dec_slot(uint32_t x, int L_bits)
-{
-    return x & ((1u << L_bits) - 1);
-}
-
-static inline uint32_t rans_dec_advance(uint32_t x, unsigned f,
-                                        unsigned cumul, int L_bits)
-{
-    unsigned M_mask = (1u << L_bits) - 1;
-    return f * (x >> L_bits) + (x & M_mask) - cumul;
 }
 
 static inline uint32_t rans_dec_renorm(uint32_t x, const uint8_t** pp,

@@ -334,6 +334,10 @@ typedef struct
 
 static const int g_maxCompressionLevel = LZ6HC_MAX_CLEVEL;
 static const int LZ6HC_compressionLevel_default = 6;
+#if defined(__GNUC__)   /* the trailing rowRep initializer is left out of most rows on purpose: 0 means no repeat-offset probes */
+#  pragma GCC diagnostic push
+#  pragma GCC diagnostic ignored "-Wmissing-field-initializers"
+#endif
 
 static const LZ6HC_parameters LZ6HC_defaultParameters[LZ6HC_MAX_CLEVEL+1] =
 {
@@ -418,6 +422,9 @@ static const LZ6HC_parameters LZ6HC_seqParameters[LZ6HC_MAX_CLEVEL+1] =
     { MAXD_LOG, MAXD_LOG+1, 23, 12,    64,  4,   128,  2, LZ6HC_optimal_price_bt }, // row 14 = -12  v1.6.14: sufficient length 128, 12-bit 3-byte hash (+2 refine; 24.99% -> 24.90%)
     { MAXD_LOG, MAXD_LOG+1, 23, 12,    64,  4,   256,  2, LZ6HC_optimal_price_bt }, // row 15 = -13  v1.6.14: sufficient length 256, 12-bit 3-byte hash (+3 refine; 24.98% -> 24.87%)
 };
+#if defined(__GNUC__)
+#  pragma GCC diagnostic pop
+#endif
 
 
 

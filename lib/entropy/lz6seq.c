@@ -2385,26 +2385,6 @@ static size_t rans_budget(const uint8_t* sp, const uint8_t* se)
 
 /* one symbol, unchecked renorm (caller holds a rans_budget), either
  * table layout — the layout branch is loop-invariant and predicted */
-static inline uint8_t rans_step(const fse_dtable* t, uint32_t* x, const uint8_t** sp)
-{
-    const unsigned mask = t->M - 1;
-    uint32_t v;
-    uint8_t sy;
-    if (t->dcomp) {
-        const fse_dentry* e = &t->dcomp[*x & mask];
-        v = e->f * (*x >> t->L_bits) + (uint32_t)e->off;
-        sy = t->dtab1[*x & mask];
-    } else {
-        sy = t->dtab1[*x & mask];
-        v = t->freq_tab[sy] * (*x >> t->L_bits) + (*x & mask) - t->cumul[sy];
-    }
-    const uint8_t* q = *sp;
-    RANS_RENORM2(v, q);
-    *sp = q;
-    *x = v;
-    return sy;
-}
-
 /* order-1 literal symbol, checked renorm (stream tail) */
 static int o1_dec_checked(const fse_ctx_table* t, uint32_t* x,
                           const uint8_t** sp, const uint8_t* se, uint8_t* out)

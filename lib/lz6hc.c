@@ -2282,12 +2282,14 @@ FORCE_INLINE void LZ6HC_rowUpdate(LZ6HC_rows* r, const BYTE* base, U32 target, c
 #if defined(__SSE2__)
 #  include <emmintrin.h>
 #endif
+#if !defined(__SSE2__)   /* only the scalar tag compare uses it */
 /* bit i set when byte i of x is zero (exact, no false positives) */
 FORCE_INLINE U64 LZ6HC_zeroBytes(U64 x)
 {
     const U64 m = 0x7F7F7F7F7F7F7F7FULL;
     return ~(((x & m) + m) | x | m);
 }
+#endif
 
 /* best match at ip among the row's tag hits (newest first); returns its
  * length (0 if none >= 4) and sets *off */
