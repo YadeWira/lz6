@@ -25,7 +25,8 @@
 #            as the encoder chooses and forced on every lane (LZ6_PLANEDELTA_FORCE), the delta bit on every forced lane, a size win, and 32000 mutants
 #   hufdiff  Huffman literal blocks (valid, and mutated header/stream/truncation) decoded from exact-size buffers: valid
 #            blocks must round trip; with REFTREE the return code and output hash of every case must equal the reference's
-# Then once: asan (round trips of 6 files x 7 levels + 25000 fuzz iterations, default build) and m32
+# Then once: blockdec (the plain block decoder, LZ6_decompress_safe and _partial, on the empty input, every 1- and 2-byte input and
+# mutants of valid blocks of levels 0-15, from exact-size buffers; ASAN+UBSan), asan (round trips of 6 files x 7 levels + 25000 fuzz iterations, default build) and m32
 # (32-bit build with sanitizers, falling back to none when the toolchain has no 32-bit sanitizer runtime).
 # Prints one PASS/FAIL line per check and a final "GATE PASS" or "GATE FAIL"; the exit status is 0 on a pass.
 #
@@ -34,6 +35,7 @@
 #                 the gate for a finished change uses GATE_N=300000 TINY_N=5000)
 #   TINY_N        tinyrt iterations (default 1000)
 #   HUF_N         hufdiff cases per clone (default 20000)
+#   BLOCK_N       blockdec mutants (default 100000)
 #   XDIFF_EXT     1: xdiff accepts mutants that only the new decoder decodes (a format extension that keeps every old stream valid)
 #   SILESIA       directory with the Silesia files xml mr ooffice samba x-ray dickens
 #   SEQGATE_CPU   CPU number to pin every run to with taskset (default: not pinned)
@@ -47,6 +49,7 @@ REF="${1:-}"
 N="${GATE_N:-60000}"
 TN="${TINY_N:-1000}"
 HN="${HUF_N:-20000}"
+BN="${BLOCK_N:-100000}"
 SIL="${SILESIA:-/mnt/IA_LAB/agentes/lz6/silesia}"
 CC="${CC:-gcc}"
 
@@ -127,6 +130,14 @@ for clone in bmi2 default; do
     fi
   fi
 done
+
+# the plain block decoder on hostile input (exact-size input and output buffers)
+if $CC "${SAN[@]}" "${INC[@]}" "$GATE/blockdec.c" "${S[@]}" -o "$W/blockdec" -lm; then
+  out=$(run "$W/blockdec" "$BN" 2>&1); rc=$?
+  if [ $rc -eq 0 ]; then note "PASS blockdec ($BN): $(echo "$out" | tail -1)"; else note "FAIL blockdec rc=$rc: $(echo "$out" | flat 400)"; fi
+else
+  note "FAIL build blockdec"
+fi
 
 # the scalar plane merge (what a build without SSE2 runs)
 if $CC "${SAN[@]}" -U__SSE2__ -DLZ6SEQ_NO_DYNAMIC_BMI2 "${INC[@]}" "$GATE/planemerge.c" "${S[@]}" -o "$W/planemerge_scalar" -lm 2> /dev/null; then

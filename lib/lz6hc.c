@@ -1316,7 +1316,7 @@ static int LZ6HC_compress_optimal_price (
     const BYTE* const mflimit = iend - MFLIMIT;
     const BYTE* const matchlimit = (iend - LASTLITERALS);
     BYTE* op = (BYTE*) dest;
-    BYTE* const oend = op + maxOutputSize;
+    BYTE* const oend = dest ? op + maxOutputSize : op;   /* the sequence collector passes no output buffer */
     const size_t sufficient_len = ctx->params.sufficientLength;
     const int faster_get_matches = (ctx->params.fullSearch == 0); 
  
@@ -1776,7 +1776,7 @@ static int LZ6HC_compress_lowest_price (
     const BYTE* const matchlimit = (iend - LASTLITERALS);
 
     BYTE* op = (BYTE*) dest;
-    BYTE* const oend = op + maxOutputSize;
+    BYTE* const oend = dest ? op + maxOutputSize : op;   /* the sequence collector passes no output buffer */
 
     int   ml, ml2, ml0;
     const BYTE* ref=NULL;
@@ -1944,7 +1944,7 @@ static int LZ6HC_compress_price_fast (
     const BYTE* const matchlimit = (iend - LASTLITERALS);
 
     BYTE* op = (BYTE*) dest;
-    BYTE* const oend = op + maxOutputSize;
+    BYTE* const oend = dest ? op + maxOutputSize : op;   /* the sequence collector passes no output buffer */
 
     int   ml, ml2=0;
     const BYTE* ref=NULL;
@@ -2101,7 +2101,7 @@ static int LZ6HC_compress_fast (
     const BYTE* const matchlimit = (iend - LASTLITERALS);
 
     BYTE* op = (BYTE*) dest;
-    BYTE* const oend = op + maxOutputSize;
+    BYTE* const oend = dest ? op + maxOutputSize : op;   /* the sequence collector passes no output buffer */
 
     int   ml;
     const BYTE* ref=NULL;
@@ -2375,7 +2375,7 @@ static int LZ6HC_compress_row (
     const BYTE* const base = ctx->base;
     const BYTE* const lowPrefixPtr = base + ctx->dictLimit;
     BYTE* op = (BYTE*)dest;
-    BYTE* const oend = op + maxOutputSize;
+    BYTE* const oend = dest ? op + maxOutputSize : op;   /* the sequence collector passes no output buffer */
     const U32 depth = ctx->params.fullSearch;
     const U32 reps = ctx->params.rowRep & 3;                 /* LZ6_ROWREP: which repeat offsets to probe, see lz6common.h */
     const int r12 = (int)((ctx->params.rowRep >> 8) & 255);   /* bits charged to a rep1/rep2 match */

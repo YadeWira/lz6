@@ -749,7 +749,7 @@ size_t LZ6F_compressUpdate(LZ6F_compressionContext_t compressionContext, void* d
     }
 
     /* keep tmpIn within limits */
-    if ((cctxPtr->tmpIn + blockSize) > (cctxPtr->tmpBuff + cctxPtr->maxBufferSize)   /* necessarily LZ6F_blockLinked && lastBlockCompressed==fromTmpBuffer */
+    if (((size_t)(cctxPtr->tmpIn - cctxPtr->tmpBuff) + blockSize) > cctxPtr->maxBufferSize   /* necessarily LZ6F_blockLinked && lastBlockCompressed==fromTmpBuffer (offsets, not pointers: LZ6F_compressFrame has no tmpBuff) */
         && !(cctxPtr->prefs.autoFlush))
     {
         int realDictSize = LZ6F_localSaveDict(cctxPtr);
@@ -1224,10 +1224,11 @@ size_t LZ6F_decompress(LZ6F_decompressionContext_t decompressionContext,
 {
     LZ6F_dctx_t* dctxPtr = (LZ6F_dctx_t*)decompressionContext;
     LZ6F_decompressOptions_t optionsNull;
-    const BYTE* const srcStart = (const BYTE*)srcBuffer;
+    BYTE nullBuf[1] = { 0 };   /* stands in for a NULL buffer of size 0 (LZ6F_getFrameInfo passes them), so no pointer arithmetic is done on NULL */
+    const BYTE* const srcStart = (srcBuffer != NULL) ? (const BYTE*)srcBuffer : nullBuf;
     const BYTE* const srcEnd = srcStart + *srcSizePtr;
     const BYTE* srcPtr = srcStart;
-    BYTE* const dstStart = (BYTE*)dstBuffer;
+    BYTE* const dstStart = (dstBuffer != NULL) ? (BYTE*)dstBuffer : nullBuf;
     BYTE* const dstEnd = dstStart + *dstSizePtr;
     BYTE* dstPtr = dstStart;
     const BYTE* selectedIn = NULL;
