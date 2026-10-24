@@ -25,7 +25,7 @@
 #            as the encoder chooses and forced on every lane (LZ6_PLANEDELTA_FORCE), the delta bit on every forced lane, a size win, and 32000 mutants
 #   hufdiff  Huffman literal blocks (valid, and mutated header/stream/truncation) decoded from exact-size buffers: valid
 #            blocks must round trip; with REFTREE the return code and output hash of every case must equal the reference's
-# Then once: blockdec (the plain block decoder, LZ6_decompress_safe and _partial, on the empty input, every 1- and 2-byte input and
+# Then once: prngtab (the table of first glibc random() draws the encoder scans, against the generator for all 65536 seeds), blockdec (the plain block decoder, LZ6_decompress_safe and _partial, on the empty input, every 1- and 2-byte input and
 # mutants of valid blocks of levels 0-15, from exact-size buffers; ASAN+UBSan), asan (round trips of 6 files x 7 levels + 25000 fuzz iterations, default build) and m32
 # (32-bit build with sanitizers, falling back to none when the toolchain has no 32-bit sanitizer runtime).
 # Prints one PASS/FAIL line per check and a final "GATE PASS" or "GATE FAIL"; the exit status is 0 on a pass.
@@ -137,6 +137,14 @@ if $CC "${SAN[@]}" "${INC[@]}" "$GATE/blockdec.c" "${S[@]}" -o "$W/blockdec" -lm
   if [ $rc -eq 0 ]; then note "PASS blockdec ($BN): $(echo "$out" | tail -1)"; else note "FAIL blockdec rc=$rc: $(echo "$out" | flat 400)"; fi
 else
   note "FAIL build blockdec"
+fi
+
+# the encoder's table of first random() draws against the generator, for every seed (needs the test hook compiled in)
+if $CC "${SAN[@]}" -DLZ6SEQ_TEST_HOOKS -D_DEFAULT_SOURCE "${INC[@]}" "$GATE/prngtab.c" "${S[@]}" -o "$W/prngtab" -lm; then
+  out=$(run "$W/prngtab" 2>&1); rc=$?
+  if [ $rc -eq 0 ]; then note "PASS prngtab: $(echo "$out" | tail -1)"; else note "FAIL prngtab rc=$rc: $(echo "$out" | flat 300)"; fi
+else
+  note "FAIL build prngtab"
 fi
 
 # the scalar plane merge (what a build without SSE2 runs)

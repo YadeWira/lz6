@@ -225,14 +225,74 @@ static unsigned entropy256(const uint8_t* p, size_t n) {
     }
     return (unsigned)H;
 }
+/* The first two draws random() gives after srandom(seed), without stepping the generator through its state array: the generator is the
+ * linear recurrence x[i] = x[i-31] + x[i-3] over the 31 words of the seeding LCG, started at i = 34 (x[31..33] only copy x[i-31]), with
+ * the first 310 outputs discarded, so the first draw is x[344] >> 1. LZ6_seq_prng_selftest checks it against glibc_prng_init for every seed. */
+static void prng_first_two(uint32_t seed, uint32_t* d0, uint32_t* d1) {
+    uint32_t x[346];
+    uint32_t word = seed ? seed : 1;
+    x[0] = word;
+    for (int i = 1; i < PRNG_DEG; i++) {
+        uint64_t hi = word / 127773;
+        uint64_t lo = word % 127773;
+        word = (uint32_t)(16807u * lo - 2836u * hi);
+        if ((int32_t)word < 0) word += 2147483647u;
+        x[i] = word;
+    }
+    for (int i = 31; i < 34; i++) x[i] = x[i - 31];
+    {   /* x[i-3], x[i-2], x[i-1] kept in registers: written as x[i] = x[i-31] + x[i-3] the loop is vectorized into overlapping 8-byte
+           loads of recent stores, which stall on store forwarding and make it 5 times slower */
+        uint32_t a = x[31], b = x[32], c = x[33];
+        for (int i = 34; i < 346; i++) { uint32_t v = x[i - 31] + a; x[i] = v; a = b; b = c; c = v; }
+    }
+    *d0 = (x[344] >> 1) & 0x7FFFFFFFu;
+    *d1 = (x[345] >> 1) & 0x7FFFFFFFu;
+}
+
+/* The first two draws of every seed (65536 x about 350 additions), built once per process the first time a block looks random and
+ * published with a compare-and-swap (threads may race to build it: the loser frees its copy). With it a random block costs a scan of
+ * 65536 x 4 byte compares instead of the ~260 ms of seeding the generator 262144 times, which every incompressible block (already
+ * compressed or encrypted data) used to pay. NULL if the allocation fails: the scan then seeds the generator as before. */
+static const uint32_t* prng_first_draws(void) {
+    static uint32_t* tab;
+    uint32_t* t = __atomic_load_n(&tab, __ATOMIC_ACQUIRE);
+    if (t) return t;
+    t = (uint32_t*)malloc(2 * 65536 * sizeof(uint32_t));
+    if (!t) return NULL;
+    for (unsigned seed = 0; seed <= 65535; seed++) prng_first_two(seed, &t[2 * seed], &t[2 * seed + 1]);
+    uint32_t* expected = NULL;
+    if (!__atomic_compare_exchange_n(&tab, &expected, t, 0, __ATOMIC_ACQ_REL, __ATOMIC_ACQUIRE)) { free(t); t = expected; }
+    return t;
+}
+
+#ifdef LZ6SEQ_TEST_HOOKS
+/* gate hook (bakeoff/gate/prngtab.c): the number of seeds whose two table entries differ from glibc_prng_init + glibc_rand31 (0 = exact) */
+int LZ6_seq_prng_selftest(void);
+int LZ6_seq_prng_selftest(void) {
+    const uint32_t* t = prng_first_draws();
+    int bad = 0;
+    if (!t) return 65536;
+    for (unsigned seed = 0; seed <= 65535; seed++) {
+        uint32_t st[PRNG_DEG];
+        int f, r;
+        glibc_prng_init(st, &f, &r, seed);
+        uint32_t a = glibc_rand31(st, &f, &r), b = glibc_rand31(st, &f, &r);
+        if (a != t[2 * seed] || b != t[2 * seed + 1]) bad++;
+    }
+    return bad;
+}
+#endif
+
 /* returns seed (0..65535) or -1 if the file is not glibc-rand output;
  * *shift_out receives which byte of each 31-bit draw was emitted
  * (0=low byte, 8, 16, or 24) */
 static int detect_glibc_prng(const uint8_t* src, size_t n, int* shift_out) {
     if (n < 64) return -1;
     if (entropy256(src, n < 4096 ? n : 4096) < 1850) return -1;  /* ~7.2 b/B */
+    const uint32_t* first = prng_first_draws();
     for (unsigned seed = 0; seed <= 65535; seed++) {
         for (int shift = 0; shift < 32; shift += 8) {
+            if (first && ((uint8_t)(first[2 * seed] >> shift) != src[0] || (uint8_t)(first[2 * seed + 1] >> shift) != src[1])) continue;
             uint32_t st[PRNG_DEG];
             int f = 3, r = 0;
             glibc_prng_init(st, &f, &r, seed);
@@ -1103,7 +1163,7 @@ static size_t compress_normal_x(const char* src, size_t srcSize,
     if (rc) { free(sc.lits); free(sc.lit_lens); free(sc.match_lens); free(sc.offsets); return 0; }
     if (level >= 3 && !getenv("LZ6_NO_SEQGUARD")) seq_guard(&sc, src, srcSize);
     fill_literals(&sc);
-parsed:
+parsed:;
 #ifdef LZ6_SEQ_DUMP
     if (getenv("LZ6_SEQ_DUMP")) {   /* experiment hook: raw (ll, ml, offset) triples */
         FILE* df = fopen(getenv("LZ6_SEQ_DUMP"), "ab");
