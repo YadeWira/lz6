@@ -31,11 +31,11 @@
 # ################################################################
 
 # Version numbers
-VERSION?= 1.5.0
-LIBVER_MAJOR:=`sed -n '/define LZ6_VERSION_MAJOR/s/.*[[:blank:]]\([0-9][0-9]*\).*/\1/p' < lz6.h`
-LIBVER_MINOR:=`sed -n '/define LZ6_VERSION_MINOR/s/.*[[:blank:]]\([0-9][0-9]*\).*/\1/p' < lz6.h`
-LIBVER_PATCH:=`sed -n '/define LZ6_VERSION_RELEASE/s/.*[[:blank:]]\([0-9][0-9]*\).*/\1/p' < lz6.h`
+LIBVER_MAJOR:=$(shell sed -n '/define LZ6_VERSION_MAJOR/s/.*[[:blank:]]\([0-9][0-9]*\).*/\1/p' < lz6.h)
+LIBVER_MINOR:=$(shell sed -n '/define LZ6_VERSION_MINOR/s/.*[[:blank:]]\([0-9][0-9]*\).*/\1/p' < lz6.h)
+LIBVER_PATCH:=$(shell sed -n '/define LZ6_VERSION_RELEASE/s/.*[[:blank:]]\([0-9][0-9]*\).*/\1/p' < lz6.h)
 LIBVER := $(LIBVER_MAJOR).$(LIBVER_MINOR).$(LIBVER_PATCH)
+VERSION?= $(LIBVER)
 
 DESTDIR?=
 PREFIX ?= /usr/local
@@ -69,11 +69,23 @@ default: liblz6
 
 all: liblz6
 
-liblz6: lz6.c lz6hc.c lz6frame.c xxhash.c entropy/lz6fse.c entropy/lz6rc.c entropy/lz6seq.c entropy/lz6huf.c   # need to compile once with -fPIC, and once without -fPIC
+LIBSRC_CORE    = lz6.c lz6hc.c lz6frame.c xxhash.c
+LIBSRC_ENTROPY = entropy/lz6fse.c entropy/lz6rc.c entropy/lz6seq.c entropy/lz6huf.c
+LIBBUILD       = .lz6build
+
+# Objects, not sources: the static library holds object files (it held the .c files), the shared one is linked from position-independent objects and
+# against libm (the seq codec calls log2), and the entropy sources are built at -O2, the level the codec is tested and released at (see SEQ_CFLAGS above).
+liblz6: $(LIBSRC_CORE) $(LIBSRC_ENTROPY)
 	@echo compiling static library
-	@$(AR) rcs $@.a $^
+	@rm -rf $(LIBBUILD) && mkdir -p $(LIBBUILD)/static $(LIBBUILD)/pic
+	@for f in $(LIBSRC_CORE); do $(CC) $(CPPFLAGS) $(CFLAGS) -c $$f -o $(LIBBUILD)/static/`basename $$f .c`.o || exit 1; done
+	@for f in $(LIBSRC_ENTROPY); do $(CC) $(CPPFLAGS) $(CFLAGS) $(SEQ_CFLAGS) -c $$f -o $(LIBBUILD)/static/`basename $$f .c`.o || exit 1; done
+	@rm -f $@.a && $(AR) rcs $@.a $(LIBBUILD)/static/*.o
 	@echo compiling dynamic library $(LIBVER)
-	@$(CC) $(FLAGS) -shared $^ -fPIC $(SONAME_FLAGS) -o $@.$(SHARED_EXT_VER)
+	@for f in $(LIBSRC_CORE); do $(CC) $(CPPFLAGS) $(CFLAGS) -fPIC -c $$f -o $(LIBBUILD)/pic/`basename $$f .c`.o || exit 1; done
+	@for f in $(LIBSRC_ENTROPY); do $(CC) $(CPPFLAGS) $(CFLAGS) $(SEQ_CFLAGS) -fPIC -c $$f -o $(LIBBUILD)/pic/`basename $$f .c`.o || exit 1; done
+	@$(CC) $(CFLAGS) $(LDFLAGS) -shared $(LIBBUILD)/pic/*.o $(SONAME_FLAGS) -o $@.$(SHARED_EXT_VER) -lm
+	@rm -rf $(LIBBUILD)
 	@echo creating versioned links
 	@ln -sf $@.$(SHARED_EXT_VER) $@.$(SHARED_EXT_MAJOR)
 	@ln -sf $@.$(SHARED_EXT_VER) $@.$(SHARED_EXT)

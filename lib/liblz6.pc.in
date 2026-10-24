@@ -1,14 +1,14 @@
-#   LZ4 - Fast LZ compression algorithm
-#   Copyright (C) 2011-2014, Yann Collet.
-#   BSD 2-Clause License (http://www.opensource.org/licenses/bsd-license.php)
+#   LZ6 - lossless compression library
+#   Based on LZ4 by Yann Collet and LZ5 by Przemyslaw Skibinski (BSD 2-Clause License)
 
 prefix=@PREFIX@
 libdir=@LIBDIR@
 includedir=@INCLUDEDIR@
 
-Name: lz4
-Description: fast lossless compression algorithm library
-URL: http://lz4.org/
+Name: lz6
+Description: lossless compression library: fast LZ block and frame codecs and the seq engine (LZ match finder, FSE/rANS and Huffman literals)
+URL: https://github.com/YadeWira/lz6
 Version: @VERSION@
-Libs: -L@LIBDIR@ -llz4
+Libs: -L@LIBDIR@ -llz6
+Libs.private: -lm
 Cflags: -I@INCLUDEDIR@
