@@ -404,7 +404,7 @@ static const LZ6HC_parameters LZ6HC_seqParameters[LZ6HC_MAX_CLEVEL+1] =
     {        0,          0,  0,  0,     0,  0,     0,  0, LZ6HC_fast             }, // level 0 - never used
     { MAXD_LOG,   MAXD_LOG, 15,  2,     2,  6,    20,  0, LZ6HC_fast1            }, // level 1   fast1: H15, 2 ways, no rep1/rep2, 2 indexed per end (hashLog3 = positions, searchNum = ways, fullSearch = rep3)
     { MAXD_LOG,   MAXD_LOG, 19,  3,     2,  6,    22,  1, LZ6HC_fast1            }, // level 2   fast1: H19, 2 ways, rep3, 3 indexed per end, 4 MB window
-    { MAXD_LOG,   MAXD_LOG, 10,  0,     8,  6,    22,  0, LZ6HC_row              }, // level 3   full Silesia 28.87% (6-byte hash: was 28.97% with 5; AIT 39.73 -> 39.62%)
+    { MAXD_LOG,   MAXD_LOG, 10,  0,    16,  6,    22,  0, LZ6HC_row, LZ6_ROWREP(3, 16) }, // row 3 = -1   v1.6.15: 16 candidates and rep probes (Silesia 28.77% -> 28.33%)
     { MAXD_LOG,   MAXD_LOG, 10,  0,    16,  5,    22,  1, LZ6HC_row, LZ6_ROWREP(3, 16) }, // row 4 = -2   v1.6.13: 16 candidates and rep probes (Silesia 28.09% -> 27.65%)
     { MAXD_LOG,   MAXD_LOG, 10,  5,    32,  5,    23,  2, LZ6HC_row              }, // row 5 = -3   v1.6.13: 32 candidates instead of 24 (Silesia 27.45% -> 27.35%)
     { MAXD_LOG,   MAXD_LOG, 10,  5,    32,  5,    24,  2, LZ6HC_row, LZ6_ROWREP(3, 16) }, // row 6 = -4   v1.6.13: rep probes (Silesia 27.32% -> 27.23%)
