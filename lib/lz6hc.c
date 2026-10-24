@@ -469,7 +469,7 @@ FORCE_INLINE int LZ6HC_FindBestMatch (LZ6HC_Data_Structure* ctx,   /* Index tabl
 			if (offset < LZ6_SHORT_OFFSET_DISTANCE)
 			{
 				match = ip - offset;
-				if (match > base && MEM_read24(ip) == MEM_read24(match))
+				if (matchIndex3 > 0 && MEM_read24(ip) == MEM_read24(match))
 				{
 					ml = 3;//MEM_count(ip+MINMATCH, match+MINMATCH, iLimit) + MINMATCH;
 					*matchpos = match;
@@ -550,7 +550,7 @@ FORCE_INLINE int LZ6HC_FindMatchFast (LZ6HC_Data_Structure* ctx, U32 matchIndex,
 		if (offset < LZ6_SHORT_OFFSET_DISTANCE)
 		{
 			match = ip - offset;
-			if (match > base && MEM_read24(ip) == MEM_read24(match))
+			if (matchIndex3 > 0 && MEM_read24(ip) == MEM_read24(match))
 			{
 				ml = 3;//MEM_count(ip+MINMATCH, match+MINMATCH, iLimit) + MINMATCH;
 				*matchpos = match;
@@ -740,7 +740,7 @@ FORCE_INLINE size_t LZ6HC_GetWiderMatch (
 			if (offset < LZ6_SHORT_OFFSET_DISTANCE)
 			{
 				match = ip - offset;
-				if (match > base && MEM_read24(ip) == MEM_read24(match))
+				if (matchIndex3 > 0 && MEM_read24(ip) == MEM_read24(match))
 				{
 					size_t mlt = MEM_count(ip + MINMATCH, match + MINMATCH, iHighLimit) + MINMATCH;
 
@@ -853,7 +853,7 @@ FORCE_INLINE int LZ6HC_GetAllMatches (
 		if (offset < LZ6_SHORT_OFFSET_DISTANCE)
 		{
 			match = ip - offset;
-			if (match > base && MEM_read24(ip) == MEM_read24(match))
+			if (*HashPos3 > 0 && MEM_read24(ip) == MEM_read24(match))
 			{
 				size_t mlt = MEM_count(ip + MINMATCH, match + MINMATCH, iHighLimit) + MINMATCH;
 
@@ -999,7 +999,7 @@ FORCE_INLINE int LZ6HC_BinTree_GetAllMatches (
 		if (offset < LZ6_SHORT_OFFSET_DISTANCE)
 		{
 			match = ip - offset;
-			if (match > base && MEM_read24(ip) == MEM_read24(match))
+			if (*HashPos3 > 0 && MEM_read24(ip) == MEM_read24(match))
 			{
 				mlt = MEM_count(ip + MINMATCH, match + MINMATCH, iHighLimit) + MINMATCH;
 

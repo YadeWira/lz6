@@ -25,7 +25,7 @@
 #            as the encoder chooses and forced on every lane (LZ6_PLANEDELTA_FORCE), the delta bit on every forced lane, a size win, and 32000 mutants
 #   hufdiff  Huffman literal blocks (valid, and mutated header/stream/truncation) decoded from exact-size buffers: valid
 #            blocks must round trip; with REFTREE the return code and output hash of every case must equal the reference's
-# Then once: limits (the block format's limits on a literal run, a match and the sequence count: the rewriting of the parse on small blocks with the limits
+# Then once: lowaddr (the output must not depend on the address of the source buffer), limits (the block format's limits on a literal run, a match and the sequence count: the rewriting of the parse on small blocks with the limits
 # shrunk at build time, and seqbig: real-size blocks that did not decode), prngtab (the table of first glibc random() draws the encoder scans, against the generator for all 65536 seeds), blockdec (the plain block decoder, LZ6_decompress_safe and _partial, on the empty input, every 1- and 2-byte input and
 # mutants of valid blocks of levels 0-15, from exact-size buffers; ASAN+UBSan), asan (round trips of 6 files x 7 levels + 25000 fuzz iterations, default build) and m32
 # (32-bit build with sanitizers, falling back to none when the toolchain has no 32-bit sanitizer runtime).
@@ -138,6 +138,15 @@ if $CC "${SAN[@]}" "${INC[@]}" "$GATE/blockdec.c" "${S[@]}" -o "$W/blockdec" -lm
   if [ $rc -eq 0 ]; then note "PASS blockdec ($BN): $(echo "$out" | tail -1)"; else note "FAIL blockdec rc=$rc: $(echo "$out" | flat 400)"; fi
 else
   note "FAIL build blockdec"
+fi
+
+# the output must not depend on where the source buffer sits in memory (a pointer below the window wrapped when the buffer was under 2^windowLog):
+# 20 MB compressed at 0x800000 and in malloc'd memory, seq and HC levels. No sanitizers (they claim low addresses).
+if $CC -O2 -std=gnu11 "${INC[@]}" "$GATE/lowaddr.c" "${S[@]}" -o "$W/lowaddr" -lm; then
+  out=$(run "$W/lowaddr" 2>&1); rc=$?
+  if [ $rc -eq 0 ]; then note "PASS lowaddr: $(echo "$out" | tail -1)"; else note "FAIL lowaddr rc=$rc: $(echo "$out" | grep FAIL | head -3 | flat 300)"; fi
+else
+  note "FAIL build lowaddr"
 fi
 
 # the encoder's table of first random() draws against the generator, for every seed (needs the test hook compiled in)
