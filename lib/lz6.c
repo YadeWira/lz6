@@ -964,9 +964,11 @@ FORCE_INLINE int LZ6_decompress_generic(
     size_t last_off = 1;
 
     /* Special cases */
-    if ((endOnInput) && unlikely(inputSize<=0)) return -1;                                        /* no input is not a block: the empty block is the single byte 0 */
     if ((partialDecoding) && (oexit> oend-MFLIMIT)) oexit = oend-MFLIMIT;                         /* targetOutputSize too high => decode everything */
     if ((endOnInput) && (unlikely(outputSize==0))) return ((inputSize==1) && (*ip==0)) ? 0 : -1;  /* Empty output buffer */
+    /* A block that makes any output is a token and at least one more byte. Rejecting less than that here is what keeps the first token's literal-length
+     * extension byte inside the input: after every match the checks above leave 3 or more bytes, so no later token can have its extension byte outside it. */
+    if ((endOnInput) && unlikely(inputSize<2)) return -1;
     if ((!endOnInput) && (unlikely(outputSize==0))) return (*ip==0?1:-1);
 
 
@@ -985,7 +987,6 @@ FORCE_INLINE int LZ6_decompress_generic(
             if ((length=(token>>ML_BITS)&RUN_MASK2) == RUN_MASK2)
             {
                 unsigned s;
-                if ((endOnInput) && unlikely(ip>=iend)) goto _output_error;   /* the first extension byte must be inside the input */
                 do
                 {
                     s = *ip++;
@@ -1001,7 +1002,6 @@ FORCE_INLINE int LZ6_decompress_generic(
             if ((length=(token>>ML_BITS)&RUN_MASK) == RUN_MASK)
             {
                 unsigned s;
-                if ((endOnInput) && unlikely(ip>=iend)) goto _output_error;   /* the first extension byte must be inside the input */
                 do
                 {
                     s = *ip++;
