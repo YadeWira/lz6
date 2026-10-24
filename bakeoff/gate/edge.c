@@ -17,7 +17,7 @@ static int rt(const uint8_t* s, size_t n, int lvl, const char* what){
 }
 int main(int argc, char** argv){
   int fails = 0; long cases = 0;
-  static const int lv[] = {-2,-1,1,2,3,4,5,6,7,9,10,11,12,13};   /* the fast tier and levels 1-7, 9-13 (v1.6.13 changed the parsers of 2-7, v1.6.14 the tree of 9-13) */
+  static const int lv[] = {-2,-1,1,2,3,4,5,6,7,8,9,10,11,12,13};   /* the fast tier and levels 1-13 (v1.6.13 changed the parsers of 2-7, v1.6.14 the tree of 9-13, v1.6.15 the tree of 8) */
   for (size_t n = 0; n <= 300; n++) for (int k = 0; k < 4; k++) {
     uint8_t* b = malloc(n + 1);
     for (size_t i = 0; i < n; i++) b[i] = k==0 ? (uint8_t)rnd() : k==1 ? 'a' : k==2 ? "abcabcabd"[i%9] : (uint8_t)(rnd()%3);

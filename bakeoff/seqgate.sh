@@ -143,7 +143,7 @@ SLICES=("$W"/asan/*.s400k "$W"/asan/dickens.s "$W"/asan/samba.s "$W"/asan/x-ray.
 if $CC "${SAN[@]}" "${INC[@]}" "$GATE/rt.c" "${S[@]}" -o "$W/rt" -lm &&
    $CC "${SAN[@]}" "${INC[@]}" "$GATE/xfuzz.c" "${S[@]}" -o "$W/xfuzz" -lm; then
   bad=0
-  for L in -2 -1 1 2 3 4 5 6 7 9 10 11 12 13; do for f in "${SLICES[@]}"; do
+  for L in -2 -1 1 2 3 4 5 6 7 8 9 10 11 12 13; do for f in "${SLICES[@]}"; do
     out=$(run "$W/rt" $L "$f" 2>&1); rc=$?
     if [ $rc -ne 0 ]; then bad=1; note "FAIL asan rt L$L $f rc=$rc: $(echo "$out" | flat 300)"; fi
   done; done
@@ -152,7 +152,7 @@ if $CC "${SAN[@]}" "${INC[@]}" "$GATE/rt.c" "${S[@]}" -o "$W/rt" -lm &&
   done; done
   out=$(run "$W/xfuzz" 25000 "$W"/asan/*.seq 2>&1); rc=$?
   if [ $rc -ne 0 ]; then bad=1; note "FAIL asan xfuzz rc=$rc: $(echo "$out" | flat 400)"; fi
-  [ $bad -eq 0 ] && note "PASS asan: 42 round trips and $(echo "$out" | tail -1)"
+  [ $bad -eq 0 ] && note "PASS asan: $((15 * ${#SLICES[@]})) round trips and $(echo "$out" | tail -1)"
 else
   note "FAIL build asan"
 fi
