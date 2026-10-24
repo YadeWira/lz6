@@ -1,3 +1,20 @@
+v1.6.15-pre
+- ratio/encoder, NO FORMAT CHANGE AND NO DECODER CHANGE (every stream decodes with v1.6.14-pre; only the level table moves): levels -1 and -8, the two that were
+  left, are retuned; every other level writes the same bytes as before. Silesia / AIT, size of the output, v1.6.14-pre -> now: -1 28.77% / 46.70% -> 28.33% / 46.64%,
+  -8 25.55% / 45.52% -> 25.42% / 45.50%. Per file the change at -1 is -0.0% to -6.4% (nci -6.4%, xml -3.8%, reymont -2.7%, webster -2.0%, samba -1.9%, mozilla -1.6%,
+  dickens -1.6%, ait_B -1.5%, osdb -0.9%, ooffice -0.5%, mr -0.5%); the only file that is larger is sao, by 4.1 KB (+0.08%). At -8: nci -5.8%, xml -1.9%, webster -0.8%,
+  samba -0.3%, mr -0.3%, osdb -0.2%; no file is larger.
+  What moved: (1) level -1 (the greedy row-hash parser) searches the 16 slots of its row instead of 8 and probes the repeat offsets like levels -2 and -4 (rep0, rep1 and
+  rep2 one byte ahead, the three at the position itself; a rep1/rep2 match is charged 16 bits); it stays greedy because lazy matching makes sao 2.6% larger; (2) level -8 (the
+  optimal parser over the binary tree) accepts matches of 64 bytes as sufficient (was 48) and its 3-byte hash has 14 bits (was 16: at 64 bytes the smaller table keeps every file
+  the same size or smaller; at 48 the 12-bit one made osdb 0.15% larger).
+  Decode, exact cycles (perf counters, pinned core, interleaved rounds, size-weighted over the 19 files): -1 +0.3% (2.6% fewer instructions per byte; AIT +0.9%, ait_C +3.4%),
+  -8 -0.3% (AIT -0.1%, ooffice +4.8%). Encode, exact cycles of the compress call (8 files of Silesia): -1 +12%, -8 +17%. Per file and level: bakeoff/V1615_VS_V1614.md.
+  Measured and not adopted at -1: a 32-slot row with 32 candidates (28.27% for +21% encode cycles, 28.12% with the rep probes for +28%: a better ratio, but the entry level
+  keeps its speed), lazy matching (28.30%, sao +2.6%; with the 32-slot row 27.85% and sao +2.4%), a 5-byte hash (+0.1 points) and a 7-byte one (+0.27), a table of 2^24 slots
+  instead of 2^22 (-0.08 points for +60 MB). At -8: 20 or 24 searches (25.28% and 25.23%, but then -8 is almost -9: 25.19%), a sufficient length of 96 or 128.
+  gate: bakeoff/seqgate.sh at its default size against v1.6.14-pre (the decoder is byte-identical): GATE PASS.
+
 v1.6.14-pre
 - ratio/encoder, NO FORMAT CHANGE AND NO DECODER CHANGE (every stream decodes with v1.6.13-pre; only the level table moves): levels -9 to -13 (the
   optimal parser over the binary tree) are retuned; the fast tier and levels -1 to -8 write the same bytes as before (all 19 files of Silesia + AIT
