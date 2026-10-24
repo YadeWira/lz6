@@ -68,6 +68,10 @@ unsigned long long LZ6IO_GetFileSize(const char* infilename);
    return : overwrite mode (0/1) */
 int LZ6IO_setOverwrite(int yes);
 
+/* Test mode (-t) : an unrecognized file is an error, never passed through, even with overwrite on.
+   return : test mode (0/1) */
+int LZ6IO_setTestMode(int yes);
+
 /* blockSizeID : valid values : 1-7
    return : -1 if error, blockSize if OK */
 int LZ6IO_setBlockSizeID(int blockSizeID);

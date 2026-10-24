@@ -254,7 +254,8 @@ int main(int argc, char** argv)
         multiple_inputs=0,
         forceHC=0,
         operationResult=0,
-        blockSizeIdUserSet=0;
+        blockSizeIdUserSet=0,
+        noMoreOptions=0;   /* after "--": every argument is a file name */
     const char* input_filename=0;
     const char* output_filename=0;
     char* dynNameSpace=0;
@@ -290,12 +291,15 @@ int main(int argc, char** argv)
 
         if(!argument) continue;   /* Protection if argument empty */
 
+        if (noMoreOptions) goto _fileArgument;
+        if (!strcmp(argument, "--")) { noMoreOptions = 1; continue; }
+
         /* long commands (--long-word) */
         if (!strcmp(argument,  "--compress")) { forceCompress = 1; continue; }
         if ((!strcmp(argument, "--decompress"))
          || (!strcmp(argument, "--uncompress"))) { decode = 1; continue; }
         if (!strcmp(argument,  "--multiple")) { multiple_inputs = 1; if (inFileNames==NULL) inFileNames = (const char**)malloc(argc * sizeof(char*)); continue; }
-        if (!strcmp(argument,  "--test")) { decode = 1; LZ6IO_setOverwrite(1); output_filename=nulmark; continue; }
+        if (!strcmp(argument,  "--test")) { decode = 1; LZ6IO_setOverwrite(1); LZ6IO_setTestMode(1); output_filename=nulmark; continue; }
         if (!strcmp(argument,  "--force")) { LZ6IO_setOverwrite(1); continue; }
         if (!strcmp(argument,  "--no-force")) { LZ6IO_setOverwrite(0); continue; }
         if ((!strcmp(argument, "--stdout"))
@@ -311,7 +315,13 @@ int main(int argc, char** argv)
         if (!strcmp(argument,  "--version")) { DISPLAY(WELCOME_MESSAGE); return 0; }
         if (!strcmp(argument,  "--keep")) { continue; }   /* keep source file (default anyway; just for xz/lzma compatibility) */
         if (!strncmp(argument, "--fast", 6) && (argument[6] == 0 || argument[6] == '=')) {   /* the seq engine's fast tier: level -N */
-            int n = argument[6] == '=' ? atoi(argument + 7) : 1;
+            long n = 1;
+            if (argument[6] == '=')
+            {
+                char* end;
+                n = strtol(argument + 7, &end, 10);
+                if (end == argument + 7 || *end != 0 || n < 1) badusage();   /* --fast=x, --fast=0, --fast=2x are mistakes, not --fast=1 */
+            }
             cLevel = n >= 2 ? -2 : -1;
             continue;
         }
@@ -362,7 +372,7 @@ int main(int argc, char** argv)
                 case 'c': forceStdout=1; output_filename=stdoutmark; displayLevel=1; break;
 
                     /* Test integrity */
-                case 't': decode=1; LZ6IO_setOverwrite(1); output_filename=nulmark; break;
+                case 't': decode=1; LZ6IO_setOverwrite(1); LZ6IO_setTestMode(1); output_filename=nulmark; break;
 
                     /* Overwrite */
                 case 'f': LZ6IO_setOverwrite(1); break;
@@ -396,7 +406,9 @@ int main(int argc, char** argv)
                                     blockSizeIdUserSet = 1;   /* explicit -B overrides size-adaptive default below */
                                     argument++;
                                 }
-                                else                                                            
+                                else if ((argument[1] >= '0') && (argument[1] <= '9'))
+                                    badusage();   /* -B0, -B8, -B9, -B15 ... : block size IDs are 1-7 */
+                                else
                                     exitBlockProperties=1;
                                 break;
                             }
@@ -458,6 +470,7 @@ int main(int argc, char** argv)
             continue;
         }
 
+        _fileArgument:
         /* Store in *inFileNames[] if -m is used. */
         if (multiple_inputs) { inFileNames[ifnIdx++]=argument; continue; }
 

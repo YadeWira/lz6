@@ -69,7 +69,8 @@
 *****************************/
 #include <stdio.h>     /* fprintf, fopen, fread, stdin, stdout, fflush, getchar */
 #include <stdlib.h>    /* malloc, free */
-#include <string.h>    /* strcmp, strlen */
+#include <string.h>    /* strcmp, strlen, strerror */
+#include <errno.h>     /* errno */
 #include <time.h>      /* clock */
 #include <sys/types.h> /* stat64 */
 #include <sys/stat.h>  /* stat64 */
@@ -136,6 +137,7 @@ static clock_t g_time = 0;
 *  Local Parameters
 **************************************/
 static int g_overwrite = 1;
+static int g_testMode = 0;   /* -t: decode to nowhere; never pass an unrecognized file through */
 static int g_blockSizeId = LZ6IO_BLOCKSIZEID_DEFAULT;
 static int g_blockChecksum = 0;
 static int g_streamChecksum = 1;
@@ -182,6 +184,14 @@ int LZ6IO_setOverwrite(int yes)
 {
    g_overwrite = (yes!=0);
    return g_overwrite;
+}
+
+/* Test mode (-t): the stream is decoded and checked, and a file that is not an lz6 stream is an error even with -f
+   (pass-through would make `-t` accept any file). return : test mode (0/1) */
+int LZ6IO_setTestMode(int yes)
+{
+   g_testMode = (yes!=0);
+   return g_testMode;
 }
 
 /* blockSizeID : valid values : 1-7 */
@@ -277,6 +287,13 @@ static int LZ6IO_GetBlockSize_FromBlockId (int id) { /*printf("LZ6IO_GetBlockSiz
 static int LZ6IO_isSkippableMagicNumber(unsigned int magic) { return (magic & LZ6IO_SKIPPABLEMASK) == LZ6IO_SKIPPABLE0; }
 
 
+/* A short read is the end of the input only when the stream says so: stdio returns 0 bytes for a failed read too (EISDIR, EIO, a dying disk),
+   which the loops below took for EOF, ending a compression with a truncated frame, or never ending it at all. */
+static void LZ6IO_checkRead(FILE* f)
+{
+    if (ferror(f)) EXM_THROW(48, "Read error : %s", strerror(errno));
+}
+
 static int LZ6IO_getFiles(const char* input_filename, const char* output_filename, FILE** pfinput, FILE** pfoutput)
 {
 
@@ -288,6 +305,12 @@ static int LZ6IO_getFiles(const char* input_filename, const char* output_filenam
     }
     else
     {
+        struct stat st;
+        if (stat(input_filename, &st) == 0 && S_ISDIR(st.st_mode))
+        {
+            DISPLAYLEVEL(1, "Unable to process %s : it is a directory\n", input_filename);
+            return 1;
+        }
         *pfinput = fopen(input_filename, "rb");
     }
 
@@ -323,8 +346,10 @@ static int LZ6IO_getFiles(const char* input_filename, const char* output_filenam
                 if ((g_displayLevel <= 1) || (*pfinput == stdin))
                     EXM_THROW(11, "Operation aborted : %s already exists", output_filename);   /* No interaction possible */
                 DISPLAYLEVEL(2, "Overwrite ? (Y/n) : ");
-                while((ch = getchar()) != '\n' && ch != EOF)   /* flush integrated */
-                if ((ch!='Y') && (ch!='y')) EXM_THROW(12, "No. Operation aborted : %s already exists", output_filename);
+                ch = getchar();
+                if (ch == EOF) EXM_THROW(11, "Operation aborted : %s already exists (no answer to the prompt)", output_filename);   /* stdin closed: never overwrite unasked */
+                if ((ch != '\n') && (ch!='Y') && (ch!='y')) EXM_THROW(12, "No. Operation aborted : %s already exists", output_filename);   /* Enter is the default, yes */
+                while (ch != '\n' && ch != EOF) ch = getchar();   /* flush the rest of the line */
             }
         }
         *pfoutput = fopen( output_filename, "wb" );
@@ -596,6 +621,7 @@ static int LZ6IO_compressFilename_extRess(cRess_t ress, const char* srcFileName,
      * literal mode / transform, like per-file coding inside one frame. */
     size_t const windowSize = (g_blockCodec == 1 && blockSize > 256 KB) ? 256 KB : blockSize;
     readSize  = fread(srcBuffer, (size_t)1, windowSize, srcFile);
+    LZ6IO_checkRead(srcFile);
     filesize += readSize;
 
     /* single-block file (LZ/HC frames only; seq always segments) */
@@ -692,6 +718,7 @@ static int LZ6IO_compressFilename_extRess(cRess_t ress, const char* srcFileName,
                 }
                 size_t room = blockSize - segLen < windowSize ? blockSize - segLen : windowSize;
                 readSize = fread(segBuf + segLen, (size_t)1, room, srcFile);
+                LZ6IO_checkRead(srcFile);
                 filesize += readSize;
 
                 if (readSize > 0) {
@@ -746,6 +773,7 @@ static int LZ6IO_compressFilename_extRess(cRess_t ress, const char* srcFileName,
 
             /* Read next block */
             readSize  = fread(srcBuffer, (size_t)1, (size_t)blockSize, srcFile);
+            LZ6IO_checkRead(srcFile);
             filesize += readSize;
         }
 
@@ -1153,6 +1181,7 @@ static unsigned long long LZ6IO_decompressLZ6F(dRess_t ress, FILE* srcFile, FILE
         /* Read input */
         if (nextToLoad > ress.srcBufferSize) nextToLoad = ress.srcBufferSize;
         readSize = fread(ress.srcBuffer, 1, nextToLoad, srcFile);
+        LZ6IO_checkRead(srcFile);
         if (!readSize)
             break;   /* empty file or stream */
 
@@ -1201,6 +1230,7 @@ static unsigned long long LZ6IO_passThrough(FILE* finput, FILE* foutput, unsigne
     while (read)
     {
         read = fread(buffer, 1, PTSIZE, finput);
+        LZ6IO_checkRead(finput);
         total += read;
         storedSkips = LZ6IO_fwriteSparse(foutput, buffer, read, storedSkips);
     }
@@ -1277,7 +1307,7 @@ static unsigned long long selectDecoder(dRess_t ress, FILE* finput, FILE* foutpu
     else
     {
       nbReadBytes = fread(MNstore, 1, MAGICNUMBER_SIZE, finput);
-      if (nbReadBytes==0) return ENDOFSTREAM;                  /* EOF */
+      if (nbReadBytes==0) { LZ6IO_checkRead(finput); return ENDOFSTREAM; }   /* EOF (or a failed read) */
       if (nbReadBytes != MAGICNUMBER_SIZE) EXM_THROW(40, "Unrecognized header : Magic Number unreadable");
       magicNumber = LZ6IO_readLE32(MNstore);   /* Little Endian format */
     }
@@ -1302,7 +1332,7 @@ static unsigned long long selectDecoder(dRess_t ress, FILE* finput, FILE* foutpu
     default:
         if (nbCalls == 1)   /* just started */
         {
-            if (g_overwrite)
+            if (g_overwrite && !g_testMode)
                 return LZ6IO_passThrough(finput, foutput, MNstore);
             EXM_THROW(44,"Unrecognized header : file cannot be decoded");   /* Wrong magic number at the beginning of 1st stream */
         }
