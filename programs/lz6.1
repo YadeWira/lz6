@@ -8,7 +8,7 @@
 .hy 0
 .nr HY 0
 .
-.TH lz6 "1" "2015-03-21" "lz6" "User Commands"
+.TH lz6 "1" "2026-10-24" "lz6 1.7.0" "User Commands"
 .SH NAME
 \fBlz6, unlz6, lz6cat\fR \- Compress or decompress .lz6 files
 
@@ -126,6 +126,11 @@ Test the integrity of compressed
 files.
 The decompressed data is discarded.
 No files are created nor removed.
+A file that is not an lz6 stream is an error, with or without
+.B \-f
+(the pass-through of
+.B \-d \-f
+does not apply to a test).
 .
 .SS "Operation modifiers"
 .TP
@@ -133,7 +138,7 @@ No files are created nor removed.
  fast compression with the classic LZ frame codec (default)
 .TP
 .B \-1 ... \-13
- the seq engine. \-1 compresses like the first level of the LZMA family (about 28.8% on the Silesia corpus) at several times
+ the seq engine. \-1 compresses like the first level of the LZMA family (about 28.3% on the Silesia corpus) at several times
  their speed; a higher number compresses more and is slower; \-7 is a middle level. 14 and 15 are accepted and mean 13.
  Before v1.6.12-pre the scale was 1-15 and \-1 and \-2 were the fast tier: the old \-N (N >= 3) is \-(N-2) now.
 .TP
@@ -181,8 +186,10 @@ independently, and the resulting name of the compressed file will be
 
 .TP
 .B \-B#
- block size [4-7](default : 7)
- B4= 64KB ; B5= 256KB ; B6= 1MB ; B7= 4MB
+ block size, 1 to 7: B1= 64KB ; B2= 256KB ; B3= 1MB ; B4= 4MB ; B5= 16MB (the default) ; B6= 64MB ; B7= 256MB.
+ A file larger than 16 MB gets 7 by default (6 with
+.B --hc ).
+ A number outside 1-7 is a usage error.
 .TP
 .B \-T#
  worker threads (default : 1; 0 = one per CPU core).
@@ -200,9 +207,6 @@ and
 (about two blocks per thread, plus the compressor's tables), and a file of a single
 block does not speed up. Frames with linked blocks are always decoded on one thread.
 .TP
-.B \-BD
- block dependency (improve compression ratio)
-.TP
 .B \--[no-]frame-crc
  select frame checksum (default:enabled)
 .TP
@@ -213,9 +217,6 @@ hence for a file. It won't work with unknown source size, such as stdin or pipe.
 .TP
 .B \--[no-]sparse 
  sparse mode support (default:enabled on file, disabled on stdout)
-.TP
-.B \-l
- use Legacy format (useful for Linux Kernel compression)
 .
 .SS "Other options"
 .TP
@@ -241,8 +242,30 @@ This is default behavior anyway, so this option is just for compatibility with g
 .B \-i#
  iteration loops [1-9](default : 3), benchmark mode only
 
+.SH "END OF OPTIONS"
+.TP
+.B \--
+ Everything after it is a file name, even if it starts with a dash.
+
+.SH "EXIT STATUS"
+0 on success. Non-zero on any error; the status is the number printed in
+.B "Error N : ..."
+. The ones that matter in scripts: 1 usage error or unreadable input file (a directory is refused),
+11 the output file exists and cannot be overwritten (no
+.B \-f ,
+no console to ask on, or the prompt got the end of the input),
+12 the answer to the overwrite prompt was not yes (Enter and
+.B y
+mean yes),
+44 the input is not an lz6 stream,
+48 a read failed (the output is not complete),
+66 the stream is corrupt (the checksum or the data), 67 it is truncated.
+Without
+.B \-f
+an existing output is never overwritten unasked.
+
 .SH BUGS
-Report bugs at: https://github.com/inikep/lz6/issues
+Report bugs at: https://github.com/YadeWira/lz6/issues
 
 .SH AUTHOR
-Yann Collet
+Yann Collet (LZ4), Przemyslaw Skibinski (LZ5), YadeWira (lz6)

@@ -1,6 +1,6 @@
 # lz6
 
-**lz6** is an experimental lossless compressor: maximum compression with fast decompression. It is meant as the successor of LZ4 and LZ5 v1.5, and it competes with [zstd], [lizard] and [misa77].
+**lz6** is a lossless compressor: maximum compression with fast decompression. Since v1.7.0 its formats are stable (see [Status](#status)). It is meant as the successor of LZ4 and LZ5 v1.5, and it competes with [zstd], [lizard] and [misa77].
 
 It started as a fork of [LZ5 v1.5] (itself a LZ4 derivative) and grew into its own codec family:
 
@@ -11,9 +11,11 @@ It started as a fork of [LZ5 v1.5] (itself a LZ4 derivative) and grew into its o
 - **x86 branch filter** — CALL/JMP `rel32` operands are converted to absolute addresses on detected code ranges, only where a trial shows it pays (Silesia `ooffice`, a Windows DLL: 44.4% -> 38.2% at level 15).
 - **Multithreaded command line** — `-T#` runs blocks on a worker pool for compression (the seq levels and `--fast`) and decompression (any frame). The output is identical at any thread count (see [Multithreading](#multithreading)).
 
-Current release: **v1.6.15-pre** ([releases](https://github.com/YadeWira/lz6/releases): static Linux x86-64, win64 and win32 binaries).
+Current release: **v1.7.0** ([releases](https://github.com/YadeWira/lz6/releases): static Linux x86-64, win64 and win32 binaries).
 
-New in v1.6.15-pre (see [NEWS](NEWS)): **levels `-1` and `-8` are retuned**, the last two (encoder only: no format change and no decoder change; every other level writes the same bytes). Silesia: `-1` 28.77% -> 28.33%, `-8` 25.55% -> 25.42%, with the decode cycles within +-0.3% and the encode 12% and 17% dearer. The [Benchmarks](#benchmarks) section starts with the comparison.
+New in v1.7.0, the **first stable release** (see [NEWS](NEWS)): the formats are frozen (a stream written by v1.6.11-pre or later decodes with every later version; the seq stream is now specified in [lz6_Seq_format.md](lz6_Seq_format.md)) and a test campaign before it found and fixed four bugs that the `-pre` series had. **Compressor:** a block with a run of more than 16 MiB of literals or a match, or more than 2^24 sequences, gave a stream that did not decode, and `lz6 -1 file` was enough to hit it on a file larger than 16 MiB (40 MB of zeros, compressed ISOs and disk images); the compressed bytes at the chain and tree levels and with `--hc` depended on the address of the source buffer (a second, equally valid stream in about 1% of the runs of the static Linux binary, every run without ASLR). **Decoder:** the plain block decoder read one byte past a 1-byte input. **Command line:** an unanswered overwrite prompt (stdin closed) overwrote the file, a failed read was taken for the end of the file (hang, or a shorter frame reported as success), `-t` accepted any file, `-B8` meant `-8`. Plus the library's `make install` (the `.a` held source files, the `.so` was not linked with libm, the pkg-config file named lz4). For ordinary inputs the compressed bytes are the same as v1.6.15-pre's, and the decode costs 0.5-3.2% fewer cycles than v1.6.11-pre's at the seven levels measured (see [Benchmarks](#benchmarks)).
+
+Earlier, v1.6.15-pre (see [NEWS](NEWS)): **levels `-1` and `-8` are retuned**, the last two (encoder only: no format change and no decoder change; every other level writes the same bytes). Silesia: `-1` 28.77% -> 28.33%, `-8` 25.55% -> 25.42%, with the decode cycles within +-0.3% and the encode 12% and 17% dearer. The [Benchmarks](#benchmarks) section starts with the comparison.
 
 Earlier, v1.6.14-pre (see [NEWS](NEWS)): **levels `-9` to `-13` are retuned** (encoder only: no format change and no decoder change; the fast tier and `-1` to `-8` write the same bytes). Silesia: `-9` 25.33% -> 25.19%, `-10` 25.09% -> 25.00%, `-11` 25.01% -> 24.92%, `-12` 24.99% -> 24.90%, `-13` 24.98% -> 24.87%, with the decode cycles 0.1-0.8% lower and the encode 8-22% dearer. The [Benchmarks](#benchmarks) section starts with the comparison.
 
@@ -81,6 +83,24 @@ Windows (mingw-w64 cross-compile from Linux, or MSVC):
 ## Benchmarks
 
 Measured with one harness ([lzbench], one thread, mem-to-mem, per file) on 2x Xeon E5-2697A v4, one core pinned with the machine otherwise idle (load average below 3), on 2026-10-09. lz6 is v1.6.11-pre (the lzbench plugin still labels it 1.6.9-pre) and the competitors (zstd 1.5.7, lizard 2.1, lz5 v1.5, misa77 0.6.0, lz4 1.10.0, memlz 0.2 beta) were run in the same session; the uf-lzma2 row is from the 2026-10-01 session. Speeds of different sessions are not comparable (an idle core boosts higher), so no row here is mixed with older runs. These are single-thread library numbers, not the [Multithreading](#multithreading) ones. The full matrix of the previous release (all levels, plus brotli, xz, zlib and fastlzma2) is in [bakeoff/VS_CODECS.md](bakeoff/VS_CODECS.md), which also has the per-level rows of this tree:
+
+### v1.7.0 against v1.6.11-pre and v1.6.15-pre
+
+**Against v1.6.15-pre** the compressed bytes are the same wherever v1.6.15-pre was correct: 163 inputs (Silesia, AIT, the format-sample corpus, glibc `random()` data, random and edge cases) x 11 options, identical; the block decoder runs 0.0-0.6% fewer instructions and its cycles are within the noise (`perf stat` on CPU 44, 15 interleaved rounds); the encode of blocks with the entropy of random data costs 0.4 ms instead of ~260 ms.
+
+**Against v1.6.11-pre, the first release of the present format:** exact user-mode cycles of decoding the stream each version's own encoder writes at the equivalent level (the old `-N` is the new `-(N-2)`), 5 Silesia files (dickens, xml, mr, x-ray, ooffice), CPU 44, best of 5 interleaved rounds, the whole command line (frame, checksum, output). No level is slower in total.
+
+| level now (v1.6.11-pre's) | decode cycles | decode cycles per byte | output size |
+|---|---:|---:|---:|
+| `--fast=2` (`-1`) | -3.2% | 7.95 -> 7.70 | -1.3% |
+| `--fast=1` (`-2`) | -2.8% | 8.06 -> 7.84 | -2.9% |
+| `-1` (`-3`) | -0.9% | 7.69 -> 7.62 | -1.0% |
+| `-3` (`-5`) | -0.5% | 7.70 -> 7.67 | -1.6% |
+| `-5` (`-7`) | -1.1% | 7.73 -> 7.65 | -1.9% |
+| `-8` (`-10`) | -2.7% | 7.78 -> 7.57 | -2.1% |
+| `-13` (`-15`) | -1.1% | 7.63 -> 7.55 | -2.5% |
+
+Single files vary by a few per cent either way (the slowest: `xml` at `-3`, +3.9%, and `ooffice` at `-13`, +4.0%).
 
 ### v1.6.15-pre against v1.6.14-pre
 
@@ -217,19 +237,25 @@ Where lz6 leads is in its transforms. On `ooffice` (x86 code) lz6 -13 reaches 38
 
 - [lz6_Block_format.md](lz6_Block_format.md) — raw block format
 - [lz6_Frame_format.md](lz6_Frame_format.md) — frame format (block codec flags, per-block dispatch)
+- [lz6_Seq_format.md](lz6_Seq_format.md) — the seq stream: one block of the seq engine, every layout, the limits, and what is frozen
 - [bakeoff/COMPETITORS.md](bakeoff/COMPETITORS.md) — competitive analysis vs zstd, lizard, misa77
 - [bakeoff/VS_LZMA_ZPAQ.md](bakeoff/VS_LZMA_ZPAQ.md) — lz6 against xz, lzma, fast-lzma2, uf-lzma2, zpaq, zpaqfranz and RAR (first level and top levels, per file)
 - [bakeoff/V1612_VS_V1611.md](bakeoff/V1612_VS_V1611.md) — v1.6.12-pre against v1.6.11-pre, every row and file (size, speed, exact decode cycles)
 - [bakeoff/V1613_VS_V1612.md](bakeoff/V1613_VS_V1612.md) — v1.6.13-pre against v1.6.12-pre, levels -2 to -7, every file (size, exact decode and encode cycles)
 - [bakeoff/V1614_VS_V1613.md](bakeoff/V1614_VS_V1613.md) — v1.6.14-pre against v1.6.13-pre, levels -9 to -13, every file (size, exact decode and encode cycles)
 - [bakeoff/V1615_VS_V1614.md](bakeoff/V1615_VS_V1614.md) — v1.6.15-pre against v1.6.14-pre, levels -1 and -8, every file (size, exact decode and encode cycles)
+- [bakeoff/fuzz/README.md](bakeoff/fuzz/README.md), `bakeoff/seqgate.sh`, `bakeoff/clitest.sh`, `bakeoff/installtest.sh` — the libFuzzer harnesses, the safety gate, the command-line tests and the install test
 - [NEWS](NEWS) — what changed in each release, including measured costs and refuted ideas
 - `lib/entropy/lz6seq.h` — the seq codec API
 - [Wiki](https://github.com/YadeWira/lz6/wiki) — architecture, seq stream format, decoder internals, development workflow, roadmap
 
 ## Status
 
-Experimental: the seq block format can change between `-pre` versions without a compatibility shim (see [NEWS](NEWS)); v1.6.10-pre did not change it, v1.6.11-pre does (tighter length-code widths: streams written by earlier builds do not decode), and v1.6.12-pre extends it (byte-delta plane lanes: every v1.6.11-pre stream still decodes, but a stream that uses them needs v1.6.12-pre). v1.6.13-pre, v1.6.14-pre and v1.6.15-pre change only the encoder. The frame HC levels (`--hc`) are stable. The seq codec and the frame layer are fuzz-tested (corrupt raw streams + corrupted frames through the full `LZ6F_decompress` path), and the multithreaded paths were run under AddressSanitizer, UBSan and ThreadSanitizer. Windows binaries (win64 and win32) are VM-tested on Windows 7 SP1 and Windows 10.
+**Stable since v1.7.0.** The compressed formats (the frame format, the plain block format and the seq stream) are frozen: a stream written by v1.6.11-pre or any later version decodes with every later version, and the decoder keeps accepting everything the format allows. Streams written before v1.6.11-pre do not decode (that was the last format change without a shim). The shared library's soname is `liblz6.so.1`; the documented API is what `lz6.h`, `lz6hc.h`, `lz6frame.h` and `lz6seq.h` declare (the shared library also exports internal helpers, which are not part of it).
+
+What is **not** promised: the compressed bytes an encoder writes for the same input. Levels are retuned between versions, and 32-bit and 64-bit builds write different bytes for some inputs (every stream decodes everywhere; aarch64 and x86-64 write the same bytes). Within one build the output does not depend on the thread count or on where the input sits in memory.
+
+How it is tested: the safety gate (`bakeoff/seqgate.sh`: ASAN and UBSan on the decoders, the encoder round trips, mutation fuzzing of both decoder variants against the previous release, the 32-bit build), five libFuzzer harnesses (`bakeoff/fuzz`), MemorySanitizer and ThreadSanitizer runs of the command line, 77 command-line checks (`bakeoff/clitest.sh`, including injected read errors), the streams of v1.6.11 to v1.6.15 (decoded three ways), aarch64 and armhf under qemu, i386 with and without SSE2, a round trip of a 39,778-file corpus of format samples, and Windows 7 SP1 and Windows 10 (win64 and win32, real VMs). Known limits: only little-endian hosts are tested; the "incompressible" shortcut of the seq encoder looks at the first 32 KB of a block; a library call has a setup cost of ~15 ms at levels 3 and up (it matters for tiny inputs).
 
 [LZ5 v1.5]: https://github.com/inikep/lz5
 [zstd]: https://github.com/facebook/zstd

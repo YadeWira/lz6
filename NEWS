@@ -1,3 +1,50 @@
+v1.7.0
+- FIRST STABLE RELEASE. The compressed formats (the frame format, the plain block format and the seq stream, including everything the v1.6.x `-pre` series added: the
+  v1.6.11 length-code widths, the v1.6.12 byte-delta plane lanes) are frozen: a stream written by v1.6.11-pre or any later version, and by every v1.7.x, decodes with every
+  later version. Streams written before v1.6.11-pre do not decode (that format change is the last one without a shim). The encoder's output may change between versions
+  (tuning), and it differs between 32-bit and 64-bit builds; aarch64 and x86-64 write the same bytes. The seq stream is now specified in the repository: lz6_Seq_format.md.
+- fix, compressor (every release since v1.6.11-pre): a block with a run of more than 16 MiB of literals or a match of more than 16 MiB, or with more than 2^24
+  sequences, gave a stream the decoder rejects (the format codes a literal run or a match length as a code plus at most 24 extra bits, and refuses more than 2^24
+  sequences). The CLI gives a file larger than 16 MiB blocks of 256 MB, so `lz6 -1 file` was enough: 40 MB of zeros, compressed ISOs, disk images (14 of the 60 corpus round
+  trips of files larger than 640 MB failed, at 28 MB to 486 MB into the output; the 83 files larger than 256 MB all round trip now). The encoder rewrites such a parse into
+  one the format holds, before the block is built: a match over the limit is cut into pieces with the same offset, the shortest matches go back to literals until the
+  count fits, a literal run over the limit is split by a short real match found inside it, and data with none (adversarial) is stored. Encoder only; streams inside the
+  limits are byte-identical (163 inputs x 11 configs against v1.6.15-pre). The 17.5 MB-run block that did not decode costs 5 bytes more now than its broken stream.
+- fix, compressor (chain and tree levels -5 to -13, and --hc): the compressed bytes depended on the address of the source buffer. The match finder keeps a pointer
+  `base = start - 2^windowLog` (up to 32 MB below the buffer) and five 3-byte-match checks compared a candidate with it (`match > base`): when the buffer sat below
+  2^windowLog in memory, `base` wrapped to a huge value, the check failed and no 3-byte match was ever taken. That is where a static non-PIE binary's heap starts (the
+  releases' Linux binary), plus a randomization of the program break that is 32 MB wide on some kernels and 1 GB on others: the same command on the same file gave a second
+  stream in about 1% of the runs (4 of 300, all four with the break under 16 MiB; none of the other 296) and gives it on every run without ASLR. Both streams decode; the size
+  differs by about 0.3% (+0.4% at -5, -0.25% at -7). The checks are index tests now (`matchIndex3 > 0`, the same condition), so no address is compared; the output at an ordinary
+  address is unchanged. Found with clang's UBSan pointer-overflow check and an in-process test that maps the source at fixed addresses (it flips exactly at 0x1000000, also at -O0).
+- fix, block decoder: `LZ6_decompress_safe` (and `_partial`) read one byte past its input when a block ended right after a token whose literal-length field was saturated, and
+  read `src[0]` of an empty input (libFuzzer, from a 3-byte input). Inputs of less than 2 bytes are rejected up front; every later token has its extension byte inside the input
+  by the checks that were already there, so the decode loop is the one of v1.6.15-pre: -0.0% to -0.6% instructions, cycles within the noise (perf stat, 15 interleaved rounds).
+  Also no arithmetic on NULL (null dictionary, the NULL buffers LZ6F_getFrameInfo passes, tmpBuff in LZ6F_compressFrame), which gcc's UBSan does not report and clang's does.
+- fix, CLI: an unanswered overwrite prompt (stdin closed: cron, CI, `< /dev/null`) overwrote the existing file (the `while` that read the answer had the `if` that checked it as its
+  body); now it aborts (error 11). A failed read (EISDIR, EIO, a dying disk) was taken for the end of the file: the seq engine looped forever (a directory as input hung) and the
+  plain-block and --hc paths wrote a frame of what was read so far and reported success; every read now checks ferror (error 48) and a directory is refused up front. `-t` turned
+  overwrite on, which also turned on the pass-through of files that are not lz6 streams, so `lz6 -t anyfile` said "Successfully decoded" and exited 0; test mode never passes data
+  through (`-df` still behaves as cat). `-B8`, `-B9` and `-B0` ended the block options and left the digit to be read as a compression level (`-B8` was `-8`) and `--fast=x` was `--fast=1`:
+  out-of-range block IDs and a non-numeric or zero --fast are usage errors. `--` ends the options.
+- speed, encoder (same decision, same bytes): every block of 64 bytes or more with the entropy of random data (compressed or encrypted input) went through a scan of all 65536 seeds of
+  glibc's random() generator, which cost ~260 ms per block at every level and block size (64 KB blocks of incompressible data: minutes per GB). The first two draws of each seed are built
+  once per process (~30 ms, thread-safe) and a seed is only seeded in full when those two bytes match: 0.4 ms per block. The feature itself stays (AIT D, glibc random() output, is 26 bytes).
+- speed, decode (cumulative, final against v1.6.11-pre, every level written by each version's own encoder, exact user-mode cycles on CPU 44, 5 Silesia files): -3.2% (--fast=2), -2.8%
+  (--fast=1), -0.9% (-1), -0.5% (-3), -1.1% (-5), -2.7% (-8), -1.1% (-13), with 1.0% to 2.9% smaller output; single files up to +4.0% slower (xml at -3, ooffice at -13).
+- build: no warnings with -Wall -Wextra on gcc and clang (gnu99, c99, c11) and none from -Wc23-extensions; the generated code is identical (88 of 88 sections compared). The pkg-config
+  file carries the library's version (it said 1.5.0).
+- tests: the gate (bakeoff/seqgate.sh) now also runs blockdec (the plain block decoder on hostile input from exact-size buffers: empty, every 1- and 2-byte input, mutants of valid
+  blocks), prngtab (the table of first random() draws against the generator for all 65536 seeds), limits (the parse rewriting on small blocks with the limits shrunk at build time, and
+  seqbig: real-size blocks), lowaddr (the output at 0x800000 and in malloc'd memory) and level 8 in its round trips; bakeoff/fuzz holds five libFuzzer harnesses (the three decoders,
+  and round trips of the seq encoder and the frame API) with the inputs that crashed; bakeoff/clitest.sh runs 77 checks of the command line (bad input, odd names, pipes, a full disk,
+  options, sparse files, injected read errors and flipped bits that must never decode silently to different data). Also run for this release: MemorySanitizer, the sanitized CLI suites
+  (ASAN+UBSan and TSan), Windows 7 SP1 and Windows 10 (win64 and win32, 725 checks each), aarch64 and armhf under qemu, i386 with and without SSE2, streams of v1.6.11 to v1.6.15 (2160
+  decoded three ways) and a round trip of the whole 39,778-file format-sample corpus (94.2 GB: 262,305 compress / `-t` / decompress / byte-compare rounds at every level (`--fast=1` and `--fast=2`, `-0`, `-1` to `-13`, `--hc`), at 1 and 4 threads, from files and pipes, 0 failures). The gate with 300,000 mutants per decoder clone and 5,000 tiny-block round trips per file: GATE PASS, 33 checks.
+- known, not changed: the "incompressible" shortcut looks at the first 32 KB of a block, so a block that starts with random-looking bytes and holds long compressible runs later is stored
+  (a 17.5 MB random head followed by 20 MB of zeros: 41.9 MB stays 41.9 MB); the library has a setup cost of ~15 ms per call at levels 3 and up on tiny inputs; levels above 13 mean 13;
+  only little-endian hosts are tested.
+
 v1.6.15-pre
 - ratio/encoder, NO FORMAT CHANGE AND NO DECODER CHANGE (every stream decodes with v1.6.14-pre; only the level table moves): levels -1 and -8, the two that were
   left, are retuned; every other level writes the same bytes as before. Silesia / AIT, size of the output, v1.6.14-pre -> now: -1 28.77% / 46.70% -> 28.33% / 46.64%,

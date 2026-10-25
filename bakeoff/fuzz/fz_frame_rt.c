@@ -34,15 +34,19 @@ int LLVMFuzzerTestOneInput(const uint8_t* data, size_t n) {
     if (LZ6F_isError(r)) __builtin_trap();
     put(hdr, r);
     size_t chunk = 1 + (data[3] | (size_t)data[4] << 8), off = 0; int k = 0;
+    /* the output buffers are allocated once per run: LZ6F_compressBound is the size of a whole block (up to 256 MB), and one allocation of it per update
+       call (a chunk of 1 byte makes thousands) is what made ASAN time out on a 9 KB input that takes 0.4 s without it */
+    const size_t ucap = LZ6F_compressBound(chunk < sn ? chunk : sn, &p), fcap = LZ6F_compressBound(0, &p) + (1u << 20);
+    uint8_t* const ubuf = malloc(ucap); uint8_t* const fbuf = malloc(fcap);
     while (off < sn) {
       size_t sz = sn - off < chunk ? sn - off : chunk;
-      size_t cap = LZ6F_compressBound(sz, &p); uint8_t* c = malloc(cap);
-      r = LZ6F_compressUpdate(cc, c, cap, src + off, sz, NULL);
+      r = LZ6F_compressUpdate(cc, ubuf, ucap, src + off, sz, NULL);
       if (LZ6F_isError(r)) __builtin_trap();
-      put(c, r);
-      if (mode == 2 && (++k & 1)) { size_t fc = LZ6F_compressBound(0, &p) + (1u << 20); uint8_t* f = malloc(fc); r = LZ6F_flush(cc, f, fc, NULL); if (LZ6F_isError(r)) __builtin_trap(); put(f, r); free(f); }
-      free(c); off += sz;
+      put(ubuf, r);
+      if (mode == 2 && (++k & 1)) { r = LZ6F_flush(cc, fbuf, fcap, NULL); if (LZ6F_isError(r)) __builtin_trap(); put(fbuf, r); }
+      off += sz;
     }
+    free(ubuf); free(fbuf);
     size_t fc = LZ6F_compressBound(0, &p) + 64 + (1u << 20); uint8_t* f = malloc(fc);
     r = LZ6F_compressEnd(cc, f, fc, NULL);
     if (LZ6F_isError(r)) __builtin_trap();
