@@ -284,11 +284,12 @@ unsigned long long LZ6IO_GetFileSize(const char* infilename)
 ** ************************************************************************ */
 
 static int LZ6IO_GetBlockSize_FromBlockId (int id) { /*printf("LZ6IO_GetBlockSize_FromBlockId %d=%d\n", id, (1 << (14 + (2 * id)))); */ return (1 << (14 + (2 * id))); }
-/* skip `size` bytes of the input: a seek, or when the input is a pipe (stdin) read and drop them. 0 = done */
+/* skip `size` bytes of the input: a seek on a file; on stdin read and drop them (it may be a pipe: the seek fails on Linux and
+ * "succeeds" without moving on Windows, which lost the position and ended the stream early). 0 = done */
 static int LZ6IO_skipInput(FILE* f, unsigned size)
 {
     unsigned char buf[16 KB];
-    if (fseek(f, (long)size, SEEK_CUR) == 0) return 0;
+    if (f != stdin && fseek(f, (long)size, SEEK_CUR) == 0) return 0;
     while (size > 0) {
         size_t const n = size < sizeof(buf) ? size : sizeof(buf);
         if (fread(buf, 1, n, f) != n) return 1;
@@ -306,6 +307,34 @@ static void LZ6IO_checkRead(FILE* f)
 {
     if (ferror(f)) EXM_THROW(48, "Read error : %s", strerror(errno));
 }
+
+/* 1 when the two names are one file (the same path, a hard link or a symlink); 0 when they are not or when either cannot be examined */
+#if defined(_WIN32) && (defined(__MINGW32__) || defined(_MSC_VER))
+static int LZ6IO_fileId(const char* name, BY_HANDLE_FILE_INFORMATION* info)
+{
+    HANDLE const h = CreateFileA(name, 0, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, NULL, OPEN_EXISTING, FILE_FLAG_BACKUP_SEMANTICS, NULL);
+    int ok;
+    if (h == INVALID_HANDLE_VALUE) return 0;
+    ok = GetFileInformationByHandle(h, info) != 0;
+    CloseHandle(h);
+    return ok;
+}
+static int LZ6IO_sameFile(const char* a, const char* b)
+{
+    BY_HANDLE_FILE_INFORMATION ia, ib;
+    return LZ6IO_fileId(a, &ia) && LZ6IO_fileId(b, &ib)
+        && ia.dwVolumeSerialNumber == ib.dwVolumeSerialNumber
+        && ia.nFileIndexHigh == ib.nFileIndexHigh && ia.nFileIndexLow == ib.nFileIndexLow;
+}
+#elif !defined(_WIN32)
+static int LZ6IO_sameFile(const char* a, const char* b)
+{
+    struct stat sa, sb;
+    return stat(a, &sa) == 0 && stat(b, &sb) == 0 && sa.st_dev == sb.st_dev && sa.st_ino == sb.st_ino;
+}
+#else
+static int LZ6IO_sameFile(const char* a, const char* b) { (void)a; (void)b; return 0; }
+#endif
 
 static int LZ6IO_getFiles(const char* input_filename, const char* output_filename, FILE** pfinput, FILE** pfoutput)
 {
@@ -346,18 +375,12 @@ static int LZ6IO_getFiles(const char* input_filename, const char* output_filenam
     }
     else
     {
-#if !defined(_WIN32)
         /* the output opened for writing empties the input when they are the same file (also a link to it) */
-        if (*pfinput != stdin && output_filename != nulmark)
+        if (*pfinput != stdin && output_filename != nulmark && LZ6IO_sameFile(input_filename, output_filename))
         {
-            struct stat si, so;
-            if (stat(input_filename, &si) == 0 && stat(output_filename, &so) == 0 && si.st_dev == so.st_dev && si.st_ino == so.st_ino)
-            {
-                fclose(*pfinput);
-                EXM_THROW(14, "Refusing to write %s over its own input", output_filename);
-            }
+            fclose(*pfinput);
+            EXM_THROW(14, "Refusing to write %s over its own input", output_filename);
         }
-#endif
         /* Check if destination file already exists */
         *pfoutput=0;
         if (output_filename != nulmark) *pfoutput = fopen( output_filename, "rb" );

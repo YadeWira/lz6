@@ -72,9 +72,9 @@ import sys,struct,subprocess
 out,src,cli=sys.argv[1:4]
 fr=subprocess.run([cli,'-1','-q','-c',src],capture_output=True,check=True).stdout
 sk=lambda n,sz: struct.pack('<II',0x184D2A50+n,sz)+bytes(range(256))*(sz//256)+bytes(sz%256)
-open(out,'wb').write(sk(0,100000)+fr+sk(7,0)+fr+sk(15,70000))
+open(out,'wb').write(sk(0,100000)+fr+sk(7,0)+fr+sk(3,10)+fr+sk(15,70000))
 P
-cat "$W/in/text" "$W/in/text" > "$W/skip.exp"
+cat "$W/in/text" "$W/in/text" "$W/in/text" > "$W/skip.exp"
 for T in 1 4; do
   "$CLI" -d -q -T$T -c "$W/skip.lz6" | cmp -s - "$W/skip.exp" || bad "skippable frames from a file -T$T"
   cat "$W/skip.lz6" | "$CLI" -d -q -T$T | cmp -s - "$W/skip.exp" || bad "skippable frames from a pipe -T$T"

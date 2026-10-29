@@ -16,9 +16,11 @@ It started as a fork of [LZ5 v1.5] (itself a LZ4 derivative) and grew into its o
 - **x86 branch filter** — CALL/JMP `rel32` operands are converted to absolute addresses on detected code ranges, only where a trial shows it pays (Silesia `ooffice`, a Windows DLL: 44.4% -> 38.2% at level 15).
 - **Multithreaded command line** — `-T#` runs blocks on a worker pool for compression (the seq levels and `--fast`) and decompression (any frame). The output is identical at any thread count (see [Multithreading](#multithreading)).
 
-Current release: **v1.7.0** ([releases](https://github.com/YadeWira/lz6/releases): static Linux x86-64, win64 and win32 binaries).
+Current release: **v1.7.1** ([releases](https://github.com/YadeWira/lz6/releases): static Linux x86-64, win64 and win32 binaries).
 
-New in v1.7.0, the **first stable release**: the formats are frozen (the seq stream is specified in [lz6_Seq_format.md](lz6_Seq_format.md)), and the test campaign before it fixed four bugs of the `-pre` series (blocks over the format limits that did not decode, an encoder output that depended on the address of the input, a 1-byte over-read of the block decoder, several command-line errors) and the library's `make install`. See [NEWS](NEWS); the history of the `-pre` releases is in the [wiki](https://github.com/YadeWira/lz6/wiki/Home).
+New in v1.7.1: a bug-fix release, with no format or encoder change. The command line no longer empties a file compressed onto itself, ignores `-c` with `-m`, reports a failed last write as success, benchmarks the wrong codec with `-b` or fails on skippable frames from a pipe, and macOS worker threads no longer crash. The licence is MIT (BSD-2 for the files derived from LZ4/LZ5, GPLv2+ for the CLI), and CI runs on every push. Details in [NEWS](NEWS).
+
+v1.7.0 was the **first stable release**: the formats are frozen (the seq stream is specified in [lz6_Seq_format.md](lz6_Seq_format.md)), and the test campaign before it fixed four bugs of the `-pre` series (blocks over the format limits that did not decode, an encoder output that depended on the address of the input, a 1-byte over-read of the block decoder, several command-line errors) and the library's `make install`. See [NEWS](NEWS); the history of the `-pre` releases is in the [wiki](https://github.com/YadeWira/lz6/wiki/Home).
 
 ## Usage
 

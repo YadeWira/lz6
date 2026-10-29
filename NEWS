@@ -1,4 +1,7 @@
-v1.7.1 (in progress)
+v1.7.1
+- BUG-FIX RELEASE. No format change, and the library and the encoder are as in v1.7.0: the compressed bytes are identical (checked against v1.7.0 at every level, 1 and 4 threads).
+  What changed is the command line (the five fixes below, three of them silent data loss or a wrong result with exit 0), a stack size on macOS, the licence (MIT, see LICENSE and
+  lib/LICENSE for the files derived from LZ4/LZ5), the tests (GitHub Actions on Linux x86-64 and arm64, macOS and under ASAN/UBSan: `.github/test.sh`) and the removal of unused code.
 - fix, CLI: `-c` together with `-m` was ignored without a message: `lz6 -c -m a b` wrote a.lz6 and b.lz6 and nothing to stdout (and `-dc -m` likewise). Every file now goes to
   stdout, one frame after the other (the concatenation decodes as one stream), as with a single file. The compressor and decompressor no longer close stdout after the
   first file.
@@ -11,8 +14,9 @@ v1.7.1 (in progress)
   `-0` codec's 52.8% on a 4 MB Silesia piece, where `lz6 -1` gives 33.3%. It benchmarks the same codec as the command line now (the sizes match to the frame's 19 bytes), checks
   that every chunk decodes, and `--hc` selects the classic codecs. `-i0` (no loop, nothing measured) counts as `-i1`, `-b` without a file name is an error, and the compressed buffer size
   no longer overflows an int on files of about 1.9 GB and more.
-- fix, CLI: a skippable frame bigger than the stdio buffer, before or between frames, made decoding from a pipe fail (`cat x.lz6 | lz6 -d`: "Error 43 : cannot skip skippable
-  area"): the area was skipped with a seek, which a pipe does not have. The bytes are read and dropped when the seek fails; from a file nothing changed.
+- fix, CLI: a skippable frame (before or between frames) made decoding from a pipe fail or, on Windows, end silently: `cat x.lz6 | lz6 -d` gave "Error 43 : cannot skip skippable
+  area" on Linux when the area was bigger than the stdio buffer, and on Windows the seek on a pipe reported success without moving, so the next bytes were taken for
+  "unrecognized data after the stream": exit 0 and no output, even for a 10-byte area. The bytes of the area are read and dropped when the input is stdin; from a named file the seek stays.
 - fix, macOS: worker threads (-T) crashed with SIGBUS; their default stack is 512 KB and the seq encoder needs up to 768 KB. They run on 8 MB stacks now.
 - tests: GitHub Actions (Linux x86-64 and arm64, macOS, sanitizers) runs a 96-case round trip, the CLI tests and the install test.
 
