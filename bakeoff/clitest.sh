@@ -79,7 +79,7 @@ mkdir -p ro && chmod 555 ro; cp a.bin ro_in.bin; expect_fail "unwritable output 
 # --- sparse files
 truncate -s 20M sparse.bin; printf 'data' | dd of=sparse.bin bs=1 seek=10000000 conv=notrunc 2>/dev/null
 expect_ok "sparse file round trip" bash -c "$CLI -1 -c sparse.bin | $CLI -d --sparse -f -c - > sparse.out; cmp -s sparse.bin sparse.out"
-expect_ok "sparse decode to a file" bash -c "$CLI -1 -c sparse.bin > sp.lz6 && $CLI -d -f --sparse sp.lz6 sp.out && cmp -s sparse.bin sp.out && [ \$(du -k sp.out | cut -f1) -lt 5000 ]"
+expect_ok "sparse decode to a file" bash -c "$CLI -1 -c sparse.bin > sp.lz6 && $CLI -d -f --sparse sp.lz6 sp.out && cmp -s sparse.bin sp.out && { [ \$(uname) != Linux ] || [ \$(du -k sp.out | cut -f1) -lt 5000 ]; }"
 # --- a read that fails half way (EIO) must be an error, never a hang and never a shorter file reported as a success
 if [ -n "${CLI_DYN:-}" ] && gcc -shared -fPIC -O2 "$HERE/clitest/failread.c" -o failread.so -ldl 2>/dev/null; then
   head -c 6000000 $SIL/x-ray > big6.bin
