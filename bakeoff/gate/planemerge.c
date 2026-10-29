@@ -16,7 +16,7 @@
  * once with -U__SSE2__ to cover the scalar-only merge:
  *   cc -O1 -g -fsanitize=address,undefined -fno-sanitize-recover=undefined -std=gnu11 \
  *      -Ilib -Ilib/entropy bakeoff/gate/planemerge.c lib/lz6.c lib/lz6hc.c \
- *      lib/entropy/lz6seq.c lib/entropy/lz6fse.c lib/entropy/lz6rc.c lib/entropy/lz6huf.c \
+ *      lib/entropy/lz6seq.c lib/entropy/lz6fse.c lib/entropy/lz6huf.c \
  *      -lm -o planemerge && ./planemerge
  * Usage: planemerge [random_cases_per_stride]   (default 3000; exit 0 = pass)
  */

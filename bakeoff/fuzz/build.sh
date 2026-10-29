@@ -6,7 +6,7 @@
 #   for f in regress/block_*.bin; do ./build/fz_block_dec $f; done
 set -e
 HERE="$(cd "$(dirname "$0")" && pwd)"; ROOT="$(cd "$HERE/../.." && pwd)"; OUT="${1:-$HERE/build}"; mkdir -p "$OUT"
-LIB="$ROOT/lib/lz6.c $ROOT/lib/lz6hc.c $ROOT/lib/lz6frame.c $ROOT/lib/xxhash.c $ROOT/lib/entropy/lz6fse.c $ROOT/lib/entropy/lz6rc.c $ROOT/lib/entropy/lz6seq.c $ROOT/lib/entropy/lz6huf.c"
+LIB="$ROOT/lib/lz6.c $ROOT/lib/lz6hc.c $ROOT/lib/lz6frame.c $ROOT/lib/xxhash.c $ROOT/lib/entropy/lz6fse.c $ROOT/lib/entropy/lz6seq.c $ROOT/lib/entropy/lz6huf.c"
 INC="-I$ROOT -I$ROOT/lib -I$ROOT/lib/entropy"
 for t in fz_seq_dec fz_block_dec fz_frame_dec fz_seq_rt fz_frame_rt; do
   clang -g -O1 -fsanitize=fuzzer,address,undefined -fno-sanitize-recover=undefined -fno-omit-frame-pointer -DXXH_NAMESPACE=LZ6_ $INC -pthread "$HERE/$t.c" $LIB -o "$OUT/$t" -lm

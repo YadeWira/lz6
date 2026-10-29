@@ -34,7 +34,7 @@ LZ6=$PWD/programs/lz6
 BS=/tmp/lz6_bench_seq_vs.$$
 make -C programs lz6 >/dev/null 2>&1
 cc -O2 -std=c99 -Wall -I. bakeoff/bench_seq.c \
-    lib/lz6.o lib/lz6hc.o lib/entropy/lz6fse.o lib/entropy/lz6rc.o \
+    lib/lz6.o lib/lz6hc.o lib/entropy/lz6fse.o \
     lib/entropy/lz6seq.o lib/entropy/lz6huf.o -lm -o "$BS"
 trap 'rm -f "$BS"' EXIT
 

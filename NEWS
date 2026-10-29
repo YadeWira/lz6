@@ -1,3 +1,11 @@
+v1.7.1 (in progress)
+- CLI, ratio: the content segmentation no longer cuts a file into segments shorter than 64 MB (it was 4 MB; `LZ6_SEG_MINSEG` still overrides). A cut makes two independent
+  blocks, so matches across it are lost: over 54 files of 8-120 MB of the format-sample corpus the 4 MB cuts cost 0.75% at `-1` (up to 38% on single files, +60% worst against no
+  cuts), and they gained at most 6% on a few (`ecoli.gbk`, a blend file). Silesia through the command line (`-B7`, one file each): `-1` 28.455% -> 28.329%, `-13` 25.145% -> 24.871%
+  (`mozilla` -2.2% and `samba` -1.8% at `-13`), the figures of the library with one block per file; AIT is unchanged (its files are shorter than a segment). Command line only: no
+  format change and no decoder change. A file above 64 MB still splits, so the thread-level speed-up of `-T` at the default block size is bounded by the number of segments (`-B5`
+  and `-B4` are unaffected).
+
 v1.7.0
 - FIRST STABLE RELEASE. The compressed formats (the frame format, the plain block format and the seq stream, including everything the v1.6.x `-pre` series added: the
   v1.6.11 length-code widths, the v1.6.12 byte-delta plane lanes) are frozen: a stream written by v1.6.11-pre or any later version, and by every v1.7.x, decodes with every

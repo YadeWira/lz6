@@ -112,7 +112,7 @@ The encode side is the price: `-13` compresses at about 0.7 MB/s (`-1` at 60 MB/
 
 ## History
 
-lz6 began as a fork of LZ5 v1.5. At one point the AI agent that was developing it was set to compete against **ozip**, another compressor, to see which would win; lz6 won. As a trophy it took parts of ozip's entropy backend and built the **seq engine** (matches found by lz6's own match finder, coded as sequences with FSE/ANS, Huffman and rANS). The engine turned out so strong in ratio that it was hard to make fast, and lz6 was left half abandoned as a curiosity.
+lz6 began as a fork of LZ5 v1.5. At one point the AI agent that was developing it was set to compete against the agent that was developing **ozip** (a compressor since discarded), to see which would win; lz6 won. As a trophy it took parts of ozip's entropy backend and built the **seq engine** (matches found by lz6's own match finder, coded as sequences with FSE/ANS, Huffman and rANS). The engine turned out so strong in ratio that it was hard to make fast, and lz6 was left half abandoned as a curiosity.
 
 It was taken up again to compete with the fast compressors, but that fight went to a separate project, **syc**, which produced the algorithm **sylz** (v2, v3). So lz6 changed course: it stopped chasing the fast compressors and aims at the heavyweights, the LZMA family, zpaq and RAR, with a decoder that is far faster than theirs (see [Benchmarks](#benchmarks)).
 

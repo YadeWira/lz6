@@ -70,7 +70,7 @@ default: liblz6
 all: liblz6
 
 LIBSRC_CORE    = lz6.c lz6hc.c lz6frame.c xxhash.c
-LIBSRC_ENTROPY = entropy/lz6fse.c entropy/lz6rc.c entropy/lz6seq.c entropy/lz6huf.c
+LIBSRC_ENTROPY = entropy/lz6fse.c entropy/lz6seq.c entropy/lz6huf.c
 LIBBUILD       = .lz6build
 
 # Objects, not sources: the static library holds object files (it held the .c files), the shared one is linked from position-independent objects and
@@ -117,7 +117,7 @@ install: liblz6 liblz6.pc
 	@install -m 644 lz6.h $(DESTDIR)$(INCLUDEDIR)/lz6.h
 	@install -m 644 lz6hc.h $(DESTDIR)$(INCLUDEDIR)/lz6hc.h
 	@install -m 644 lz6frame.h $(DESTDIR)$(INCLUDEDIR)/lz6frame.h
-	@install -m 644 entropy/lz6fse.h entropy/lz6rc.h entropy/lz6seq.h entropy/lz6huf.h $(DESTDIR)$(INCLUDEDIR)/
+	@install -m 644 entropy/lz6fse.h entropy/lz6seq.h entropy/lz6huf.h $(DESTDIR)$(INCLUDEDIR)/
 	@echo lz6 static and shared libraries installed
 
 uninstall:
@@ -129,7 +129,7 @@ uninstall:
 	@rm -f $(DESTDIR)$(INCLUDEDIR)/lz6.h
 	@rm -f $(DESTDIR)$(INCLUDEDIR)/lz6hc.h
 	@rm -f $(DESTDIR)$(INCLUDEDIR)/lz6frame.h
-	@rm -f $(DESTDIR)$(INCLUDEDIR)/lz6fse.h $(DESTDIR)$(INCLUDEDIR)/lz6rc.h $(DESTDIR)$(INCLUDEDIR)/lz6seq.h $(DESTDIR)$(INCLUDEDIR)/lz6huf.h
+	@rm -f $(DESTDIR)$(INCLUDEDIR)/lz6fse.h $(DESTDIR)$(INCLUDEDIR)/lz6seq.h $(DESTDIR)$(INCLUDEDIR)/lz6huf.h
 	@echo lz6 libraries successfully uninstalled
 
 endif

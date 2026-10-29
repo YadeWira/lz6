@@ -8,7 +8,7 @@
  *
  * Build (mirrors programs/Makefile's lz6seq_test object set, all -O2):
  *   cc -O2 -std=c99 -I. bakeoff/bench_seq.c \
- *      lib/lz6.o lib/lz6hc.o lib/entropy/lz6fse.o lib/entropy/lz6rc.o \
+ *      lib/lz6.o lib/lz6hc.o lib/entropy/lz6fse.o \
  *      lib/entropy/lz6seq.o lib/entropy/lz6huf.o -lm -o bench_seq
  */
 #define _POSIX_C_SOURCE 199309L

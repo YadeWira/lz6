@@ -9,7 +9,7 @@
  *
  * Usage: mk_legacy_fixture LEVEL INFILE OUTFILE
  * Build: cc -O2 -std=c99 -Ilib bakeoff/mk_legacy_fixture.c lib/lz6.o \
- *          lib/lz6hc.o lib/entropy/lz6fse.o lib/entropy/lz6rc.o \
+ *          lib/lz6hc.o lib/entropy/lz6fse.o \
  *          lib/entropy/lz6seq.o lib/entropy/lz6huf.o -lm -o mk_legacy_fixture
  */
 #include <stdio.h>

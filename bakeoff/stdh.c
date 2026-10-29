@@ -10,7 +10,7 @@
  * decode delta (cycles even came out negative).
  *
  * Build, from a lzbench checkout that already built zstd and lizard ($Z = lz/zstd/lib, $L = lz/lizard):
- *   LZ6="lib/lz6.c lib/lz6hc.c lib/entropy/lz6seq.c lib/entropy/lz6fse.c lib/entropy/lz6rc.c lib/entropy/lz6huf.c"
+ *   LZ6="lib/lz6.c lib/lz6hc.c lib/entropy/lz6seq.c lib/entropy/lz6fse.c lib/entropy/lz6huf.c"
  *   cc -O2 -std=gnu11 -DHAVE_ZSTD -DZSTD_MULTITHREAD=0 -I$Z -I$Z/common -Ilib -Ilib/entropy bakeoff/stdh.c \
  *      $Z/common/*.c $Z/compress/*.c $Z/decompress/*.c $Z/decompress/huf_decompress_amd64.S $LZ6 -o stdh_zstd -lm -lpthread
  *   cc -O2 -std=gnu11 -DHAVE_LIZARD -I$L -Ilib -Ilib/entropy bakeoff/stdh.c \

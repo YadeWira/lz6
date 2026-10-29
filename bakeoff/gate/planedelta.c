@@ -8,7 +8,7 @@
  * from exact-size copies: no crash, no ASAN report.
  * Build with ASAN/UBSan like the other gate tests:
  *   cc -O1 -g -fsanitize=address,undefined -I. -Ilib -Ilib/entropy bakeoff/gate/planedelta.c lib/lz6.c lib/lz6hc.c \
- *      lib/entropy/lz6seq.c lib/entropy/lz6fse.c lib/entropy/lz6rc.c lib/entropy/lz6huf.c -lm -o planedelta && ./planedelta */
+ *      lib/entropy/lz6seq.c lib/entropy/lz6fse.c lib/entropy/lz6huf.c -lm -o planedelta && ./planedelta */
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>

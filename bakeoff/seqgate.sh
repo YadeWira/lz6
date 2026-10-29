@@ -63,7 +63,7 @@ W="${KEEP:-$(mktemp -d "${TMPDIR:-/tmp}/seqgate.XXXXXX")}"
 mkdir -p "$W/set" "$W/asan" "$W/m32" || exit 2
 
 run() { if [ -n "${SEQGATE_CPU:-}" ]; then taskset -c "$SEQGATE_CPU" "$@"; else "$@"; fi; }
-srcs() { echo "$1/lib/lz6.c $1/lib/lz6hc.c $1/lib/entropy/lz6seq.c $1/lib/entropy/lz6fse.c $1/lib/entropy/lz6rc.c $1/lib/entropy/lz6huf.c"; }
+srcs() { echo "$1/lib/lz6.c $1/lib/lz6hc.c $1/lib/entropy/lz6seq.c $1/lib/entropy/lz6fse.c $1/lib/entropy/lz6huf.c"; }
 fail=0
 note() { echo "$1"; case "$1" in FAIL*) fail=1 ;; esac; }
 flat() { tr '\n' ' ' | head -c "$1"; }

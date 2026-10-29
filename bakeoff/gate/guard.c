@@ -8,7 +8,7 @@
  * 4..15) are at most 2% larger than level -2 (row 1: the unguarded encoder gives +2.5% at row 8, +3.1% at row 4, +6.2% at row 7).
  * Build with ASAN/UBSan like the other gate tests:
  *   cc -O1 -g -fsanitize=address,undefined -I. -Ilib -Ilib/entropy bakeoff/gate/guard.c lib/lz6.c lib/lz6hc.c \
- *      lib/entropy/lz6seq.c lib/entropy/lz6fse.c lib/entropy/lz6rc.c lib/entropy/lz6huf.c -lm -o guard && ./guard */
+ *      lib/entropy/lz6seq.c lib/entropy/lz6fse.c lib/entropy/lz6huf.c -lm -o guard && ./guard */
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>

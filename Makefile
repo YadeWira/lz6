@@ -38,7 +38,6 @@ INCLUDEDIR=$(PREFIX)/include
 PRGDIR  = programs
 LZ6DIR  = lib
 
-
 # Define nul output
 ifneq (,$(filter Windows%,$(OS)))
 VOID = nul
@@ -46,8 +45,7 @@ else
 VOID = /dev/null
 endif
 
-
-.PHONY: default all lib lz6programs clean test versionsTest examples
+.PHONY: default all lib lz6programs clean test versionsTest
 
 default: lz6programs
 
@@ -63,7 +61,6 @@ clean:
 	@$(MAKE) -C $(PRGDIR) $@ > $(VOID)
 	@$(MAKE) -C $(LZ6DIR) $@ > $(VOID)
 	@echo Cleaning completed
-
 
 #------------------------------------------------------------------------
 #make install is validated only for Linux, OSX, kFreeBSD and Hurd targets
@@ -95,10 +92,5 @@ staticAnalyze: clean
 armtest: clean
 	$(MAKE) -C $(LZ6DIR) all CC=arm-linux-gnueabi-gcc MOREFLAGS="-Werror"
 	$(MAKE) -C $(PRGDIR) bins CC=arm-linux-gnueabi-gcc MOREFLAGS="-Werror"
-
-examples:
-	$(MAKE) -C $(LZ6DIR)
-	$(MAKE) -C $(PRGDIR) lz6
-	$(MAKE) -C examples test
 
 endif

@@ -19,7 +19,7 @@ build_arch() {
     done
     $CC $BASE -O3 -c lib/xxhash.c -o "$OUT/xxhash_${TAG}.o"
     OBJS="$OBJS $OUT/xxhash_${TAG}.o"
-    for f in lz6fse lz6rc lz6seq lz6huf; do
+    for f in lz6fse lz6seq lz6huf; do
         $CC $BASE -O2 -c lib/entropy/$f.c -o "$OUT/${f}_${TAG}.o"
         OBJS="$OBJS $OUT/${f}_${TAG}.o"
     done

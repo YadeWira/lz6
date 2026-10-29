@@ -1056,19 +1056,6 @@ FORCE_INLINE int LZ6_decompress_generic(
         ip += length; op = cpy;
 
         /* get offset */
-#if 0
-        switch (token>>6)
-        {
-            default: offset = *ip + (((token>>ML_RUN_BITS2)&3)<<8); ip++; break;
-            case 0: offset = MEM_readLE16(ip); ip+=2; break;
-            case 1:
-                if ((token>>5) == 3)
-                    offset = last_off;
-                else // (token>>ML_RUN_BITS2) == 2
-                {    offset = MEM_readLE24(ip); ip+=3; }
-                break;
-        }
-#else 
         if (token>>7)
         {
             offset = *ip + (((token>>ML_RUN_BITS2)&3)<<8); ip++;
@@ -1087,7 +1074,6 @@ FORCE_INLINE int LZ6_decompress_generic(
         {
             offset = last_off;
         }
-#endif
 
         last_off = offset;
         match = op - offset;

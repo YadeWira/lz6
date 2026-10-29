@@ -37,7 +37,7 @@ make -C programs lz6 >/dev/null 2>&1
 BIN=/tmp/lz6_bench_seq.$$
 trap 'rm -f "$BIN"' EXIT
 cc -O2 -std=c99 -Wall -I. $ASAN bakeoff/bench_seq.c \
-    lib/lz6.o lib/lz6hc.o lib/lz6frame.o lib/xxhash.o lib/entropy/lz6fse.o lib/entropy/lz6rc.o \
+    lib/lz6.o lib/lz6hc.o lib/lz6frame.o lib/xxhash.o lib/entropy/lz6fse.o \
     lib/entropy/lz6seq.o lib/entropy/lz6huf.o -lm -o "$BIN"
 
 FILES=""

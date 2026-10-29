@@ -21,7 +21,7 @@ index b98f990..dcc2c92 100644
 +LZ6_INC = -I$(LZ6_DIR) -I$(LZ6_DIR)/entropy -DXXH_NAMESPACE=LZ6_
 +LZ6_FILES  = $(LZ6_DIR)/lz6.o $(LZ6_DIR)/lz6hc.o $(LZ6_DIR)/lz6frame.o $(LZ6_DIR)/xxhash.o
 +# The seq entropy coders (fse/seq/huf) miscompile under -O3 -> build them at -O2.
-+LZ6_FILES += $(LZ6_DIR)/entropy/lz6fse.o $(LZ6_DIR)/entropy/lz6rc.o $(LZ6_DIR)/entropy/lz6seq.o $(LZ6_DIR)/entropy/lz6huf.o
++LZ6_FILES += $(LZ6_DIR)/entropy/lz6fse.o $(LZ6_DIR)/entropy/lz6seq.o $(LZ6_DIR)/entropy/lz6huf.o
 +
 +$(LZ6_DIR)/%.o: $(LZ6_DIR)/%.c
 +	@$(MKDIR) $(dir $@)

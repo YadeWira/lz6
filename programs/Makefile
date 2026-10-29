@@ -46,7 +46,7 @@ CPPFLAGS := -I$(LZ6DIR) -DXXH_NAMESPACE=LZ6_
 FLAGS    := $(CFLAGS) $(CPPFLAGS) $(WFLAGS) $(LDFLAGS) $(MOREFLAGS)
 # 32-bit seq codec objects: the *_32 targets compile everything else in one
 # -O3 command line, and the seq codec miscompiles at -O3
-ENTROPY32 := lz6fse_32.o lz6rc_32.o lz6seq_32.o lz6huf_32.o
+ENTROPY32 := lz6fse_32.o lz6seq_32.o lz6huf_32.o
 
 
 # Define *.exe as extension for Windows systems
@@ -78,28 +78,25 @@ bins: lz6 fullbench frametest datagen
 
 all: bins m32
 
-lz6: $(LZ6DIR)/lz6.o $(LZ6DIR)/lz6hc.o $(LZ6DIR)/lz6frame.o $(LZ6DIR)/xxhash.o $(LZ6DIR)/entropy/lz6fse.o $(LZ6DIR)/entropy/lz6rc.o $(LZ6DIR)/entropy/lz6seq.o $(LZ6DIR)/entropy/lz6huf.o bench.o lz6io.o lz6cli.o
+lz6: $(LZ6DIR)/lz6.o $(LZ6DIR)/lz6hc.o $(LZ6DIR)/lz6frame.o $(LZ6DIR)/xxhash.o $(LZ6DIR)/entropy/lz6fse.o $(LZ6DIR)/entropy/lz6seq.o $(LZ6DIR)/entropy/lz6huf.o bench.o lz6io.o lz6cli.o
 	$(CC) $(FLAGS) $^ -o $@$(EXT) -lm
 
-lz6seq_test: $(LZ6DIR)/lz6.o $(LZ6DIR)/lz6hc.o $(LZ6DIR)/entropy/lz6fse.o $(LZ6DIR)/entropy/lz6rc.o $(LZ6DIR)/entropy/lz6seq.o $(LZ6DIR)/entropy/lz6huf.o lz6seq_test.o
+lz6seq_test: $(LZ6DIR)/lz6.o $(LZ6DIR)/lz6hc.o $(LZ6DIR)/entropy/lz6fse.o $(LZ6DIR)/entropy/lz6seq.o $(LZ6DIR)/entropy/lz6huf.o lz6seq_test.o
 	$(CC) $(FLAGS) $^ -o $@$(EXT) -lm
 
-seqframetest: $(LZ6DIR)/lz6.o $(LZ6DIR)/lz6hc.o $(LZ6DIR)/lz6frame.o $(LZ6DIR)/xxhash.o $(LZ6DIR)/entropy/lz6fse.o $(LZ6DIR)/entropy/lz6rc.o $(LZ6DIR)/entropy/lz6seq.o $(LZ6DIR)/entropy/lz6huf.o seqframetest.o
-	$(CC) $(FLAGS) $^ -o $@$(EXT) -lm
-
-blockwalk: $(LZ6DIR)/lz6.o $(LZ6DIR)/lz6hc.o $(LZ6DIR)/xxhash.o $(LZ6DIR)/entropy/lz6fse.o $(LZ6DIR)/entropy/lz6rc.o $(LZ6DIR)/entropy/lz6seq.o $(LZ6DIR)/entropy/lz6huf.o blockwalk.o
+seqframetest: $(LZ6DIR)/lz6.o $(LZ6DIR)/lz6hc.o $(LZ6DIR)/lz6frame.o $(LZ6DIR)/xxhash.o $(LZ6DIR)/entropy/lz6fse.o $(LZ6DIR)/entropy/lz6seq.o $(LZ6DIR)/entropy/lz6huf.o seqframetest.o
 	$(CC) $(FLAGS) $^ -o $@$(EXT) -lm
 
 lz6_32: $(LZ6DIR)/lz6.c $(LZ6DIR)/lz6hc.c $(LZ6DIR)/lz6frame.c $(LZ6DIR)/xxhash.c bench.c lz6io.c lz6cli.c $(ENTROPY32)
 	$(CC) -m32 $(FLAGS) $^ -o $@$(EXT) -lm
 
-fullbench: $(LZ6DIR)/lz6.o $(LZ6DIR)/lz6hc.o $(LZ6DIR)/lz6frame.o $(LZ6DIR)/xxhash.o $(LZ6DIR)/entropy/lz6fse.o $(LZ6DIR)/entropy/lz6rc.o $(LZ6DIR)/entropy/lz6seq.o $(LZ6DIR)/entropy/lz6huf.o fullbench.o
+fullbench: $(LZ6DIR)/lz6.o $(LZ6DIR)/lz6hc.o $(LZ6DIR)/lz6frame.o $(LZ6DIR)/xxhash.o $(LZ6DIR)/entropy/lz6fse.o $(LZ6DIR)/entropy/lz6seq.o $(LZ6DIR)/entropy/lz6huf.o fullbench.o
 	$(CC) $(FLAGS) $^ -o $@$(EXT) -lm
 
 fullbench32: $(LZ6DIR)/lz6.c $(LZ6DIR)/lz6hc.c $(LZ6DIR)/lz6frame.c $(LZ6DIR)/xxhash.c $(ENTROPY32) fullbench.c
 	$(CC) -m32 $(FLAGS) $^ -o $@$(EXT) -lm
 
-frametest: $(LZ6DIR)/lz6frame.o $(LZ6DIR)/lz6.o $(LZ6DIR)/lz6hc.o $(LZ6DIR)/xxhash.o $(LZ6DIR)/entropy/lz6fse.o $(LZ6DIR)/entropy/lz6rc.o $(LZ6DIR)/entropy/lz6seq.o $(LZ6DIR)/entropy/lz6huf.o frametest.c
+frametest: $(LZ6DIR)/lz6frame.o $(LZ6DIR)/lz6.o $(LZ6DIR)/lz6hc.o $(LZ6DIR)/xxhash.o $(LZ6DIR)/entropy/lz6fse.o $(LZ6DIR)/entropy/lz6seq.o $(LZ6DIR)/entropy/lz6huf.o frametest.c
 	$(CC) $(FLAGS) $^ -o $@$(EXT) -lm
 
 frametest32: $(LZ6DIR)/lz6frame.c $(LZ6DIR)/lz6.c $(LZ6DIR)/lz6hc.c $(LZ6DIR)/xxhash.c $(ENTROPY32) frametest.c
