@@ -4,6 +4,9 @@ v1.7.1 (in progress)
   first file.
 - fix, CLI: `lz6 -f file file` (or a hard link or symlink to the input as the output) emptied the input before reading it: a 2 MB file came out as 15 bytes with exit 0, and
   `lz6 -d -f x.lz6 x.lz6` left an empty file. The CLI refuses now (error 14) and leaves the input as it was.
+- fix, CLI: a write error on the last bytes of the output was ignored: the stdio buffer is flushed only when the file is closed, and that result was not checked, so a full disk
+  (or a file size limit) could end a compression or a decompression with exit 0 and a file a few bytes short (an .lz6 without its end mark, or a restored file cut short).
+  Errors 39 (compress) and 77 (decompress) now; stdout is flushed and checked as well.
 - fix, macOS: worker threads (-T) crashed with SIGBUS; their default stack is 512 KB and the seq encoder needs up to 768 KB. They run on 8 MB stacks now.
 - tests: GitHub Actions (Linux x86-64 and arm64, macOS, sanitizers) runs a 96-case round trip, the CLI tests and the install test.
 

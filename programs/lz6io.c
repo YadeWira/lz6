@@ -804,7 +804,9 @@ static int LZ6IO_compressFilename_extRess(cRess_t ress, const char* srcFileName,
 
     /* Release files */
     if (srcFile != stdin) fclose (srcFile);
-    if (dstFile != stdout) fclose (dstFile); else fflush (dstFile);   /* stdout stays open: -c with several files */
+    /* stdout stays open (-c with several files). The last bytes sit in the stdio buffer until here: a full disk
+     * shows up only now, and it is an error, not a shorter file */
+    if ((dstFile != stdout ? fclose (dstFile) : fflush (dstFile)) != 0) EXM_THROW(39, "Write error : cannot finish writing the output");
 
     /* Final Status */
     DISPLAYLEVEL(2, "\r%79s\r", "");
@@ -1382,7 +1384,7 @@ static int LZ6IO_decompressFile_extRess(dRess_t ress, const char* input_filename
 
     /* Close */
     if (finput != stdin) fclose(finput);
-    if (foutput != stdout) fclose(foutput); else fflush(foutput);
+    if ((foutput != stdout ? fclose(foutput) : fflush(foutput)) != 0) EXM_THROW(77, "Write error : cannot finish writing the decoded output");
 
     return 0;
 }

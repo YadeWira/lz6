@@ -50,6 +50,13 @@ cp "$W/in/text" "$W/same"; cp "$W/in/text" "$W/same.0"; ln "$W/same" "$W/same.ha
 "$CLI" -1 -f -q "$W/same" "$W/same.hard" 2>/dev/null && [ -e "$W/same.hard" ] && bad "compress over a link to its input"
 cmp -s "$W/same" "$W/same.0" || bad "input changed after the refused overwrite"
 
+# a write that fails at the very end (the last bytes sit in the stdio buffer until the close) is an error too
+if [ -w /dev/full ]; then
+  "$CLI" -1 -q -c "$W/in/one" > /dev/full 2>/dev/null && bad "compress to a full disk reported success"
+  "$CLI" -1 -q "$W/in/one" "$W/full.lz6"; "$CLI" -d -q -c "$W/full.lz6" > /dev/full 2>/dev/null && bad "decode to a full disk reported success"
+  "$CLI" -d -f -q "$W/full.lz6" /dev/full 2>/dev/null && bad "decode into /dev/full reported success"
+fi
+
 # the command-line checks: stand-ins for the Silesia files xml, mr and x-ray
 mkdir -p "$W/sil"; cp "$W/in/text" "$W/sil/xml"; cp "$W/in/binary" "$W/sil/mr"
 cat "$W/in/samples" "$W/in/samples" "$W/in/samples" "$W/in/samples" > "$W/sil/x-ray"
