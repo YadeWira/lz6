@@ -57,6 +57,15 @@ if [ -w /dev/full ]; then
   "$CLI" -d -f -q "$W/full.lz6" /dev/full 2>/dev/null && bad "decode into /dev/full reported success"
 fi
 
+# -b measures what the levels compress with: its sizes match the command line's (they were the classic codec's, 52.8% at -1)
+head -c 400000 "$W/in/text" > "$W/bm.in"
+for lv in -1 -5 --fast=2; do
+  bsz=$("$CLI" -b -i1 $lv "$W/bm.in" 2>&1 | tr '\r' '\n' | grep -a -E ' -> +[0-9]+ \(' | tail -1 | sed -E 's/.*-> *([0-9]+) .*/\1/')
+  csz=$("$CLI" $lv -c "$W/bm.in" | wc -c)
+  [ -n "$bsz" ] && [ "$(( csz - bsz ))" -ge 0 ] && [ "$(( csz - bsz ))" -le 64 ] || bad "-b $lv size $bsz against the command line's $csz"
+done
+"$CLI" -b -i1 2>/dev/null && bad "-b without a file name reported success"
+
 # the command-line checks: stand-ins for the Silesia files xml, mr and x-ray
 mkdir -p "$W/sil"; cp "$W/in/text" "$W/sil/xml"; cp "$W/in/binary" "$W/sil/mr"
 cat "$W/in/samples" "$W/in/samples" "$W/in/samples" "$W/in/samples" > "$W/sil/x-ray"

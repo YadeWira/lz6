@@ -66,6 +66,7 @@ static int LZ6_compress_local(const char* src, char* dst, int srcSize, int dstSi
 #define DEFAULTCOMPRESSOR COMPRESSOR0
 
 #include "xxhash.h"
+#include "entropy/lz6seq.h"   /* the seq engine: what -1..-13 and --fast compress with */
 
 
 /**************************************
@@ -124,7 +125,7 @@ struct chunkParameters
 struct compressionParameters
 {
     int (*compressionFunction)(const char* src, char* dst, int srcSize, int dstSize, int cLevel);
-    int (*decompressionFunction)(const char* src, char* dst, int dstSize);
+    int (*decompressionFunction)(const char* src, int srcSize, char* dst, int dstSize);   /* returns the decoded size, < 0 on error */
 };
 
 
@@ -140,12 +141,14 @@ struct compressionParameters
 static int chunkSize = DEFAULT_CHUNKSIZE;
 static int nbIterations = NBLOOPS;
 static int BMK_pause = 0;
+static int BMK_classic = 0;   /* --hc: the classic block codecs, not the seq engine */
 
 void BMK_setBlocksize(int bsize) { chunkSize = bsize; }
+void BMK_setClassic(int yes) { BMK_classic = (yes != 0); }
 
 void BMK_setNbIterations(int nbLoops)
 {
-    nbIterations = nbLoops;
+    nbIterations = nbLoops < 1 ? 1 : nbLoops;   /* 0 loops would measure nothing */
     DISPLAY("- %i iterations -\n", nbIterations);
 }
 
@@ -155,6 +158,22 @@ void BMK_setPause(void) { BMK_pause = 1; }
 /*********************************************************
 *  Private functions
 **********************************************************/
+
+/* the seq engine, with the CLI's level numbers (1..13, -1 and -2 for --fast) */
+static int BMK_compressSeq(const char* src, char* dst, int srcSize, int dstSize, int clevel)
+{
+    return (int)LZ6_compress_seq(src, (size_t)srcSize, dst, (size_t)dstSize, clevel);
+}
+static int BMK_decompressSeq(const char* src, int srcSize, char* dst, int dstSize)
+{
+    const size_t r = LZ6_decompress_seq(src, (size_t)srcSize, dst, (size_t)dstSize);
+    return r == (size_t)dstSize ? dstSize : -1;
+}
+static int BMK_decompressFast(const char* src, int srcSize, char* dst, int dstSize)
+{
+    (void)srcSize;
+    return LZ6_decompress_fast(src, dst, dstSize) < 0 ? -1 : dstSize;
+}
 
 #if defined(BMK_LEGACY_TIMER)
 
@@ -245,6 +264,7 @@ int BMK_benchFiles(const char** fileNamesTable, int nbFiles, int cLevel)
   char* orig_buff;
   struct compressionParameters compP;
   int cfunctionId;
+  const int useSeq = (cLevel != 0 && !BMK_classic);
 
   U64 totals = 0;
   U64 totalz = 0;
@@ -253,7 +273,7 @@ int BMK_benchFiles(const char** fileNamesTable, int nbFiles, int cLevel)
 
 
   /* Init */
-  if (cLevel <= 3) cfunctionId = 0; else cfunctionId = 1;
+  if (cLevel <= 3) cfunctionId = 0; else cfunctionId = 1;   /* classic codecs only */
   switch (cfunctionId)
   {
 #ifdef COMPRESSOR0
@@ -264,7 +284,8 @@ int BMK_benchFiles(const char** fileNamesTable, int nbFiles, int cLevel)
 #endif
   default : compP.compressionFunction = DEFAULTCOMPRESSOR;
   }
-  compP.decompressionFunction = LZ6_decompress_fast;
+  compP.decompressionFunction = BMK_decompressFast;
+  if (useSeq) { compP.compressionFunction = BMK_compressSeq; compP.decompressionFunction = BMK_decompressSeq; }
 
   /* Loop for each file */
   while (fileIdx<nbFiles)
@@ -276,7 +297,7 @@ int BMK_benchFiles(const char** fileNamesTable, int nbFiles, int cLevel)
       int nbChunks;
       int maxCompressedChunkSize;
       size_t readSize;
-      char* compressedBuffer; int compressedBuffSize;
+      char* compressedBuffer; size_t compressedBuffSize;
       struct chunkParameters* chunkP;
       U32 crcOrig;
 
@@ -300,8 +321,8 @@ int BMK_benchFiles(const char** fileNamesTable, int nbFiles, int cLevel)
       chunkP = (struct chunkParameters*) malloc(((benchedSize / (size_t)chunkSize)+1) * sizeof(struct chunkParameters));
       orig_buff = (char*)malloc((size_t)benchedSize);
       nbChunks = (int) ((int)benchedSize / chunkSize) + 1;
-      maxCompressedChunkSize = LZ6_compressBound(chunkSize);
-      compressedBuffSize = nbChunks * maxCompressedChunkSize;
+      maxCompressedChunkSize = LZ6_compressBound(chunkSize) + (useSeq ? 65536 : 0);   /* the seq engine's guarantee: bound + 64 KB */
+      compressedBuffSize = (size_t)nbChunks * (size_t)maxCompressedChunkSize;
       compressedBuffer = (char*)malloc((size_t)compressedBuffSize);
 
       if (!orig_buff || !compressedBuffer)
@@ -355,6 +376,7 @@ int BMK_benchFiles(const char** fileNamesTable, int nbFiles, int cLevel)
         double fastestC = 100000000., fastestD = 100000000.;
         double ratio=0.;
         U32 crcCheck=0;
+        int decodeFailed = 0;
 
         DISPLAY("\r%79s\r", "");
         for (loopNb = 1; loopNb <= nbIterations; loopNb++)
@@ -395,7 +417,7 @@ int BMK_benchFiles(const char** fileNamesTable, int nbFiles, int cLevel)
           while(BMK_GetMilliSpan(milliTime) < TIMELOOP)
           {
             for (chunkNb=0; chunkNb<nbChunks; chunkNb++)
-                chunkP[chunkNb].compressedSize = LZ6_decompress_fast(chunkP[chunkNb].compressedBuffer, chunkP[chunkNb].origBuffer, chunkP[chunkNb].origSize);
+                if (compP.decompressionFunction(chunkP[chunkNb].compressedBuffer, chunkP[chunkNb].compressedSize, chunkP[chunkNb].origBuffer, chunkP[chunkNb].origSize) < 0) decodeFailed = 1;
             nbLoops++;
           }
           milliTime = BMK_GetMilliSpan(milliTime);
@@ -406,6 +428,7 @@ int BMK_benchFiles(const char** fileNamesTable, int nbFiles, int cLevel)
 
           /* CRC Checking */
           crcCheck = XXH32(orig_buff, (unsigned int)benchedSize,0);
+          if (decodeFailed) { DISPLAY("\n!!! WARNING !!! %14s : decoding failed\n", inFileName); break; }
           if (crcOrig!=crcCheck) { DISPLAY("\n!!! WARNING !!! %14s : Invalid Checksum : %x != %x\n", inFileName, (unsigned)crcOrig, (unsigned)crcCheck); break; }
         }
 

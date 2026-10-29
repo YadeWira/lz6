@@ -527,6 +527,8 @@ int main(int argc, char** argv)
     /* Check if benchmark is selected */
     if (bench)
     {
+        if (ifnIdx == 0) { DISPLAY("Error : the benchmark needs file names\n"); free((void*)inFileNames); return 1; }
+        BMK_setClassic(forceHC);
         int bmkResult = BMK_benchFiles(inFileNames, ifnIdx, cLevel);
         free((void*)inFileNames);
         return bmkResult;

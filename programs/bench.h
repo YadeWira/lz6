@@ -28,6 +28,7 @@ int BMK_benchFiles(const char** fileNamesTable, int nbFiles, int cLevel);
 
 /* Set Parameters */
 void BMK_setBlocksize(int bsize);
+void BMK_setClassic(int yes);   /* 1 = --hc: benchmark the classic block codecs instead of the seq engine */
 void BMK_setNbIterations(int nbLoops);
 void BMK_setPause(void);
 
