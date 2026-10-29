@@ -672,10 +672,7 @@ static int LZ6IO_compressFilename_extRess(cRess_t ress, const char* srcFileName,
             /* content-segmented: windows of windowSize bytes; a block is
              * closed when a window's byte-entropy diverges from the open
              * segment's profile (or the max block size is reached) */
-            /* A cut makes the two segments independent blocks: matches across it are lost. With 4 MB segments that
-             * cost 0.75% over 54 large files of the format corpus (up to 38%, +1.3% on mozilla and +0.9% on samba),
-             * and the cuts gained at most 6% on a few; from 64 MB the loss is gone (v1.7.1). */
-            size_t minSeg = (size_t)64 MB < (size_t)blockSize ? (size_t)64 MB : blockSize;
+            size_t minSeg = (size_t)4 MB < (size_t)blockSize ? (size_t)4 MB : blockSize;
             if (getenv("LZ6_SEG_MINSEG")) minSeg = (size_t)(atof(getenv("LZ6_SEG_MINSEG")) * 1048576.0);
             unsigned char* const segBuf = (unsigned char*)srcBuffer;
             double threshold = 1.0;    /* H0 cut: |wH0 - sH0|. An H1
