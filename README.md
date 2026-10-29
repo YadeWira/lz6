@@ -2,6 +2,12 @@
 
 **lz6** is a lossless compressor: maximum compression with fast decompression. Since v1.7.0 its formats are stable (see [Status](#status)). It is meant as the successor of LZ4 and LZ5 v1.5, and it competes with [zstd], [lizard] and [misa77].
 
+| Component | Status |
+|---|---|
+| CI | [![CI][ciBadge]][ciLink] |
+| Latest release | [![Release][relBadge]][relLink] |
+| Formats (frame, block, seq stream) | frozen since v1.7.0 |
+
 It started as a fork of [LZ5 v1.5] (itself a LZ4 derivative) and grew into its own codec family:
 
 - **Frame LZ/HC codec** — the classic LZ5-style byte-wise matcher, hardened and tuned.
@@ -159,3 +165,7 @@ How it is tested: the safety gate (`bakeoff/seqgate.sh`: ASAN and UBSan on the d
 [lizard]: https://github.com/inikep/lizard
 [misa77]: https://github.com/welcome-to-the-sunny-side/misa77
 [lzbench]: https://github.com/inikep/lzbench
+[relBadge]: https://img.shields.io/github/v/release/YadeWira/lz6 "Latest release"
+[relLink]: https://github.com/YadeWira/lz6/releases/latest
+[ciBadge]: https://github.com/YadeWira/lz6/actions/workflows/ci.yml/badge.svg "Continuous Integration"
+[ciLink]: https://github.com/YadeWira/lz6/actions/workflows/ci.yml

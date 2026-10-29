@@ -1,0 +1,49 @@
+name: ci
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+# Every job builds the command line and runs .github/test.sh: round trips of generated inputs at
+# every level (one and several threads), the thread-count check and the 77 command-line checks.
+# The compressed bytes are not compared between jobs: the format is frozen, the encoder's output is not.
+
+jobs:
+  linux-x64:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build
+        run: make -C programs lz6
+      - name: Test
+        run: bash .github/test.sh
+      - name: Install test (library, pkg-config file)
+        run: bash bakeoff/installtest.sh
+
+  linux-arm64:
+    runs-on: ubuntu-24.04-arm
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build
+        run: make -C programs lz6
+      - name: Test
+        run: bash .github/test.sh
+
+  macos-arm64:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build
+        run: make -C programs lz6
+      - name: Test
+        run: bash .github/test.sh
+
+  sanitizers:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build with ASAN and UBSan
+        run: make -C programs lz6 CC=gcc MOREFLAGS="-fsanitize=address,undefined -fno-sanitize-recover=undefined -g"
+      - name: Test
+        run: bash .github/test.sh
