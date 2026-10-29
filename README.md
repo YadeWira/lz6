@@ -1,6 +1,6 @@
 # lz6
 
-**lz6** is a lossless compressor: maximum compression with fast decompression. Since v1.7.0 its formats are stable (see [Status](#status)). It is meant as the successor of LZ4 and LZ5 v1.5, and it competes with [zstd], [lizard] and [misa77].
+**lz6** is a lossless compressor: the ratio class of the LZMA family with a decoder an order of magnitude faster. On Silesia, `-13` is within 8% of xz -9 and decodes about 10x faster; on the AIT set it is smaller than xz, lzma and fast-lzma2. It competes with xz / lzma, [fast-lzma2], [uf-lzma2], zpaq and RAR in ratio, and with [zstd], [lizard] and [misa77] in decode speed (see [Benchmarks](#benchmarks)). It is the successor of LZ4 and LZ5 v1.5, and since v1.7.0 its formats are stable (see [Status](#status)).
 
 | Component | Status |
 |---|---|
@@ -79,61 +79,25 @@ Windows (mingw-w64 cross-compile from Linux, or MSVC):
 
 ## Benchmarks
 
-Measured with one harness ([lzbench], one thread, mem-to-mem, per file) on 2x Xeon E5-2697A v4, one core pinned with the machine otherwise idle (load average below 3), on 2026-10-09. lz6 is v1.6.11-pre (the lzbench plugin still labels it 1.6.9-pre) and the competitors (zstd 1.5.7, lizard 2.1, lz5 v1.5, misa77 0.6.0, lz4 1.10.0, memlz 0.2 beta) were run in the same session; the uf-lzma2 row is from the 2026-10-01 session. Speeds of different sessions are not comparable (an idle core boosts higher), so no row here is mixed with older runs. These are single-thread library numbers, not the [Multithreading](#multithreading) ones. The full matrix of the previous release (all levels, plus brotli, xz, zlib and fastlzma2) is in [bakeoff/VS_CODECS.md](bakeoff/VS_CODECS.md), which also has the per-level rows of this tree:
+One thread, memory to memory, per file, on 2x Xeon E5-2697A v4 with one core pinned and the machine otherwise idle (the [lzbench] harness, 2026-10-19; zpaq, zpaqfranz and RAR through their command lines, whole process). The 12 files of Silesia (212 MB) and the 7 files of AIT A, B, C, E, F, G, H (11 MB; file D, glibc `random()` output that lz6 regenerates from its seed, is left out). The competitors are uf-lzma2 v1.6.3, xz (liblzma, `xz -9`), LZMA SDK 26.01 (`lzma -9`), fast-lzma2, zpaq 7.15, zpaqfranz and RAR 7.23 (`-m5`, closed source). The sizes of lz6 are those of v1.7.0 (exact); its decode speed is from the same session (the decoder has not slowed since: see [NEWS](NEWS)).
 
-The per-version comparisons (v1.6.12-pre to v1.7.0, exact decode and encode cycles, per file) are in [NEWS](NEWS) and `bakeoff/V16*_VS_*.md`; the comparison with the LZMA family, zpaq and RAR is in [bakeoff/VS_LZMA_ZPAQ.md](bakeoff/VS_LZMA_ZPAQ.md) (lz6 `-13` decodes 9-13x faster than xz -9 at a size about 2 points larger).
+| codec | Silesia | dec MB/s | AIT (7 files) | dec MB/s |
+|---|---:|---:|---:|---:|
+| **lz6 -13** | **24.87%** | **1,118** | **45.35%** | **1,096** |
+| **lz6 -1** | **28.33%** | **1,070** | **46.64%** | **1,109** |
+| xz -9 (LZMA2) | 23.02% | 115 | 45.92% | 57 |
+| lzma -9 | 23.00% | 88 | 46.00% | 44 |
+| fast-lzma2 -10 | 22.97% | 90 | 45.50% | 40 |
+| uf-lzma2 -10 | 22.97% | 124 | 45.50% | 55 |
+| uf-lzma2 -11 | 22.88% | 123 | 44.13% | 55 |
+| RAR -m5 | 25.07% | 159 (process) | 48.62% | 71 (process) |
+| zpaq -m5 / zpaqfranz -m5 | 18.45% | 0.35 | 40.79% | 0.36 |
 
-**Level labels.** The numbers below were measured with v1.6.11-pre; the labels are v1.6.12-pre's (renumbered: v1.6.11-pre's `-N` is `-(N-2)` for N >= 3, and its `-2` and `-1` are `--fast=1` and `--fast=2`). The two `--fast` rows below are v1.6.11-pre's fast levels (its `-1` and `-2`): v1.6.12-pre's are 0.5 and 1.1 points smaller (`--fast=2` 32.56%, `--fast=1` 30.45% on Silesia) and encode 21-24% slower, see [NEWS](NEWS).
+lz6 `-13` decodes 9-13x faster than the LZMA family on Silesia (19-27x on AIT) at a size about 8% larger (24.87% against 23.02% for xz -9); on AIT it is smaller than xz, lzma, RAR and fast-lzma2 (uf-lzma2 -11 reaches 44.13%). RAR -m5 is level with `-13` on Silesia and 3 points behind on AIT (its decode figure is whole-process wall clock, not comparable with the in-memory ones). zpaq -m5 is 19-26% smaller than the rest and about 3,000x slower to decode. Entry level: `-1` (28.33%) against `xz -1` (27.70%, 17 MB/s encode, 97 decode): 2% bigger, 3x the encode speed and 11x the decode speed.
 
-**Silesia** (212 MB, 12 files)
+Through the command line a file is cut into blocks by content (`-B7` for big files), so the size of a big file can differ from the one-block library figure: with this tree `-13 -B7` gives 25.14% on Silesia (mozilla +3%) and 45.35% on AIT.
 
-| codec | ratio | enc MB/s | dec MB/s |
-|---|---:|---:|---:|
-| uf-lzma2 -11 (asm decoder) | 22.88% | 1.2 | 118 |
-| zstd -19 | 24.96% | 2.8 | 807 |
-| **lz6 -13** | **25.12%** | 0.7 | **1,129** |
-| **lz6 -10** | **25.22%** | 2.9 | **1,144** |
-| zstd -17 | 25.58% | 5.1 | 837 |
-| **lz6 -6** | **26.99%** | 8.4 | **1,051** |
-| zstd -14 | 27.03% | 11.8 | 881 |
-| zstd -12 | 27.33% | 27.8 | 862 |
-| zstd -9 | 27.88% | 54.1 | 857 |
-| lizard -49 | 28.62% | 1.9 | 1,209 |
-| **lz6 -1** | **28.79%** | 65.1 | **1,092** |
-| zstd -6 | 28.89% | 75.8 | 890 |
-| zstd -5 | 29.61% | 102 | 828 |
-| lz5 v1.5 HC -15 | 30.95% | 2.2 | 793 |
-| zstd -3 | 31.21% | 171 | 874 |
-| **lz6 --fast=1** | **31.58%** | 144 | **967** |
-| **lz6 --fast=2** | **33.09%** | 170 | **1,043** |
-| zstd -1 | 34.55% | 360 | 1,207 |
-| lizard -30 | 40.47% | 328 | 1,235 |
-| misa77 -1 | 42.65% | 52.0 | 5,205 |
-| lz4 | 47.60% | 555 | 3,663 |
-| memlz | 59.91% | 1,129 | 1,096 |
-
-**AIT A-H** (13 MB, 8 files)
-
-| codec | ratio | enc MB/s | dec MB/s |
-|---|---:|---:|---:|
-| **lz6 -13** | **38.69%** | 1.9 | **834** |
-| **lz6 -6** | **39.12%** | 11.3 | **811** |
-| **lz6 -1** | **39.59%** | 101 | **898** |
-| **lz6 --fast=1** | **40.29%** | 183 | **896** |
-| **lz6 --fast=2** | **40.61%** | 216 | **898** |
-| uf-lzma2 -11 (asm decoder) | 52.64% | 2.2 | 64.8 |
-| zstd -19 | 55.97% | 5.7 | 1,097 |
-| lizard -49 | 61.21% | 5.8 | 1,560 |
-| lz5 v1.5 HC -15 | 65.49% | 2.1 | 1,014 |
-| misa77 -1 | 73.29% | 52.7 | 7,956 |
-| lz4 | 75.66% | 791 | 5,156 |
-| memlz | 81.64% | 1,910 | 1,713 |
-
-On AIT most of lz6's lead comes from one file, D (glibc `random()` output, regenerated from its seed: 2 MB -> 7 bytes); without D, lz6 -13 is 45.64%, ahead of xz -9 and zstd -19 (48.06%) and behind brotli -11 and LZMA2.
-
-**On Silesia, on one thread, lz6 now decodes faster than the zstd ladder at the same ratio from `--fast=1` up, and still encodes slower.** Against zstd of the same session: lz6 --fast=1 (31.58%) decodes 1.11x faster than zstd -3 (31.21%) and encodes at 0.84x its speed; lz6 -1 (28.79%) is smaller than zstd -6 (28.89%), decodes 1.23x faster and encodes at 0.86x; lz6 -6 (26.99%) matches zstd -14 (27.03%), decodes 1.19x faster and encodes at 0.71x; lz6 -10 (25.22%) is smaller than zstd -17 (25.58%), decodes 1.37x faster and encodes at 0.57x; lz6 -13 (25.12%) is 0.16 points behind zstd -19 (24.96%), decodes 1.40x faster and encodes 3.8x slower. At the fast end zstd -1 (34.55%) still decodes 1.16x faster than lz6 --fast=2 (33.09%, 1.46 points smaller), and lizard -30, misa77 and lz4 decode faster still at much worse ratios. lizard -49 (28.62%) decodes 1.11x faster than lz6 -1 (28.79%) but encodes at 1.9 MB/s; lz6 -3 (27.54%, 33 MB/s encode, 1,144 MB/s decode) is 1.1 points smaller and decodes at 0.95x its speed. lz6 -13 is still ahead of lizard, lz5 and misa77 in ratio. What moved: v1.6.10-pre decoded at 633-684 MB/s on this machine in the same session (levels 1, 3, 8 and 15), 1.65-1.7x slower; its decoder ran about 250 instructions per sequence against 121-136 for zstd's, and now runs 143-163 (xml, dickens, samba at level 3) at about the same IPC (see [NEWS](NEWS)).
-
-Where lz6 leads is in its transforms. On `ooffice` (x86 code) lz6 -13 reaches 38.15% against 42.18% for zstd -19, and lz6 -3 41.23% against 46.00% for zstd -12; on `x-ray` (byte planes) lz6 -3 gets 55.80% against 62.68%; on `sao` it is 0.5 points ahead, and on the other files it is 0.2-1.7 points behind zstd -12 at a similar encode speed. And blocks are independent, so decoding scales with `-T` (see [Multithreading](#multithreading)). See also [bakeoff/COMPETITORS.md](bakeoff/COMPETITORS.md) and the [wiki](https://github.com/YadeWira/lz6/wiki/Benchmarks).
+The encode side is the price: `-13` compresses at about 0.7 MB/s (`-1` at 60 MB/s). The tables against zstd, lizard, misa77, lz4 and lz5 (where lz6 decodes 1.1-1.4x faster than zstd at the same ratio from `--fast=1` up), every level, the per-version comparisons and the per-file figures are in the wiki's [Benchmarks](https://github.com/YadeWira/lz6/wiki/Benchmarks) page, [bakeoff/VS_LZMA_ZPAQ.md](bakeoff/VS_LZMA_ZPAQ.md) and [bakeoff/COMPETITORS.md](bakeoff/COMPETITORS.md). Decoding also scales with `-T` (see [Multithreading](#multithreading)).
 
 ## Documentation
 
@@ -176,6 +140,8 @@ How it is tested: the safety gate (`bakeoff/seqgate.sh`: ASAN and UBSan on the d
 [lizard]: https://github.com/inikep/lizard
 [misa77]: https://github.com/welcome-to-the-sunny-side/misa77
 [lzbench]: https://github.com/inikep/lzbench
+[fast-lzma2]: https://github.com/conor42/fast-lzma2
+[uf-lzma2]: https://github.com/YadeWira/ultra-fast-lzma2
 [relBadge]: https://img.shields.io/github/v/release/YadeWira/lz6 "Latest release"
 [relLink]: https://github.com/YadeWira/lz6/releases/latest
 [ciBadge]: https://github.com/YadeWira/lz6/actions/workflows/ci.yml/badge.svg "Continuous Integration"
