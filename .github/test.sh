@@ -44,6 +44,6 @@ cmp -s "$W/t1.lz6" "$W/t4.lz6" || bad "-T4 writes other bytes than one thread"
 mkdir -p "$W/sil"; cp "$W/in/text" "$W/sil/xml"; cp "$W/in/binary" "$W/sil/mr"
 cat "$W/in/samples" "$W/in/samples" "$W/in/samples" "$W/in/samples" > "$W/sil/x-ray"
 [ "$(uname)" = Linux ] && ldd "$CLI" > /dev/null 2>&1 && export CLI_DYN="$CLI"   # read-error injection needs a dynamic build
-SILESIA="$W/sil" CLITEST_WORK="$W/clitest" bash "$ROOT/bakeoff/clitest.sh" "$CLI" | tail -5 ; [ "${PIPESTATUS[0]}" = 0 ] || bad "clitest"
+SILESIA="$W/sil" CLITEST_WORK="$W/clitest" bash "$ROOT/bakeoff/clitest.sh" "$CLI" | tail -40 ; [ "${PIPESTATUS[0]}" = 0 ] || bad "clitest"
 
 [ $fail -eq 0 ] && echo "PASS" || { echo "FAILED"; exit 1; }

@@ -42,6 +42,20 @@ jobs:
         run: make -C programs lz6
       - name: Test
         run: bash .github/test.sh
+      - name: Diagnose a failure
+        if: failure()
+        run: |
+          head -c 300000 programs/lz6 > /tmp/a.bin
+          for T in 0 1 2 3 4 64; do
+            bad=0
+            for i in 1 2 3 4 5 6 7 8 9 10; do
+              programs/lz6 -1 -T$T -B1 -c /tmp/a.bin > /tmp/a.lz6 2>/tmp/e1
+              programs/lz6 -d -T$T -c < /tmp/a.lz6 > /tmp/a.out 2>/tmp/e2; rc=$?
+              cmp -s /tmp/a.out /tmp/a.bin || { bad=$((bad+1)); echo "T=$T rc=$rc size $(wc -c < /tmp/a.lz6) -> $(wc -c < /tmp/a.out)"; cat /tmp/e1 /tmp/e2 | head -5; }
+            done
+            echo "T=$T: $bad of 10 differ"
+          done
+          programs/lz6 -1 -c /tmp/a.bin > /tmp/s.lz6; programs/lz6 -d -f --sparse /tmp/s.lz6 /tmp/s.out; echo "sparse rc=$?"; ls -ls /tmp/s.out; du -k /tmp/s.out
 
   sanitizers:
     runs-on: ubuntu-latest
