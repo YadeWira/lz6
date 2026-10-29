@@ -66,6 +66,20 @@ for lv in -1 -5 --fast=2; do
 done
 "$CLI" -b -i1 2>/dev/null && bad "-b without a file name reported success"
 
+# skippable frames in the stream: from a file, and from a pipe (which cannot seek: the bytes are read and dropped)
+python3 - "$W/skip.lz6" "$W/in/text" "$CLI" <<'P'
+import sys,struct,subprocess
+out,src,cli=sys.argv[1:4]
+fr=subprocess.run([cli,'-1','-q','-c',src],capture_output=True,check=True).stdout
+sk=lambda n,sz: struct.pack('<II',0x184D2A50+n,sz)+bytes(range(256))*(sz//256)+bytes(sz%256)
+open(out,'wb').write(sk(0,100000)+fr+sk(7,0)+fr+sk(15,70000))
+P
+cat "$W/in/text" "$W/in/text" > "$W/skip.exp"
+for T in 1 4; do
+  "$CLI" -d -q -T$T -c "$W/skip.lz6" | cmp -s - "$W/skip.exp" || bad "skippable frames from a file -T$T"
+  cat "$W/skip.lz6" | "$CLI" -d -q -T$T | cmp -s - "$W/skip.exp" || bad "skippable frames from a pipe -T$T"
+done
+
 # the command-line checks: stand-ins for the Silesia files xml, mr and x-ray
 mkdir -p "$W/sil"; cp "$W/in/text" "$W/sil/xml"; cp "$W/in/binary" "$W/sil/mr"
 cat "$W/in/samples" "$W/in/samples" "$W/in/samples" "$W/in/samples" > "$W/sil/x-ray"

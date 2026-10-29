@@ -284,6 +284,19 @@ unsigned long long LZ6IO_GetFileSize(const char* infilename)
 ** ************************************************************************ */
 
 static int LZ6IO_GetBlockSize_FromBlockId (int id) { /*printf("LZ6IO_GetBlockSize_FromBlockId %d=%d\n", id, (1 << (14 + (2 * id)))); */ return (1 << (14 + (2 * id))); }
+/* skip `size` bytes of the input: a seek, or when the input is a pipe (stdin) read and drop them. 0 = done */
+static int LZ6IO_skipInput(FILE* f, unsigned size)
+{
+    unsigned char buf[16 KB];
+    if (fseek(f, (long)size, SEEK_CUR) == 0) return 0;
+    while (size > 0) {
+        size_t const n = size < sizeof(buf) ? size : sizeof(buf);
+        if (fread(buf, 1, n, f) != n) return 1;
+        size -= (unsigned)n;
+    }
+    return 0;
+}
+
 static int LZ6IO_isSkippableMagicNumber(unsigned int magic) { return (magic & LZ6IO_SKIPPABLEMASK) == LZ6IO_SKIPPABLE0; }
 
 
@@ -1339,7 +1352,7 @@ static unsigned long long selectDecoder(dRess_t ress, FILE* finput, FILE* foutpu
         nbReadBytes = fread(MNstore, 1, 4, finput);
         if (nbReadBytes != 4) EXM_THROW(42, "Stream error : skippable size unreadable");
         size = LZ6IO_readLE32(MNstore);     /* Little Endian format */
-        errorNb = fseek(finput, size, SEEK_CUR);
+        errorNb = LZ6IO_skipInput(finput, size);
         if (errorNb != 0) EXM_THROW(43, "Stream error : cannot skip skippable area");
         return selectDecoder(ress, finput, foutput);
     EXTENDED_FORMAT;

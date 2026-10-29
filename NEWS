@@ -11,6 +11,8 @@ v1.7.1 (in progress)
   `-0` codec's 52.8% on a 4 MB Silesia piece, where `lz6 -1` gives 33.3%. It benchmarks the same codec as the command line now (the sizes match to the frame's 19 bytes), checks
   that every chunk decodes, and `--hc` selects the classic codecs. `-i0` (no loop, nothing measured) counts as `-i1`, `-b` without a file name is an error, and the compressed buffer size
   no longer overflows an int on files of about 1.9 GB and more.
+- fix, CLI: a skippable frame bigger than the stdio buffer, before or between frames, made decoding from a pipe fail (`cat x.lz6 | lz6 -d`: "Error 43 : cannot skip skippable
+  area"): the area was skipped with a seek, which a pipe does not have. The bytes are read and dropped when the seek fails; from a file nothing changed.
 - fix, macOS: worker threads (-T) crashed with SIGBUS; their default stack is 512 KB and the seq encoder needs up to 768 KB. They run on 8 MB stacks now.
 - tests: GitHub Actions (Linux x86-64 and arm64, macOS, sanitizers) runs a 96-case round trip, the CLI tests and the install test.
 
