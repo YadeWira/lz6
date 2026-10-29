@@ -18,9 +18,7 @@ It started as a fork of [LZ5 v1.5] (itself a LZ4 derivative) and grew into its o
 
 Current release: **v1.7.0** ([releases](https://github.com/YadeWira/lz6/releases): static Linux x86-64, win64 and win32 binaries).
 
-New in v1.7.0, the **first stable release** (see [NEWS](NEWS)): the formats are frozen (a stream written by v1.6.11-pre or later decodes with every later version; the seq stream is now specified in [lz6_Seq_format.md](lz6_Seq_format.md)) and a test campaign before it found and fixed four bugs that the `-pre` series had. **Compressor:** a block with a run of more than 16 MiB of literals or a match, or more than 2^24 sequences, gave a stream that did not decode, and `lz6 -1 file` was enough to hit it on a file larger than 16 MiB (40 MB of zeros, compressed ISOs and disk images); the compressed bytes at the chain and tree levels and with `--hc` depended on the address of the source buffer (a second, equally valid stream in about 1% of the runs of the static Linux binary, every run without ASLR). **Decoder:** the plain block decoder read one byte past a 1-byte input. **Command line:** an unanswered overwrite prompt (stdin closed) overwrote the file, a failed read was taken for the end of the file (hang, or a shorter frame reported as success), `-t` accepted any file, `-B8` meant `-8`. Plus the library's `make install` (the `.a` held source files, the `.so` was not linked with libm, the pkg-config file named lz4). For ordinary inputs the compressed bytes are the same as v1.6.15-pre's, and the decode costs 0.5-3.2% fewer cycles than v1.6.11-pre's at the seven levels measured (see [NEWS](NEWS)).
-
-Earlier releases (v1.6.11-pre to v1.6.15-pre: a faster seq decoder, the renumbered levels `-1`..`-13` and `--fast[=N]`, the level guard, byte-delta lanes, every level retuned) are described in [NEWS](NEWS), with the per-file comparisons in `bakeoff/V16*_VS_*.md`.
+New in v1.7.0, the **first stable release**: the formats are frozen (the seq stream is specified in [lz6_Seq_format.md](lz6_Seq_format.md)), and the test campaign before it fixed four bugs of the `-pre` series (blocks over the format limits that did not decode, an encoder output that depended on the address of the input, a 1-byte over-read of the block decoder, several command-line errors) and the library's `make install`. See [NEWS](NEWS); the history of the `-pre` releases is in the [wiki](https://github.com/YadeWira/lz6/wiki/Home).
 
 ## Usage
 
@@ -51,9 +49,9 @@ Silesia.tar (212 MB, one file), `-B5`, wall time, best of 3, one thread on CPU 0
 | `-1` | 4.15 s | 1.32 s | 3.1x | 680 -> 1,260 MB/s |
 | `--fast=2` | 1.82 s | 0.74 s | 2.5x | 638 -> 1,230 MB/s |
 
-The decode column is whole-process wall time for 212 MB written to `/dev/null` (reading the file, page faults on the output, the content checksum), so it is below the in-process library numbers of the [Benchmarks](#benchmarks) section. With v1.6.10-pre in the same session it is 449 -> 1,126 (`-9`), 473 -> 1,094 (`-5`), 481 -> 1,061 (`-3`) and 454 -> 1,050 MB/s (`-1`): the faster decoder gives +38-49% on one thread and +5-20% on 16, where the 0.17 s wall time is mostly fixed costs and the other tenants of the machine.
+The decode column is whole-process wall time (read, page faults, checksum), so it is below the in-process library numbers of [Benchmarks](#benchmarks).
 
-Each thread works on one block, so the speed-up is bounded by the number of blocks and by the biggest one. On large inputs the seq levels default to `-B7` (blocks up to 256MB, chosen for ratio), which makes few, large blocks: on 8 threads the same file gains only 2.4-2.6x. `-B5` or `-B4` make more of them and cost 0.6-0.8 points of ratio (`-1`: 29.00% default, 29.56% `-B5`, 29.82% `-B4`) for 3-5.6x on 8 threads; `-B4` is also faster on a single thread. `--fast=2` is limited by the main thread (~270 MB/s).
+Each thread works on one block, so the speed-up is bounded by the number of blocks: on large inputs the seq levels default to `-B7` (blocks up to 256MB, chosen for ratio), and `-B5` or `-B4` make more blocks for 0.6-0.8 points of ratio and a better speed-up (details in the [wiki](https://github.com/YadeWira/lz6/wiki/Benchmarks)).
 
 - Compression is threaded for the seq levels (`-1` to `-13`, `--fast`) only; `--hc` and `-0` compress on one thread (their output depends on the context that compresses a block). Decompression is threaded for every codec.
 - Memory grows with `-B` and `-T` (about two blocks per thread, plus the compressor's tables).
@@ -105,15 +103,18 @@ The encode side is the price: `-13` compresses at about 0.7 MB/s (`-1` at 60 MB/
 - [lz6_Frame_format.md](lz6_Frame_format.md) — frame format (block codec flags, per-block dispatch)
 - [lz6_Seq_format.md](lz6_Seq_format.md) — the seq stream: one block of the seq engine, every layout, the limits, and what is frozen
 - [bakeoff/COMPETITORS.md](bakeoff/COMPETITORS.md) — competitive analysis vs zstd, lizard, misa77
-- [bakeoff/VS_LZMA_ZPAQ.md](bakeoff/VS_LZMA_ZPAQ.md) — lz6 against xz, lzma, fast-lzma2, uf-lzma2, zpaq, zpaqfranz and RAR (first level and top levels, per file)
-- [bakeoff/V1612_VS_V1611.md](bakeoff/V1612_VS_V1611.md) — v1.6.12-pre against v1.6.11-pre, every row and file (size, speed, exact decode cycles)
-- [bakeoff/V1613_VS_V1612.md](bakeoff/V1613_VS_V1612.md) — v1.6.13-pre against v1.6.12-pre, levels -2 to -7, every file (size, exact decode and encode cycles)
-- [bakeoff/V1614_VS_V1613.md](bakeoff/V1614_VS_V1613.md) — v1.6.14-pre against v1.6.13-pre, levels -9 to -13, every file (size, exact decode and encode cycles)
-- [bakeoff/V1615_VS_V1614.md](bakeoff/V1615_VS_V1614.md) — v1.6.15-pre against v1.6.14-pre, levels -1 and -8, every file (size, exact decode and encode cycles)
+- [bakeoff/VS_LZMA_ZPAQ.md](bakeoff/VS_LZMA_ZPAQ.md) — lz6 against xz, lzma, fast-lzma2, uf-lzma2, zpaq, zpaqfranz and RAR, per file
+- [bakeoff/](bakeoff/) — the per-version comparisons (`V16*_VS_*.md`), the benchmark scripts and the test harnesses
 - [bakeoff/fuzz/README.md](bakeoff/fuzz/README.md), `bakeoff/seqgate.sh`, `bakeoff/clitest.sh`, `bakeoff/installtest.sh` — the libFuzzer harnesses, the safety gate, the command-line tests and the install test
 - [NEWS](NEWS) — what changed in each release, including measured costs and refuted ideas
 - `lib/entropy/lz6seq.h` — the seq codec API
 - [Wiki](https://github.com/YadeWira/lz6/wiki) — architecture, seq stream format, decoder internals, development workflow, roadmap
+
+## History
+
+lz6 began as a fork of LZ5 v1.5. At one point the AI agent that was developing it was set to compete against **ozip**, another compressor, to see which would win; lz6 won. As a trophy it took parts of ozip's entropy backend and built the **seq engine** (matches found by lz6's own match finder, coded as sequences with FSE/ANS, Huffman and rANS). The engine turned out so strong in ratio that it was hard to make fast, and lz6 was left half abandoned as a curiosity.
+
+It was taken up again to compete with the fast compressors, but that fight went to a separate project, **syc**, which produced the algorithm **sylz** (v2, v3). So lz6 changed course: it stopped chasing the fast compressors and aims at the heavyweights, the LZMA family, zpaq and RAR, with a decoder that is far faster than theirs (see [Benchmarks](#benchmarks)).
 
 ## License
 
@@ -129,11 +130,11 @@ The library is MIT and BSD (permissive). The `lz6` command-line program links th
 
 ## Status
 
-**Stable since v1.7.0.** The compressed formats (the frame format, the plain block format and the seq stream) are frozen: a stream written by v1.6.11-pre or any later version decodes with every later version, and the decoder keeps accepting everything the format allows. Streams written before v1.6.11-pre do not decode (that was the last format change without a shim). The shared library's soname is `liblz6.so.1`; the documented API is what `lz6.h`, `lz6hc.h`, `lz6frame.h` and `lz6seq.h` declare (the shared library also exports internal helpers, which are not part of it).
+**Stable since v1.7.0.** The compressed formats (frame, plain block, seq stream) are frozen: a stream written by v1.6.11-pre or any later version decodes with every later version. The shared library's soname is `liblz6.so.1`; the API is what `lz6.h`, `lz6hc.h`, `lz6frame.h` and `lz6seq.h` declare.
 
-What is **not** promised: the compressed bytes an encoder writes for the same input. Levels are retuned between versions, and 32-bit and 64-bit builds write different bytes for some inputs (every stream decodes everywhere; aarch64 and x86-64 write the same bytes). Within one build the output does not depend on the thread count or on where the input sits in memory.
+**Not promised:** the bytes an encoder writes for the same input (levels are retuned between versions; 32-bit and 64-bit builds differ for some inputs; aarch64 and x86-64 agree). Within one build the output does not depend on the thread count or on where the input sits in memory.
 
-How it is tested: the safety gate (`bakeoff/seqgate.sh`: ASAN and UBSan on the decoders, the encoder round trips, mutation fuzzing of both decoder variants against the previous release, the 32-bit build), five libFuzzer harnesses (`bakeoff/fuzz`), MemorySanitizer and ThreadSanitizer runs of the command line, 77 command-line checks (`bakeoff/clitest.sh`, including injected read errors), the streams of v1.6.11 to v1.6.15 (decoded three ways), aarch64 and armhf under qemu, i386 with and without SSE2, a round trip of a 39,778-file corpus of format samples, and Windows 7 SP1 and Windows 10 (win64 and win32, real VMs). Known limits: only little-endian hosts are tested; the "incompressible" shortcut of the seq encoder looks at the first 32 KB of a block; a library call has a setup cost of ~15 ms at levels 3 and up (it matters for tiny inputs).
+Tested with the safety gate (`bakeoff/seqgate.sh`), libFuzzer harnesses, sanitizer runs, command-line and install tests, a round trip of a 39,778-file corpus, and Windows 7/10 VMs; CI runs on Linux x86-64/arm64, macOS and under ASAN/UBSan. What is covered and the known limits are in the [wiki](https://github.com/YadeWira/lz6/wiki/Development).
 
 [LZ5 v1.5]: https://github.com/inikep/lz5
 [zstd]: https://github.com/facebook/zstd
