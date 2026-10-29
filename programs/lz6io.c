@@ -333,6 +333,18 @@ static int LZ6IO_getFiles(const char* input_filename, const char* output_filenam
     }
     else
     {
+#if !defined(_WIN32)
+        /* the output opened for writing empties the input when they are the same file (also a link to it) */
+        if (*pfinput != stdin && output_filename != nulmark)
+        {
+            struct stat si, so;
+            if (stat(input_filename, &si) == 0 && stat(output_filename, &so) == 0 && si.st_dev == so.st_dev && si.st_ino == so.st_ino)
+            {
+                fclose(*pfinput);
+                EXM_THROW(14, "Refusing to write %s over its own input", output_filename);
+            }
+        }
+#endif
         /* Check if destination file already exists */
         *pfoutput=0;
         if (output_filename != nulmark) *pfoutput = fopen( output_filename, "rb" );

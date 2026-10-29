@@ -44,6 +44,12 @@ cmp -s "$W/t1.lz6" "$W/t4.lz6" || bad "-T4 writes other bytes than one thread"
 "$CLI" -1 -c -m "$W/in/text" "$W/in/binary" "$W/in/empty" | "$CLI" -dc | cmp -s - <(cat "$W/in/text" "$W/in/binary" "$W/in/empty") || bad "-c -m to stdout"
 "$CLI" -1 -c -m "$W/in/text" "$W/in/binary" > "$W/m.lz6"; "$CLI" -dc -m "$W/m.lz6" "$W/m.lz6" | cmp -s - <(cat "$W/in/text" "$W/in/binary" "$W/in/text" "$W/in/binary") || bad "-dc -m to stdout"
 
+# the output may not be the input (it would be emptied before it is read), nor a link to it
+cp "$W/in/text" "$W/same"; cp "$W/in/text" "$W/same.0"; ln "$W/same" "$W/same.hard" 2>/dev/null
+"$CLI" -1 -f -q "$W/same" "$W/same" 2>/dev/null && bad "compress over its own input"
+"$CLI" -1 -f -q "$W/same" "$W/same.hard" 2>/dev/null && [ -e "$W/same.hard" ] && bad "compress over a link to its input"
+cmp -s "$W/same" "$W/same.0" || bad "input changed after the refused overwrite"
+
 # the command-line checks: stand-ins for the Silesia files xml, mr and x-ray
 mkdir -p "$W/sil"; cp "$W/in/text" "$W/sil/xml"; cp "$W/in/binary" "$W/sil/mr"
 cat "$W/in/samples" "$W/in/samples" "$W/in/samples" "$W/in/samples" > "$W/sil/x-ray"
