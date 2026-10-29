@@ -1,3 +1,10 @@
+v1.7.1 (in progress)
+- fix, CLI: `-c` together with `-m` was ignored without a message: `lz6 -c -m a b` wrote a.lz6 and b.lz6 and nothing to stdout (and `-dc -m` likewise). Every file now goes to
+  stdout, one frame after the other (the concatenation decodes as one stream), as with a single file. The compressor and decompressor no longer close stdout after the
+  first file.
+- fix, macOS: worker threads (-T) crashed with SIGBUS; their default stack is 512 KB and the seq encoder needs up to 768 KB. They run on 8 MB stacks now.
+- tests: GitHub Actions (Linux x86-64 and arm64, macOS, sanitizers) runs a 96-case round trip, the CLI tests and the install test.
+
 v1.7.0
 - FIRST STABLE RELEASE. The compressed formats (the frame format, the plain block format and the seq stream, including everything the v1.6.x `-pre` series added: the
   v1.6.11 length-code widths, the v1.6.12 byte-delta plane lanes) are frozen: a stream written by v1.6.11-pre or any later version, and by every v1.7.x, decodes with every

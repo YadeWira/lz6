@@ -791,8 +791,8 @@ static int LZ6IO_compressFilename_extRess(cRess_t ress, const char* srcFileName,
     }
 
     /* Release files */
-    fclose (srcFile);
-    fclose (dstFile);
+    if (srcFile != stdin) fclose (srcFile);
+    if (dstFile != stdout) fclose (dstFile); else fflush (dstFile);   /* stdout stays open: -c with several files */
 
     /* Final Status */
     DISPLAYLEVEL(2, "\r%79s\r", "");
@@ -1369,8 +1369,8 @@ static int LZ6IO_decompressFile_extRess(dRess_t ress, const char* input_filename
     DISPLAYLEVEL(2, "Successfully decoded %llu bytes \n", filesize);
 
     /* Close */
-    fclose(finput);
-    fclose(foutput);
+    if (finput != stdin) fclose(finput);
+    if (foutput != stdout) fclose(foutput); else fflush(foutput);
 
     return 0;
 }

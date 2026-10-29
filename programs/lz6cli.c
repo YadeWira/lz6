@@ -588,7 +588,12 @@ int main(int argc, char** argv)
     if (cLevel != 0 && !forceHC) LZ6IO_setBlockCodec(1);
     if (decode)
     {
-      if (multiple_inputs)
+      if (multiple_inputs && forceStdout)   /* -c: every file to stdout, one after the other */
+      {
+        unsigned n; operationResult = 0;
+        for (n=0; n<ifnIdx; n++) operationResult += DEFAULT_DECOMPRESSOR(inFileNames[n], stdoutmark);
+      }
+      else if (multiple_inputs)
         operationResult = LZ6IO_decompressMultipleFilenames(inFileNames, ifnIdx, LZ6_EXTENSION);
       else
         operationResult = DEFAULT_DECOMPRESSOR(input_filename, output_filename);
@@ -597,7 +602,12 @@ int main(int argc, char** argv)
     {
       /* compression is default action */
       {
-        if (multiple_inputs)
+        if (multiple_inputs && forceStdout)   /* -c: every file to stdout, one frame after the other */
+        {
+          unsigned n; operationResult = 0;
+          for (n=0; n<ifnIdx; n++) operationResult += DEFAULT_COMPRESSOR(inFileNames[n], stdoutmark, cLevel);
+        }
+        else if (multiple_inputs)
           operationResult = LZ6IO_compressMultipleFilenames(inFileNames, ifnIdx, LZ6_EXTENSION, cLevel);
         else
           operationResult = DEFAULT_COMPRESSOR(input_filename, output_filename, cLevel);

@@ -40,6 +40,10 @@ echo "round trips: $n"
 "$CLI" -1 -B3 -c "$W/in/text" > "$W/t1.lz6"; "$CLI" -1 -B3 -T4 -c "$W/in/text" > "$W/t4.lz6"
 cmp -s "$W/t1.lz6" "$W/t4.lz6" || bad "-T4 writes other bytes than one thread"
 
+# -c with several files: every frame goes to stdout, one after the other, and they decode as one stream
+"$CLI" -1 -c -m "$W/in/text" "$W/in/binary" "$W/in/empty" | "$CLI" -dc | cmp -s - <(cat "$W/in/text" "$W/in/binary" "$W/in/empty") || bad "-c -m to stdout"
+"$CLI" -1 -c -m "$W/in/text" "$W/in/binary" > "$W/m.lz6"; "$CLI" -dc -m "$W/m.lz6" "$W/m.lz6" | cmp -s - <(cat "$W/in/text" "$W/in/binary" "$W/in/text" "$W/in/binary") || bad "-dc -m to stdout"
+
 # the command-line checks: stand-ins for the Silesia files xml, mr and x-ray
 mkdir -p "$W/sil"; cp "$W/in/text" "$W/sil/xml"; cp "$W/in/binary" "$W/sil/mr"
 cat "$W/in/samples" "$W/in/samples" "$W/in/samples" "$W/in/samples" > "$W/sil/x-ray"
