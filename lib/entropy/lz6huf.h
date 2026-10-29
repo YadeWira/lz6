@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: MIT */
 /*
  * lz6huf.h — static Huffman coding for literals (zstd HUF-style decode)
  *

@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: MIT */
 /*
  * rangecoder.h - Adaptive order-1 range coder for literals.
  *

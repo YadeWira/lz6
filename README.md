@@ -6,7 +6,6 @@
 |---|---|
 | CI | [![CI][ciBadge]][ciLink] |
 | Latest release | [![Release][relBadge]][relLink] |
-| Formats (frame, block, seq stream) | frozen since v1.7.0 |
 
 It started as a fork of [LZ5 v1.5] (itself a LZ4 derivative) and grew into its own codec family:
 
@@ -151,6 +150,18 @@ Where lz6 leads is in its transforms. On `ooffice` (x86 code) lz6 -13 reaches 38
 - [NEWS](NEWS) — what changed in each release, including measured costs and refuted ideas
 - `lib/entropy/lz6seq.h` — the seq codec API
 - [Wiki](https://github.com/YadeWira/lz6/wiki) — architecture, seq stream format, decoder internals, development workflow, roadmap
+
+## License
+
+lz6 started as a fork of LZ5 v1.5, itself a LZ4 derivative, so the tree carries three licenses, by origin:
+
+| Part | License |
+|---|---|
+| lz6's own code: `lib/entropy/` (the seq engine), `programs/lz6mt.h`, `bakeoff/`, `.github/`, the format documents | [MIT](LICENSE), Copyright (c) 2026 Yade Bravo |
+| `lib/` derived from LZ4/LZ5: `lz6.c`, `lz6hc.c`, `lz6frame.c`, `xxhash.c` | BSD 2-Clause, Copyright (c) Yann Collet ([lib/LICENSE](lib/LICENSE)) |
+| `programs/` derived from the LZ4/LZ5 command line: `lz6cli.c`, `lz6io.c`, `bench.c`, `datagen*` | GPL v2 or later ([programs/COPYING](programs/COPYING)) |
+
+The library is MIT and BSD (permissive). The `lz6` command-line program links the GPL-derived files, so the binary is GPL v2 or later.
 
 ## Status
 

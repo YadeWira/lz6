@@ -3,7 +3,7 @@
 #   .github/test.sh [path of the lz6 binary]   (default: programs/lz6, built by `make -C programs lz6`)
 # The inputs are generated here (no corpus is needed); bakeoff/clitest.sh gets stand-ins for the three Silesia files it reads.
 set -u
-ROOT="$(cd "$(dirname "$0")/.." && pwd)"; CLI="${1:-$ROOT/programs/lz6}"
+ROOT="$(cd "$(dirname "$0")/.." && pwd)"; CLI="${1:-$ROOT/programs/lz6}"; CLI="$(cd "$(dirname "$CLI")" && pwd)/$(basename "$CLI")"
 W="$(mktemp -d "${TMPDIR:-/tmp}/lz6ci.XXXXXX")"; trap 'rm -rf "$W"' EXIT
 [ -x "$CLI" ] || { echo "no binary at $CLI"; exit 2; }
 fail=0; bad() { echo "FAIL $1"; fail=1; }

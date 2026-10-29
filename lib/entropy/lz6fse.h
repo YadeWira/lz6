@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: MIT */
 /*
  * fse.h - Finite State Entropy (ANS) entropy coder.
  *

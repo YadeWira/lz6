@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: MIT */
 /*
  * lz6seq.c - Sequence codec: lz6 matcher + FSE entropy (self-contained).
  *

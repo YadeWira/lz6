@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: MIT */
 /*
  * fse.c - Finite State Entropy (range ANS) coder.
  *

@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: MIT */
 /*
  * lz6mt.h - a small ordered worker pool for the lz6 command line.
  *
@@ -120,16 +121,26 @@ static DWORD WINAPI mt_thread_main(LPVOID arg) { mt_worker_loop((struct mt_arg_s
 static void* mt_thread_main(void* arg) { mt_worker_loop((struct mt_arg_s*)arg); return NULL; }
 #endif
 
+/* The seq encoder keeps 512-768 KB on its stack: more than the default of a secondary thread on macOS (512 KB), and close to
+ * Windows' 1 MB. Workers get a stack of their own size (address space only, it is committed as used). */
+#define MT_STACK_SIZE ((size_t)8 << 20)
+
 /* start one more worker; 0 if the system refuses */
 static int mt_spawn(mt_pool_t* p)
 {
     int const i = p->started;
     p->args[i].pool = p; p->args[i].idx = i;
 #ifdef _WIN32
-    p->threads[i] = CreateThread(NULL, 0, mt_thread_main, &p->args[i], 0, NULL);
+    p->threads[i] = CreateThread(NULL, MT_STACK_SIZE, mt_thread_main, &p->args[i], STACK_SIZE_PARAM_IS_A_RESERVATION, NULL);
     if (!p->threads[i]) return 0;
 #else
-    if (pthread_create(&p->threads[i], NULL, mt_thread_main, &p->args[i]) != 0) return 0;
+    {   pthread_attr_t attr; int rc;
+        if (pthread_attr_init(&attr) != 0) return 0;
+        pthread_attr_setstacksize(&attr, MT_STACK_SIZE);   /* if refused, the default size */
+        rc = pthread_create(&p->threads[i], &attr, mt_thread_main, &p->args[i]);
+        pthread_attr_destroy(&attr);
+        if (rc != 0) return 0;
+    }
 #endif
     p->started++;
     return 1;
