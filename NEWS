@@ -1,3 +1,11 @@
+v2.0.1
+- level -1 compresses faster: its row-hash match finder caps the row slots at 2^21 instead of 2^22. Silesia, one thread: 6% less time than
+  v2.0.0 in the library (lzbench 53.0 -> 54.8 MB/s; v1.7.1 52.3), 3-7% less than v1.7.1 through the command line (`silesia.tar`, interleaved
+  runs: -1 4.42 -> 4.28 s, -1 -B5 4.41 -> 4.11 s), for 0.4% of size: -1.21% against v1.7.1 instead of -1.63% (lzbench 27.99%; AIT unchanged).
+  The other levels write the same bytes as v2.0.0; the format is unchanged.
+- The "-1 is 4.5% slower than v1.7.1 through the command line" reading of the v2.0.0 benchmarks was two runs 14 days apart on a shared core:
+  interleaved, v2.0.0 was already 2% faster at -1 (and 15% at -3).
+
 v2.0.0
 - FORMAT 2, SMALLER AND FASTER TO COMPRESS. A new seq block format (format 2, specified in lz6_Seq_format.md) and a new level ladder: every level from
   --fast=2 to -13 is smaller on Silesia than the same level of v1.7.1 (-0.3% to -1.9%; AIT -0.1% to -0.9%) and compresses faster (1% to 51% less time on one thread: -3 27%, -5 48%, -6 43%, -11 51%).

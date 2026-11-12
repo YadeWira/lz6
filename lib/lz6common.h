@@ -408,7 +408,7 @@ static const LZ6HC_parameters LZ6HC_seqParameters[LZ6HC_MAX_CLEVEL+1] =
     {        0,          0,  0,  0,     0,  0,     0,  0, LZ6HC_fast             }, // level 0 - never used
     { MAXD_LOG,   MAXD_LOG, 15,  2,     1,  6,    20,  0, LZ6HC_fast1            }, // level 1   fast1: H15, 1 way (2.0: 2 -> 1, the epochs' cost back), no rep1/rep2, 2 indexed per end (hashLog3 = positions, searchNum = ways, fullSearch = rep3)
     { MAXD_LOG,   MAXD_LOG, 19,  3,     1,  6,    22,  1, LZ6HC_fast1            }, // level 2   fast1: H19, 1 way (2.0: 2 -> 1), rep3, 3 indexed per end, 4 MB window
-    { MAXD_LOG,   MAXD_LOG, 10,  0,     8,  6,    22,  0, LZ6HC_row, LZ6_ROWREP(3, 16) }, // row 3 = -1   2.0: 1.7.1's -1 with 8 candidates
+    { MAXD_LOG,   MAXD_LOG, 10,  0,     8,  6,    21,  0, LZ6HC_row, LZ6_ROWREP(3, 16) }, // row 3 = -1   2.0: 1.7.1's -1 with 8 candidates; 2.0.1: row slots capped at 2^21 (6% faster, 0.4% larger)
     { MAXD_LOG,   MAXD_LOG, 10,  0,    16,  6,    22,  0, LZ6HC_row, LZ6_ROWREP(3, 16) }, // row 4 = -2   2.0: 1.7.1's -1
     { MAXD_LOG,   MAXD_LOG, 10,  0,    16,  5,    22,  1, LZ6HC_row, LZ6_ROWREP(3, 16) }, // row 5 = -3   2.0: 1.7.1's -2
     { MAXD_LOG,   MAXD_LOG, 10,  5,    32,  5,    23,  2, LZ6HC_row              }, // row 6 = -4   2.0: 1.7.1's -3
