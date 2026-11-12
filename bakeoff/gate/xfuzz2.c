@@ -14,7 +14,7 @@ int main(int argc,char**argv){ long N=atol(argv[1]); long ok=0;
   if(kind==0){ int k=1+rnd()%8; for(int j=0;j<k;j++) b[rnd()%n]^=1u<<(rnd()%8); }
   else if(kind==1){ len=rnd()%n; }
   else if(kind==2){ long p=rnd()%n; long l=1+rnd()%64; for(long j=p;j<p+l&&j<n;j++) b[j]=rnd(); }
-  else { b[5+rnd()%(n>64?64:n-5)]^=rnd(); }  /* header region */
+  else if(n>5){ b[5+rnd()%(n-5>64?64:n-5)]^=rnd(); }  /* header region (within the stream: 5 + 64 can pass the end of a 65..68-byte one) */
   uint32_t isz = n>=5 ? (b[1]|b[2]<<8|b[3]<<16|(uint32_t)b[4]<<24) : 0; if(isz>(64u<<20)) isz=rnd()%(1<<20);
   uint8_t* d=malloc(isz?isz:1);
   uint8_t* e=malloc(len?len:1); memcpy(e,b,len);   /* exact-size source: ASAN sees reads past the stream end */

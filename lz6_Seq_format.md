@@ -6,6 +6,8 @@ This is the byte layout of one block produced by `LZ6_compress_seq`, as read by 
 
 As of **v1.7.0 this format is frozen**: every block that v1.6.11-pre or any later version writes decodes with every later version, and the decoder keeps accepting every layout described below (the x86 filter blocks, the plane blocks with and without delta lanes, the stored and PRNG blocks, all literal modes). Blocks written before v1.6.11-pre (which used wider length-code widths) do not decode; that change, in v1.6.11-pre, was the last one without a compatibility shim. History of the `-pre` series: seq v2 in v1.6.4-pre; offset codes and table header revised in v1.6.6-pre; 4-stream Huffman in v1.6.8-pre; the x86 filter block in v1.6.9-pre; the length-code widths of the present table in v1.6.11-pre; delta lanes in v1.6.12-pre (an extension: every earlier stream is unchanged).
 
+**v2.0.0 adds format 2** (block flags bit 5, described in *Format 2* below): lz6 2.0 writes it and decodes every block of both formats; a 1.x decoder does not read format 2 (a 2.0 frame carries version `10` in its FLG byte, which 1.x rejects with `ERROR_headerVersion_wrong`, so it fails cleanly instead of misreading the blocks). Format 1, as described in the sections before *Format 2*, stays frozen.
+
 What the encoder writes for the same input is **not** part of the promise: levels are retuned between versions and builds of different pointer widths (32-bit and 64-bit) choose differently; any stream the format allows decodes.
 
 ## Limits
@@ -40,6 +42,7 @@ Notation:
 | bit 3 set | byte-plane block | see *Plane blocks* below |
 | bit 2 set | PRNG regeneration (tested before bit 0: here bits 0-1 are the byte shift, not the stored flag) | `[seed:2]`. After `srandom(seed)`, byte `i` of the output = `random() >> (8 * (flags & 3))` truncated to a byte, with `random()` glibc's TYPE_3 additive generator (the 310 outputs after seeding discarded). Written by the encoder for a block that matches such an output for a seed 0..65535 at a shift of 0, 8 or 16 bits, and decoded for any shift. |
 | bit 0 set | stored | `isize` raw bytes |
+| bit 5 set | normal seq block, format 2 (since v2.0.0) | see *Format 2* below |
 | otherwise | normal seq block | the sections below, in order |
 
 ## 1. Literals
@@ -93,6 +96,31 @@ The reader first takes the three initial states: ll (`log_ll` bits), of (`log_of
 5. If `n` is not the last sequence: update the states in the order ll, ml, of, each as `newState + read(nbBits)`.
 
 The encoder writes all of this in exact reverse: it runs from the last sequence to the first, encoding the of, ml and ll symbols, then writing the ll, ml and of extras.
+
+## Format 2 (v2.0.0)
+
+A format 2 block (flags `0x20`) has the layout of a normal block with these changes. Its point is that the entropy tables follow the data through the block: a block is cut into *epochs*, each with its own tables, while the matches still reach across the whole block. On Silesia it is 2.0-2.6% smaller than format 1 at every level.
+
+**Counts are LEB128** (7 bits per byte, low group first, bit 7 = more follows) instead of the 255-continuation `vlq`: `lit_count`, every `csize`, and the epoch counts below. (The `vlq` takes one byte per 255: 4 KB for a million literals.)
+
+**Literal sections.** The literal modes are those of format 1, plus:
+
+| lit_mode | name | layout after `lit_count` |
+|---:|---|---|
+| 8 | literal epochs | `[size:leb]` then `[n:leb]` and `n` literal sections (any mode but 8), in order. Their counts add up to `lit_count`; the decoder concatenates them |
+
+Modes 5 and 7 carry a **bit-packed code-length header** instead of `[k:1][256 code lengths]`, read LSB-first: `[k:4]`, then for each symbol 0..255 in order either a `0` bit and an Elias gamma code `g >= 1` for a run of `g` symbols without a code, or a `1` bit and the zigzag (`2d` for `d >= 0`, `-2d-1` for `d < 0`) of the length's difference from the previous coded length (starting at 8) as a Rice code with `k = 1` (unary quotient of 1-bits closed by a 0, then the low bit). Lengths are 1..16. The header ends on a byte boundary and the streams follow; `csize` covers both.
+
+**Sequences.** After `[sc:4]`, when `sc > 0`:
+
+```
+[epochs:leb]  then per epoch: [seqs:leb][ll table][ml table][of table]
+[bits len:4][8 zero pad bytes][backward bitstream]
+```
+
+The epochs' sequence counts are at least 1 and add up to `sc`. Each table is either the byte `0`, meaning *the same table as the previous epoch* (not allowed in the first epoch), or a **bit-packed table header** read LSB-first: `[log:4][k:4][maxSym:8]`, then the normalised counts of symbols `0..maxSym-1` as Rice codes with parameter `k` (a unary quotient of 1-bits closed by a 0, then `k` low bits), each zero count followed by an Elias gamma code `r + 1` for `r` further zero counts. The count of `maxSym` is the rest of `2^log` and must be at least 1. The header ends on a byte boundary. `log` is 5..12 per table and epoch.
+
+The bitstream holds the epochs in order. For each epoch the reader takes the epoch's three initial states (ll, of, ml, with that epoch's logs), then its sequences as in format 1, the last one of the epoch without a state update; the next epoch starts with fresh initial states. The rep stack and the output carry over from one epoch to the next.
 
 ## Sequence semantics
 

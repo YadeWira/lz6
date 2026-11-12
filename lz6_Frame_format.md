@@ -165,9 +165,11 @@ In the tables, bit 7 is highest bit, while bit 0 is lowest.
 
 __Version Number__
 
-2-bits field, must be set to “01”.
+2-bits field: “01”, or “10” (since lz6 v2.0.0) for a frame whose seq blocks may be in seq format 2
+(see [lz6_Seq_format.md](lz6_Seq_format.md)); the flag layout is the same for both.
+lz6 v2.0.0 writes “10” on seq frames and “01” on the others, and reads both;
+lz6 1.x accepts only “01”, so it refuses a 2.0 seq frame (headerVersion_wrong) instead of misreading it.
 Any other value cannot be decoded by this version of the specification.
-Other version numbers will use different flag layouts.
 
 __Block Independence flag__
 
@@ -331,3 +333,5 @@ Version changes
 ---------------
 
 1.0 : based on LZ4 Frame Format Description 1.5.1 (31/03/2015)
+
+2.0 : version “10” for seq frames with format 2 blocks (lz6 v2.0.0)

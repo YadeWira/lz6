@@ -406,21 +406,21 @@ static const LZ6HC_parameters LZ6HC_seqParameters[LZ6HC_MAX_CLEVEL+1] =
      * every step smaller than the one before.
      * windLog, contentLog,  H, H3,  Snum, SL, SuffL, FS, Strategy                   subset ratio / MB/s */
     {        0,          0,  0,  0,     0,  0,     0,  0, LZ6HC_fast             }, // level 0 - never used
-    { MAXD_LOG,   MAXD_LOG, 15,  2,     2,  6,    20,  0, LZ6HC_fast1            }, // level 1   fast1: H15, 2 ways, no rep1/rep2, 2 indexed per end (hashLog3 = positions, searchNum = ways, fullSearch = rep3)
-    { MAXD_LOG,   MAXD_LOG, 19,  3,     2,  6,    22,  1, LZ6HC_fast1            }, // level 2   fast1: H19, 2 ways, rep3, 3 indexed per end, 4 MB window
-    { MAXD_LOG,   MAXD_LOG, 10,  0,    16,  6,    22,  0, LZ6HC_row, LZ6_ROWREP(3, 16) }, // row 3 = -1   v1.6.15: 16 candidates and rep probes (Silesia 28.77% -> 28.33%)
-    { MAXD_LOG,   MAXD_LOG, 10,  0,    16,  5,    22,  1, LZ6HC_row, LZ6_ROWREP(3, 16) }, // row 4 = -2   v1.6.13: 16 candidates and rep probes (Silesia 28.09% -> 27.65%)
-    { MAXD_LOG,   MAXD_LOG, 10,  5,    32,  5,    23,  2, LZ6HC_row              }, // row 5 = -3   v1.6.13: 32 candidates instead of 24 (Silesia 27.45% -> 27.35%)
-    { MAXD_LOG,   MAXD_LOG, 10,  5,    32,  5,    24,  2, LZ6HC_row, LZ6_ROWREP(3, 16) }, // row 6 = -4   v1.6.13: rep probes (Silesia 27.32% -> 27.23%)
-    { MAXD_LOG,   MAXD_LOG, 15, 13,    16,  6,     0,  0, LZ6HC_lowest_price     }, // row 7 = -5   v1.6.13: 16 candidates instead of 8 (Silesia 27.21% -> 26.97%)
-    { MAXD_LOG, MAXD_LOG+1, 23, 16,    10,  4,    48,  0, LZ6HC_optimal_price_bt }, // row 8 = -6   v1.6.13: 10 searches, sufficient length 48 (Silesia 26.90% -> 26.44%)
-    { MAXD_LOG, MAXD_LOG+1, 23, 16,    10,  4,    48,  1, LZ6HC_optimal_price_bt }, // row 9 = -7   v1.6.13: 10 searches, sufficient length 48 (Silesia 26.60% -> 26.08%)
-    { MAXD_LOG, MAXD_LOG+1, 23, 14,    16,  4,    64,  1, LZ6HC_optimal_price_bt }, // row 10 = -8   v1.6.15: sufficient length 64, 14-bit 3-byte hash (Silesia 25.55% -> 25.42%)
-    { MAXD_LOG, MAXD_LOG+1, 23, 12,    32,  4,    64,  1, LZ6HC_optimal_price_bt }, // row 11 = -9   v1.6.14: sufficient length 64, 12-bit 3-byte hash (Silesia 25.33% -> 25.19%)
-    { MAXD_LOG, MAXD_LOG+1, 23, 12,    48,  4,   128,  2, LZ6HC_optimal_price_bt }, // row 12 = -10  v1.6.14: 48 searches, sufficient length 128, 12-bit 3-byte hash (25.09% -> 25.01%)
-    { MAXD_LOG, MAXD_LOG+1, 23, 12,    64,  4,   128,  2, LZ6HC_optimal_price_bt }, // row 13 = -11  v1.6.14: sufficient length 128, 12-bit 3-byte hash (+1 refine; 25.01% -> 24.92%)
-    { MAXD_LOG, MAXD_LOG+1, 23, 12,    64,  4,   128,  2, LZ6HC_optimal_price_bt }, // row 14 = -12  v1.6.14: sufficient length 128, 12-bit 3-byte hash (+2 refine; 24.99% -> 24.90%)
-    { MAXD_LOG, MAXD_LOG+1, 23, 12,    64,  4,   256,  2, LZ6HC_optimal_price_bt }, // row 15 = -13  v1.6.14: sufficient length 256, 12-bit 3-byte hash (+3 refine; 24.98% -> 24.87%)
+    { MAXD_LOG,   MAXD_LOG, 15,  2,     1,  6,    20,  0, LZ6HC_fast1            }, // level 1   fast1: H15, 1 way (2.0: 2 -> 1, the epochs' cost back), no rep1/rep2, 2 indexed per end (hashLog3 = positions, searchNum = ways, fullSearch = rep3)
+    { MAXD_LOG,   MAXD_LOG, 19,  3,     1,  6,    22,  1, LZ6HC_fast1            }, // level 2   fast1: H19, 1 way (2.0: 2 -> 1), rep3, 3 indexed per end, 4 MB window
+    { MAXD_LOG,   MAXD_LOG, 10,  0,     8,  6,    22,  0, LZ6HC_row, LZ6_ROWREP(3, 16) }, // row 3 = -1   2.0: 1.7.1's -1 with 8 candidates
+    { MAXD_LOG,   MAXD_LOG, 10,  0,    16,  6,    22,  0, LZ6HC_row, LZ6_ROWREP(3, 16) }, // row 4 = -2   2.0: 1.7.1's -1
+    { MAXD_LOG,   MAXD_LOG, 10,  0,    16,  5,    22,  1, LZ6HC_row, LZ6_ROWREP(3, 16) }, // row 5 = -3   2.0: 1.7.1's -2
+    { MAXD_LOG,   MAXD_LOG, 10,  5,    32,  5,    23,  2, LZ6HC_row              }, // row 6 = -4   2.0: 1.7.1's -3
+    { MAXD_LOG,   MAXD_LOG, 10,  5,    32,  5,    24,  2, LZ6HC_row, LZ6_ROWREP(3, 16) }, // row 7 = -5   2.0: 1.7.1's -4
+    { MAXD_LOG,   MAXD_LOG, 15, 13,    16,  6,     0,  0, LZ6HC_lowest_price     }, // row 8 = -6   2.0: 1.7.1's -5
+    { MAXD_LOG, MAXD_LOG+1, 23, 16,    10,  4,    48,  0, LZ6HC_optimal_price_bt }, // row 9 = -7   2.0: 1.7.1's -6
+    { MAXD_LOG, MAXD_LOG+1, 23, 14,    16,  4,    48,  1, LZ6HC_optimal_price_bt }, // row 10 = -8   2.0: 1.7.1's -8 with sufficient length 48
+    { MAXD_LOG, MAXD_LOG+1, 23, 14,    16,  4,    64,  1, LZ6HC_optimal_price_bt }, // row 11 = -9  2.0: 1.7.1's -8
+    { MAXD_LOG, MAXD_LOG+1, 23, 12,    32,  4,    64,  1, LZ6HC_optimal_price_bt }, // row 12 = -10  2.0: 1.7.1's -9
+    { MAXD_LOG, MAXD_LOG+1, 23, 12,    48,  4,   128,  2, LZ6HC_optimal_price_bt }, // row 13 = -11  2.0: 1.7.1's -10
+    { MAXD_LOG, MAXD_LOG+1, 23, 12,    64,  4,   128,  2, LZ6HC_optimal_price_bt }, // row 14 = -12  2.0: 1.7.1's -11
+    { MAXD_LOG, MAXD_LOG+1, 23, 12,    64,  4,   128,  2, LZ6HC_optimal_price_bt }, // row 15 = -13  2.0: 1.7.1's -12
 };
 #if defined(__GNUC__)
 #  pragma GCC diagnostic pop

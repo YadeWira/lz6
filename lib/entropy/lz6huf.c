@@ -32,53 +32,46 @@
 
 /* Build code lengths (depth) for a Huffman tree over counts[0..maxSym].
  * Returns the max length, 0 if no symbols. Fills len[]. */
+static int huf_leaf_cmp(const void* x, const void* y)
+{
+    const uint64_t a = *(const uint64_t*)x, b = *(const uint64_t*)y;
+    return a < b ? -1 : a > b;
+}
+
 static int build_lengths(const unsigned* counts, int maxSym, uint8_t* len)
 {
-    int syms[256];
-    int n_syms = 0;
+    /* leaves sorted by (count, symbol), then the two-queue construction: the merged nodes come out in
+     * nondecreasing weight, so the two smallest roots are always at the fronts of the two queues */
+    uint64_t leaf[256];
+    int n = 0;
     for (int i = 0; i <= maxSym; i++)
-        if (counts[i] > 0) syms[n_syms++] = i;
-    if (n_syms == 0) return 0;
-    if (n_syms == 1) { len[syms[0]] = 1; return 1; }
+        if (counts[i] > 0) leaf[n++] = ((uint64_t)counts[i] << 8) | (uint64_t)i;
+    if (n == 0) return 0;
+    if (n == 1) { len[leaf[0] & 255] = 1; return 1; }
+    qsort(leaf, (size_t)n, sizeof(leaf[0]), huf_leaf_cmp);
 
-    unsigned freq[512];
+    uint64_t w[512];          /* weights: leaves 0..n-1, merged nodes n.. */
     int parent[512];
-    for (int i = 0; i < 512; i++) parent[i] = -1;   /* internal nodes too */
-    for (int i = 0; i < n_syms; i++) { freq[i] = counts[syms[i]]; parent[i] = -1; }
-
-    int live[512];
-    for (int i = 0; i < n_syms; i++) live[i] = i;
-    int n = n_syms;
-    int next = n_syms;
-    while (n > 1) {
-        /* two smallest ROOTS among live[0..n) — roots only, so every
-         * node keeps exactly one parent (proper binary tree, Kraft=1) */
-        int a = 0, b = 1;
-        if (freq[live[1]] < freq[live[0]]) { a = 1; b = 0; }
-        for (int i = 2; i < n; i++) {
-            if (freq[live[i]] < freq[live[a]]) { b = a; a = i; }
-            else if (freq[live[i]] < freq[live[b]]) b = i;
+    for (int i = 0; i < n; i++) w[i] = leaf[i] >> 8;
+    int li = 0, qi = n, next = n;
+    for (int k = 0; k < n - 1; k++) {
+        int pick[2];
+        for (int j = 0; j < 2; j++) {
+            if (li < n && (qi >= next || w[li] <= w[qi])) pick[j] = li++;
+            else pick[j] = qi++;
         }
-        int na = live[a], nb = live[b];
-        parent[na] = next;
-        parent[nb] = next;
-        freq[next] = freq[na] + freq[nb];
-        /* na and nb leave the root set; the merged node joins it.
-         * Replace the slot of the larger-index root with the merged
-         * node, then drop the other slot from the end (order matters:
-         * shrink first, then plant). */
-        if (a > b) { int t = a; a = b; b = t; }
-        live[b] = live[--n];   /* a < b: bring the last root into b */
-        live[a] = next++;      /* merged node takes a's slot */
+        w[next] = w[pick[0]] + w[pick[1]];
+        parent[pick[0]] = parent[pick[1]] = next;
+        next++;
     }
-    (void)n;
-
+    /* depths top down: the root is the last node, every parent comes after its children */
+    int depth[512];
+    depth[next - 1] = 0;
+    for (int i = next - 2; i >= 0; i--) depth[i] = depth[parent[i]] + 1;
     int maxd = 0;
-    for (int i = 0; i < n_syms; i++) {
-        int d = 0;
-        for (int p = parent[i]; p >= 0; p = parent[p]) d++;
-        len[syms[i]] = (uint8_t)d;
-        if (d > maxd) maxd = d;
+    for (int i = 0; i < n; i++) {
+        len[leaf[i] & 255] = (uint8_t)depth[i];
+        if (depth[i] > maxd) maxd = depth[i];
     }
     return maxd;
 }

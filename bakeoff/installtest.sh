@@ -11,7 +11,7 @@ out=$(make -s PREFIX=/usr DESTDIR="$ID" install 2>&1); [ $? -eq 0 ] && ok "make 
 for f in usr/include/lz6.h usr/include/lz6hc.h usr/include/lz6frame.h usr/include/lz6seq.h usr/lib/liblz6.a usr/lib/liblz6.so usr/lib/pkgconfig/liblz6.pc; do [ -e "$ID/$f" ] && ok "installed $f" || bad "missing $f"; done
 VER=$(sed -n '/define LZ6_VERSION_MAJOR/s/.*[[:blank:]]\([0-9][0-9]*\).*/\1/p' "$ROOT/lib/lz6.h").$(sed -n '/define LZ6_VERSION_MINOR/s/.*[[:blank:]]\([0-9][0-9]*\).*/\1/p' "$ROOT/lib/lz6.h").$(sed -n '/define LZ6_VERSION_RELEASE/s/.*[[:blank:]]\([0-9][0-9]*\).*/\1/p' "$ROOT/lib/lz6.h")
 ar t "$ID/usr/lib/liblz6.a" | grep -q '\.o$' && ! ar t "$ID/usr/lib/liblz6.a" | grep -q '\.c$' && ok "liblz6.a holds object files" || bad "liblz6.a does not hold objects"
-readelf -d "$ID"/usr/lib/liblz6.so.* 2>/dev/null | grep -q 'SONAME.*liblz6.so.1' && ok "soname liblz6.so.1" || bad "soname"
+readelf -d "$ID"/usr/lib/liblz6.so.* 2>/dev/null | grep -q 'SONAME.*liblz6.so.2' && ok "soname liblz6.so.2" || bad "soname"
 export PKG_CONFIG_PATH="$ID/usr/lib/pkgconfig" PKG_CONFIG_SYSROOT_DIR="$ID"
 [ "$(pkg-config --modversion liblz6 2>&1)" = "$VER" ] && ok "pkg-config version $VER" || bad "pkg-config version: $(pkg-config --modversion liblz6 2>&1) (want $VER)"
 pkg-config --libs liblz6 2>&1 | grep -q -- '-llz6' && ! pkg-config --libs liblz6 2>&1 | grep -q 'lz4' && ok "pkg-config --libs gives -llz6" || bad "pkg-config --libs: $(pkg-config --libs liblz6 2>&1)"

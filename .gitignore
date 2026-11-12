@@ -40,3 +40,5 @@ programs/*.o
 programs/lz6seq_test
 programs/seqframetest
 programs/frametest
+credenciales.md
+handoff.md

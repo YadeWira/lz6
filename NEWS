@@ -1,3 +1,28 @@
+v2.0.0
+- FORMAT 2, SMALLER AND FASTER TO COMPRESS. A new seq block format (format 2, specified in lz6_Seq_format.md) and a new level ladder: every level from
+  --fast=2 to -13 is smaller on Silesia than the same level of v1.7.1 (-0.3% to -1.9%; AIT -0.1% to -0.9%) and compresses faster (1% to 51% less time on one thread: -3 27%, -5 48%, -6 43%, -11 51%).
+  Decoding costs more: 7-13% more time (lzbench, Silesia: -13 1,121 -> 1,039 MB/s, -8 1,112 -> 1,023, -3 1,138 -> 1,011, -1 1,094 -> 966),
+  15% at most on a single file (mr, mozilla); the cost of rebuilding the tables at every epoch. -13 reaches 24.39% on Silesia (24.87%) and
+  44.94% on AIT (45.35%), smaller there than xz -9, lzma -9, fast-lzma2 and uf-lzma2 -10. lz6 2.0 decodes every v1.x stream (the format 1 decoder is unchanged); v1.x cannot read a 2.0 seq stream and says
+  so (the frame carries version 10 in its FLG byte: "Header error : ERROR_headerVersion_wrong", not a misread). The -0 and --hc frames are as before
+  and still read by v1.x. The shared library's soname is liblz6.so.2 (the API is unchanged; a program linked against v1.x keeps writing what v1.x reads).
+- format 2, table epochs: the sequences and the literals of a block are cut into epochs, each with its own entropy tables, where their statistics
+  change (a recursive split on the coded size, header included); the matches still reach across the whole block. On Silesia it is worth 1.7-2.4% at
+  every level. An epoch can keep the previous epoch's table with one byte (no header, and the decoder does not rebuild it), and a cut has to pay for
+  the decoder's table rebuild (512 bits) as well as for its header.
+- format 2, smaller headers: tANS table headers are Rice-coded (-0.17%), the Huffman code lengths are bit-packed instead of 257 bytes (-0.1 to -0.17%,
+  more with literal epochs), and the counts are LEB128 instead of the 255-continuation code, which took one byte per 255: 4 KB per million
+  literals (-0.30%).
+- levels: each level now runs the parser settings of the level below it in v1.7.1 (the epochs pay for the difference and more), except -1 (the
+  row-hash finder with 8 candidates instead of 16), -8 (sufficient length 48 instead of 64) and --fast=1/2 (one hash way instead of two). Levels 11-13
+  take the refinement passes of the level below as well.
+- determinism: the epoch decisions (cuts, table logs, table repeats) are integer (1/65536 bit, an integer log2 table). Made with doubles,
+  they made a 32-bit x87 build on Windows (new threads start at 53-bit precision, the main thread at 64) cut differently with -T than without;
+  the Windows 32-bit test caught it, and the x87 and SSE2 32-bit builds now give the same bytes at every level (270 cases).
+- encoder speed: the Huffman tree is built with the two-queue method (it was quadratic in the number of symbols).
+- tests: the fuzz harness bakeoff/gate/xfuzz2.c no longer writes past a 65-68-byte stream when it mutates its header (a harness bug, found when a
+  format 2 test stream came out at that size).
+
 v1.7.1
 - BUG-FIX RELEASE. No format change, and the library and the encoder are as in v1.7.0: the compressed bytes are identical (checked against v1.7.0 at every level, 1 and 4 threads).
   What changed is the command line (the five fixes below, three of them silent data loss or a wrong result with exit 0), a stack size on macOS, the licence (MIT, see LICENSE and

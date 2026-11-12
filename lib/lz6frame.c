@@ -491,7 +491,9 @@ size_t LZ6F_compressBegin(LZ6F_compressionContext_t compressionContext, void* ds
     headerStart = dstPtr;
 
     /* FLG Byte */
-    *dstPtr++ = (BYTE)(((1 & _2BITS) << 6)    /* Version('01') */
+    /* Version: '10' for seq frames (lz6 2.0 seq blocks, which 1.x cannot read: it rejects the version),
+     * '01' otherwise */
+    *dstPtr++ = (BYTE)((((cctxPtr->prefs.frameInfo.blockCodec == LZ6F_blockCodec_seq) ? 2 : 1) << 6)
         + ((cctxPtr->prefs.frameInfo.blockMode & _1BIT ) << 5)    /* Block mode */
         + ((cctxPtr->prefs.frameInfo.contentChecksumFlag & _1BIT ) << 2)   /* Frame checksum */
         + ((cctxPtr->prefs.frameInfo.contentSize > 0) << 3));   /* Frame content size */
@@ -1007,7 +1009,7 @@ static size_t LZ6F_decodeHeader(LZ6F_dctx_t* dctxPtr, const void* srcVoidPtr, si
     blockSizeID = (BD>>4) & _3BITS;
 
     /* validate */
-    if (version != 1) return (size_t)-LZ6F_ERROR_headerVersion_wrong;        /* Version Number, only supported value */
+    if (version != 1 && version != 2) return (size_t)-LZ6F_ERROR_headerVersion_wrong;   /* 1: lz6 1.x, 2: 2.0 seq frames */
     if (blockChecksumFlag != 0) return (size_t)-LZ6F_ERROR_blockChecksum_unsupported; /* Not supported for the time being */
     if (((FLG>>0)&_2BITS) != 0) return (size_t)-LZ6F_ERROR_reservedFlag_set; /* Reserved bits */
     if (((BD>>7)&_1BIT) != 0) return (size_t)-LZ6F_ERROR_reservedFlag_set;   /* Reserved bit */
