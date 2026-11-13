@@ -84,6 +84,12 @@ if ${CC:-cc} -O1 -I"$ROOT/lib" -I"$ROOT/lib/entropy" -o "$W/decchk" "$SV/decchk.
     nv=$((nv+1))
   done
   [ "$nv" -ge 79 ] || bad "only $nv seq vectors found"
+  # the bytes of every vector are those of the manifest (a checkout that normalises line ends corrupts them)
+  tail -n +2 "$SV/MANIFEST.tsv" | while IFS=$'\t' read -r name sb ob ssha osha rest; do
+    [ "$(sha256sum < "$SV/vectors/$name.seq" | cut -c1-64)" = "$ssha" ] || echo "FAIL vector $name.seq differs from its manifest checksum"
+    [ ! -f "$SV/vectors/$name.orig" ] || [ "$(sha256sum < "$SV/vectors/$name.orig" | cut -c1-64)" = "$osha" ] || echo "FAIL vector $name.orig differs from its manifest checksum"
+  done > "$W/vsum"
+  [ -s "$W/vsum" ] && { cat "$W/vsum"; fail=1; }
   echo "seq vectors: $nv"
   for f in text binary samples noise; do for lv in 1 5 9; do
     "$W/encvec" "$W/in/$f" 0 0 $lv 0x0 0x0 "$W/m.seq" "$W/m.orig" > /dev/null 2>&1 || { bad "encvec $f -$lv, no masks"; continue; }

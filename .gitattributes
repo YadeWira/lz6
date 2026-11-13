@@ -27,3 +27,8 @@ bakeoff/encode_baseline/* binary
 # Windows
 *.bat text eol=crlf
 *.cmd text eol=crlf
+
+# test vectors: exact bytes (bakeoff/seqvec); text normalisation corrupted 42 of them once
+*.seq binary
+*.orig binary
+bakeoff/seqvec/vectors/* binary
