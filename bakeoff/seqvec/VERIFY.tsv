@@ -1,0 +1,81 @@
+name	worktree	v2.0.0	v1.7.1	pyref
+a_1024_epochs	OK 9196	OK 9196	-	OK
+a_all_codes	OK 69816	OK 69816	-	OK
+a_big_offsets	OK 33558752	OK 33558752	-	OK
+a_empty_last_seq	OK 30	OK 30	-	OK
+a_empty_stored	OK 0 (0 is also the error value)	OK 0 (0 is also the error value)	-	OK
+a_huf4_small	OK 1101	OK 1101	-	OK
+a_huf4_tiny	OK 11	OK 11	-	OK
+a_huf_deep	OK 646	OK 646	-	OK
+a_huf_flat	OK 576	OK 576	-	OK
+a_huf_jumps	OK 429	OK 429	-	OK
+a_huf_one_symbol	OK 75000	OK 75000	-	OK
+a_huf_split_runs	OK 530	OK 530	-	OK
+a_last_match	OK 21	OK 21	-	OK
+a_lit8_256	OK 650	OK 650	-	OK
+a_lit8_empty_sec	OK 130	OK 130	-	OK
+a_lit8_mixed	OK 2854	OK 2854	-	OK
+a_lit8_one	OK 250	OK 250	-	OK
+a_lits_only	OK 300	OK 300	-	OK
+a_logs	OK 4469	OK 4469	-	OK
+a_newoff_rep0	OK 81	OK 81	-	OK
+a_offset1_run	OK 100000	OK 100000	-	OK
+a_one_symbol	OK 140	OK 140	-	OK
+a_plane2_flags0	OK 1600	OK 1600	-	OK
+a_plane2_flags1	OK 1600	OK 1600	-	OK
+a_plane2_flags3	OK 1600	OK 1600	-	OK
+a_plane_mixed	OK 6000	OK 6000	-	OK
+a_prng_seed0	OK 3000	OK 3000	-	OK
+a_prng_shift24	OK 3000	OK 3000	-	OK
+a_raw_lits	OK 80	OK 80	-	OK
+a_reps	OK 148	OK 148	-	OK
+a_rice_k	OK 2765	OK 2765	-	OK
+a_sc0_empty	OK 0 (0 is also the error value)	OK 0 (0 is also the error value)	-	OK
+a_table_repeat	OK 4902	OK 4902	-	OK
+a_two_symbols	OK 143	OK 143	-	OK
+a_x86_plane	OK 6000	OK 6000	-	OK
+a_x86_stored	OK 66000	OK 66000	-	OK
+a_zero_runs	OK 2507	OK 2507	-	OK
+e_all_fast1	OK 65536	OK 65536	-	OK
+e_all_fast2	OK 65536	OK 65536	-	OK
+e_all_l13	OK 131072	OK 131072	-	OK
+e_all_l1	OK 65536	OK 65536	-	OK
+e_all_small	OK 20000	OK 20000	-	OK
+e_epochs_repeat	OK 100000	OK 100000	-	OK
+e_lit1	OK 65536	OK 65536	-	OK
+e_lit3	OK 100000	OK 100000	-	OK
+e_lit5	OK 65536	OK 65536	-	OK
+e_lit6	OK 100000	OK 100000	-	OK
+e_lit7	OK 65536	OK 65536	-	OK
+e_lit8_m0m1	OK 100000	OK 100000	-	OK
+e_lit8_m1	OK 100000	OK 100000	-	OK
+e_lit8_m5	OK 100000	OK 100000	-	OK
+e_lit8_m7	OK 100000	OK 100000	-	OK
+e_nomask	OK 65536	OK 65536	-	OK
+e_plane2_delta	OK 60000	OK 60000	-	OK
+e_plane2_G	OK 100000	OK 100000	-	OK
+e_plane2_lit8	OK 131072	OK 131072	-	OK
+e_plane2	OK 60000	OK 60000	-	OK
+e_plane4_delta	OK 100000	OK 100000	-	OK
+e_plane4_E	OK 100000	OK 100000	-	OK
+e_plane4_huf	OK 100000	OK 100000	-	OK
+e_plane4_mr	OK 100000	OK 100000	-	OK
+e_plane4	OK 100000	OK 100000	-	OK
+e_prng_masked	OK 20000	OK 20000	-	OK
+e_prng_s0	OK 20000	OK 20000	-	OK
+e_prng_s16	OK 30000	OK 30000	-	OK
+e_prng_s8	OK 10000	OK 10000	-	OK
+e_stored	OK 4096	OK 4096	-	OK
+e_x86_lit8	OK 196608	OK 196608	-	OK
+e_x86	OK 65536	OK 65536	-	OK
+f1_lit5	OK 20000	OK 20000	OK 20000	OK
+f1_lit6	OK 100000	OK 100000	OK 100000	OK
+f1_lit7_fast	OK 65536	OK 65536	OK 65536	OK
+f1_lit7	OK 65536	OK 65536	OK 65536	OK
+f1_plane2_w16	OK 60002	OK 60002	OK 60002	OK
+f1_plane4_huf	OK 100000	OK 100000	OK 100000	OK
+f1_plane4_w16	OK 60000	OK 60000	OK 60000	OK
+f1_plane4_w32	OK 100000	OK 100000	OK 100000	OK
+f1_prng	OK 10000	OK 10000	OK 10000	OK
+f1_stored	OK 4096	OK 4096	OK 4096	OK
+f1_x86	OK 65536	OK 65536	OK 65536	OK

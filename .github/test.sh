@@ -70,6 +70,30 @@ a=$(bsize -3 "$W/tnb"); b=$(bsize -3 "$W/tn"); c=$(bsize -3 "$W/in/binary")
 for f in u16 nibnoisenib textnoise2 tnb; do for o in -1 -5 -8; do
   "$CLI" $o -c "$W/$f" | "$CLI" -d -c | cmp -s - "$W/$f" || bad "round trip $f $o"
 done; done
+# the seq test vectors (bakeoff/seqvec) decode with this tree, and LZ6_compress_seq_opt keeps to its masks
+LIBSRC="$ROOT/lib/lz6.c $ROOT/lib/lz6hc.c $ROOT/lib/lz6frame.c $ROOT/lib/xxhash.c $ROOT/lib/entropy/lz6fse.c $ROOT/lib/entropy/lz6huf.c $ROOT/lib/entropy/lz6seq.c"
+SV="$ROOT/bakeoff/seqvec"
+if ${CC:-cc} -O1 -I"$ROOT/lib" -I"$ROOT/lib/entropy" -o "$W/decchk" "$SV/decchk.c" $LIBSRC -lm 2> "$W/err" &&
+   ${CC:-cc} -O1 -I"$ROOT/lib" -I"$ROOT/lib/entropy" -o "$W/encvec" "$SV/encvec.c" $LIBSRC -lm 2>> "$W/err" &&
+   ${CC:-cc} -O1 -o "$W/inspect" "$SV/inspect.c" 2>> "$W/err"; then
+  nv=0
+  for s in "$SV"/vectors/*.seq; do
+    o="${s%.seq}.orig"; [ -f "$o" ] || continue
+    "$W/decchk" "$s" "$o" > /dev/null 2>&1 || bad "vector $(basename "$s") does not decode to its original"
+    "$W/inspect" -s "$s" > /dev/null 2>&1 || bad "vector $(basename "$s"): the inspector cannot walk it"
+    nv=$((nv+1))
+  done
+  [ "$nv" -ge 79 ] || bad "only $nv seq vectors found"
+  echo "seq vectors: $nv"
+  for f in text binary samples noise; do for lv in 1 5 9; do
+    "$W/encvec" "$W/in/$f" 0 0 $lv 0x0 0x0 "$W/m.seq" "$W/m.orig" > /dev/null 2>&1 || { bad "encvec $f -$lv, no masks"; continue; }
+    "$W/inspect" -s "$W/m.seq" | grep -q -E 'x86|plane|prng|m[135678]' && bad "$f -$lv with empty masks: $("$W/inspect" -s "$W/m.seq" | cut -c1-120)"
+    "$W/encvec" "$W/in/$f" 0 0 $lv 0x0F 0x20 "$W/m.seq" "$W/m.orig" > /dev/null 2>&1 || { bad "encvec $f -$lv, mode 5 only"; continue; }
+    "$W/inspect" -s "$W/m.seq" | grep -q -E 'm[13678]' && bad "$f -$lv with literal mode 5 only: $("$W/inspect" -s "$W/m.seq" | cut -c1-120)"
+  done; done
+else
+  bad "the seq vector tools do not compile: $(head -c 300 "$W/err")"
+fi
 # the output does not depend on the thread count
 "$CLI" -1 -B3 -c "$W/in/text" > "$W/t1.lz6"; "$CLI" -1 -B3 -T4 -c "$W/in/text" > "$W/t4.lz6"
 cmp -s "$W/t1.lz6" "$W/t4.lz6" || bad "-T4 writes other bytes than one thread"

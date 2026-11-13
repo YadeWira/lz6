@@ -1553,9 +1553,21 @@ static int seq_epoch_cuts(unsigned* const syms[3], const int lgs[3], int n, int*
     return ncut;
 }
 
-/* One literal section: [mode][count:vlq] and the mode's payload. Returns its size, or LITSEC_ERR. */
+/* What the encoder may write (LZ6_compress_seq_opt): `blocks` is a mask of LZ6SEQ_BLOCK_*, `lits` one of LZ6SEQ_LIT(mode) bits.
+ * It travels by pointer down the whole call chain (never a global: two threads may compress with different masks), and
+ * every nesting depth reads the same one: the block inside an x86 block, the blocks of a plane's LZ lanes, the sections
+ * of the literal epochs. With every bit set each test below is true and the encoder is the one of v2.0.2, byte for byte. */
+typedef struct {
+    unsigned blocks;
+    unsigned lits;
+} seq_opt_t;
+#define SEQ_LIT_OK(o, mode) (((o)->lits >> (mode)) & 1u)
+
+/* One literal section: [mode][count:vlq] and the mode's payload. Returns its size, or LITSEC_ERR.
+ * A mode that opt does not allow is not built, so the choice at the end is among the allowed ones (raw always is). */
 #define LITSEC_ERR ((size_t)-1)
-static size_t lit_section_encode(const uint8_t* lits, int lit_count, int level, int fast_lits, uint8_t* out, size_t cap)
+static size_t lit_section_encode(const uint8_t* lits, int lit_count, int level, int fast_lits, const seq_opt_t* opt,
+                                 uint8_t* out, size_t cap)
 {
     uint8_t* p = out;
     if (lit_count > 0) {
@@ -1580,8 +1592,15 @@ static size_t lit_section_encode(const uint8_t* lits, int lit_count, int level, 
          * back to FSE. The old k<=10 gate skipped huffman for most text. */
         /* 4 interleaved streams (lit_mode 7) from LZ6_HUF4_MIN literals:
          * ~12 bytes more, decoded ~4 symbols at a time */
-        const int huf4 = lit_count >= LZ6_HUF4_MIN;
-        if (hhdr > 0 && hk <= 12) {
+        /* restricted: without mode 7 the single stream codes any count; without mode 5 there is no Huffman below
+         * LZ6_HUF4_MIN literals (mode 7 is never written for fewer: a decoder may count on that) */
+        const int huf4 = lit_count >= LZ6_HUF4_MIN && SEQ_LIT_OK(opt, 7);
+        /* one stream's [total_bits:4] holds 32 bits: the single stream (mode 5) is only for a count whose bits fit
+         * whatever the code lengths (<= 16). It mattered once mode 7 could be masked out: 640 MB of literals in one
+         * stream wrapped the count and decoded to wrong bytes. Mode 7's four streams fit for any block (a code no
+         * longer than 8 bits on average, a quarter of at most 2^31 literals each). */
+        const int huf1_fits = (uint64_t)lit_count * 16 <= 0xFFFFFFFFu;
+        if (hhdr > 0 && hk <= 12 && SEQ_LIT_OK(opt, huf4 ? 7 : 5) && (huf4 || huf1_fits)) {
             size_t hstr = huf4
                 ? huf_encode4_8(huf_buf, lits, (size_t)lit_count, huf_buf + hhdr, lit_cap - hhdr)
                 : huf_encode_stream8(huf_buf, lits, (size_t)lit_count, huf_buf + hhdr, lit_cap - hhdr);
@@ -1590,7 +1609,8 @@ static size_t lit_section_encode(const uint8_t* lits, int lit_count, int level, 
         size_t lit_sz = 0;
         /* a length-limited Huffman can lose a few % to order-0 rANS (AIT
          * C/F text): from level 4 try it too; L1-L3 keep the faster one */
-        const int try_o0 = hsz == 0 || (hlim && level >= 4 && !fast_lits);
+        /* (no Huffman at all, because its modes are not allowed, is the first case: order-0 rANS at every level) */
+        const int try_o0 = SEQ_LIT_OK(opt, 1) && (hsz == 0 || (hlim && level >= 4 && !fast_lits));
         if (try_o0 || (lit_count >= 65536 && level >= 4 && !fast_lits)) {
             lit_syms = (unsigned*)malloc((size_t)lit_count * sizeof(unsigned));
             if (!lit_syms) { free(lit_buf); free(huf_buf); return LITSEC_ERR; }
@@ -1618,7 +1638,7 @@ static size_t lit_section_encode(const uint8_t* lits, int lit_count, int level, 
          * L2 W 2.32 -> 1.76 with order-1 on). It is also slow to decode, and at
          * levels 4-7 it was never chosen on Silesia or AIT (identical bytes
          * with it off) while its trial cost ~5% of the encode time. */
-        if (lit_count >= 65536 && level >= 8 && !fast_lits) {
+        if (lit_count >= 65536 && level >= 8 && !fast_lits && (SEQ_LIT_OK(opt, 6) || SEQ_LIT_OK(opt, 3))) {
             /* sample up to 64K literals */
             int samp = lit_count < 65536 ? lit_count : 65536;
             uint32_t hist0[256], hist1[256];
@@ -1659,7 +1679,7 @@ static size_t lit_section_encode(const uint8_t* lits, int lit_count, int level, 
             if (getenv("LZ6_SEQ_VERBOSE"))
                 fprintf(stderr, "seq: lit gate h0=%.3f h1=%.3f ratio=%.3f lit_count=%d\n",
                         h0, h1, h0 ? h1 / h0 : 1.0, lit_count);
-            if (h1 < h0 * 0.90) {
+            if (h1 < h0 * 0.90 && SEQ_LIT_OK(opt, 6)) {
                 /* 16-context version (lit_mode=6): context = prev>>4.
                  * Header is 16*513 = 8KB vs 65KB for the 256-ctx mode,
                  * and the stream gains ~21% on text (vs 30%) — better
@@ -1705,7 +1725,7 @@ static size_t lit_section_encode(const uint8_t* lits, int lit_count, int level, 
             /* 256-ctx version (lit_mode=3) — competes with 16ctx: some
              * corpora (C) have skewed byte-pair structure that 256 ctx
              * exploits better than the 16-ctx high-nibble split. */
-            {
+            if (SEQ_LIT_OK(opt, 3)) {
                 unsigned (*pair_counts)[256] = (unsigned(*)[256])calloc(256, sizeof(unsigned[256]));
                 if (pair_counts) {
                 for (int i = 1; i < lit_count; i++)
@@ -1862,7 +1882,8 @@ static size_t lit_section_encode(const uint8_t* lits, int lit_count, int level, 
 #endif
 #define LIT_EPOCH_MAX 256
 /* LITSEC_ERR when there is no cut worth trying (the caller keeps its single section) */
-static size_t lit_epochs_encode(const uint8_t* lits, int lit_count, int level, int fast_lits, uint8_t* out, size_t cap)
+static size_t lit_epochs_encode(const uint8_t* lits, int lit_count, int level, int fast_lits, const seq_opt_t* opt,
+                                uint8_t* out, size_t cap)
 {
     if (lit_count < 2 * LIT_EPOCH_MIN) return LITSEC_ERR;
     int cuts[LIT_EPOCH_MAX];
@@ -1886,7 +1907,7 @@ static size_t lit_epochs_encode(const uint8_t* lits, int lit_count, int level, i
     q += wvar(q, ncut + 1);
     for (int e = 0; e <= ncut; e++) {
         const int a = e ? cuts[e - 1] : 0, b = e < ncut ? cuts[e] : lit_count;
-        const size_t ls = lit_section_encode(lits + a, b - a, level, fast_lits, q, cap - (size_t)(q - out));
+        const size_t ls = lit_section_encode(lits + a, b - a, level, fast_lits, opt, q, cap - (size_t)(q - out));
         if (ls == LITSEC_ERR) return LITSEC_ERR;
         q += ls;
     }
@@ -1906,7 +1927,7 @@ static size_t lit_epochs_encode(const uint8_t* lits, int lit_count, int level, i
  * positions): the BCJ trial below decides on level 1's size, and it has to decide the same way whatever level 1 is */
 static size_t compress_normal_x(const char* src, size_t srcSize,
                               char* dst, size_t dstCap, int level,
-                                 int fast_lits, int legacy_f1) {
+                                 int fast_lits, int legacy_f1, const seq_opt_t* opt) {
     /* Phase 1: lz6 match finding */
     size_t state_sz = (size_t)LZ6_sizeofStateHC();
     seq_collector_t sc;
@@ -2061,12 +2082,16 @@ parsed:;
     {
         /* literal epochs: the literals cut where their statistics change. From level 4 the single
          * section is coded too and the smaller one kept; below, the split's estimate decides alone. */
-        const int no_ep = getenv("LZ6_NO_EPOCHS") != NULL;
+        /* restricted: epochs need mode 8, and a mode whose size the split estimates (order-0: Huffman or rANS). With
+         * raw sections only, or order-1 ones alone, the cuts would be paid for nothing (and below level 4 nothing
+         * compares them with the single section). */
+        const int no_ep = getenv("LZ6_NO_EPOCHS") != NULL || !SEQ_LIT_OK(opt, LIT_EPOCHS) ||
+                          !(SEQ_LIT_OK(opt, 1) || SEQ_LIT_OK(opt, 5) || SEQ_LIT_OK(opt, 7));
         const size_t cap = blk_cap - (size_t)(p - blk);
         size_t ls = LITSEC_ERR;
-        if (level < 4 && !no_ep) ls = lit_epochs_encode(sc.lits, lit_count, level, fast_lits, p, cap);
+        if (level < 4 && !no_ep) ls = lit_epochs_encode(sc.lits, lit_count, level, fast_lits, opt, p, cap);
         if (ls == LITSEC_ERR) {
-            ls = lit_section_encode(sc.lits, lit_count, level, fast_lits, p, cap);
+            ls = lit_section_encode(sc.lits, lit_count, level, fast_lits, opt, p, cap);
             if (ls == LITSEC_ERR) { free(blk); free(sc.lits); free(sc.lit_lens); free(sc.match_lens); free(sc.offsets); return 0; }
             /* the epochs candidate gets a buffer of its own: coded into what the single section left of blk it
              * did not fit when the literals were most of the block, and was dropped without a word (2.0.0, 2.0.1) */
@@ -2074,7 +2099,7 @@ parsed:;
                 const size_t ecap = (size_t)lit_count + ((size_t)lit_count >> 4) + 65536;
                 uint8_t* const eb = (uint8_t*)malloc(ecap);
                 if (eb) {
-                    const size_t le = lit_epochs_encode(sc.lits, lit_count, level, fast_lits, eb, ecap);
+                    const size_t le = lit_epochs_encode(sc.lits, lit_count, level, fast_lits, opt, eb, ecap);
                     if (le != LITSEC_ERR && le < ls) { memcpy(p, eb, le); ls = le; }
                     free(eb);
                 }
@@ -2310,15 +2335,16 @@ oom:
 /* fast_lits = 1: literals only as Huffman (or raw), never the order-1 /
  * order-0 rANS coders -- they decode several times slower (byte-plane lanes:
  * mr at L8 decoded 780 -> 240 MB/s with order-1 lanes) */
-static size_t compress_normal_ex(const char* src, size_t srcSize, char* dst, size_t dstCap, int level, int fast_lits)
+static size_t compress_normal_ex(const char* src, size_t srcSize, char* dst, size_t dstCap, int level, int fast_lits,
+                                 const seq_opt_t* opt)
 {
-    return compress_normal_x(src, srcSize, dst, dstCap, level, fast_lits, 0);
+    return compress_normal_x(src, srcSize, dst, dstCap, level, fast_lits, 0, opt);
 }
 
 static size_t compress_normal(const char* src, size_t srcSize,
-                              char* dst, size_t dstCap, int level)
+                              char* dst, size_t dstCap, int level, const seq_opt_t* opt)
 {
-    return compress_normal_ex(src, srcSize, dst, dstCap, level, 0);
+    return compress_normal_ex(src, srcSize, dst, dstCap, level, 0, opt);
 }
 
 /* ---- byte-plane transform (stride 2/4) ----
@@ -2371,8 +2397,9 @@ static void lane_entropy256(const uint8_t* src, size_t n, int stride, unsigned e
 }
 
 /* Codes one lane (a byte stream of n bytes with entropy ent, in 1/256 bits): *payload is the coded lane (malloc'd) with
- * *csize bytes and *mode 1 (LZ) or 2 (Huffman), or NULL when the lane is better stored raw. */
-static void plane_lane_code(const uint8_t* lane, size_t plane_size, unsigned ent, int level,
+ * *csize bytes and *mode 1 (LZ) or 2 (Huffman), or NULL when the lane is better stored raw.
+ * Both lane modes belong to the plane block (LZ6SEQ_BLOCK_PLANE); opt restricts the literals of an LZ lane's block. */
+static void plane_lane_code(const uint8_t* lane, size_t plane_size, unsigned ent, int level, const seq_opt_t* opt,
                             uint8_t** payload_out, size_t* csize_out, int* mode_out) {
     uint8_t* payload = NULL;
     size_t csize = 0;
@@ -2406,7 +2433,7 @@ static void plane_lane_code(const uint8_t* lane, size_t plane_size, unsigned ent
         uint8_t* lz_buf = (uint8_t*)malloc(lz_cap);
         if (lz_buf) {
             size_t lz_size = compress_normal_ex((const char*)lane, plane_size,
-                                                (char*)lz_buf, lz_cap, level, 1);
+                                                (char*)lz_buf, lz_cap, level, 1, opt);
             if (lz_size > 0 && lz_size < plane_size - 32 &&
                 (csize == 0 || lz_size < csize)) {
                 payload = lz_buf;   /* hb (if any) is freed below */
@@ -2426,7 +2453,7 @@ static void plane_lane_code(const uint8_t* lane, size_t plane_size, unsigned ent
              * and much faster than the outer level (which also hurts
              * ratio here — F/G lanes compress best at L1) */
             csize = compress_normal_ex((const char*)lane, plane_size,
-                                       (char*)payload, tmp_cap, 1, 1);
+                                       (char*)payload, tmp_cap, 1, 1, opt);
             /* no single lane level wins: F/G lanes are best at L1 (the
              * single-pass parser), x-ray's at L4 (row hash, -3%). From
              * outer level 4, try L4 too and keep the smaller. */
@@ -2434,7 +2461,7 @@ static void plane_lane_code(const uint8_t* lane, size_t plane_size, unsigned ent
                 uint8_t* alt = (uint8_t*)malloc(tmp_cap);
                 if (alt) {
                     const size_t a4 = compress_normal_ex((const char*)lane, plane_size,
-                                                         (char*)alt, tmp_cap, 4, 1);
+                                                         (char*)alt, tmp_cap, 4, 1, opt);
                     if (a4 > 0 && (csize == 0 || a4 < csize)) {
                         free(payload); payload = alt; csize = a4;
                     } else free(alt);
@@ -2481,7 +2508,7 @@ static void plane_undelta(uint8_t* p, size_t n) {
  * plane block is guaranteed to beat the normal block — caller may skip the
  * full normal encode to save time. */
 static size_t plane_encode(const uint8_t* src, size_t srcSize,
-                           uint8_t* dst, size_t dstCap, int level,
+                           uint8_t* dst, size_t dstCap, int level, const seq_opt_t* opt,
                            int* decisive_out, int force_stride, int* stride_out) {
     if (decisive_out) *decisive_out = 0;
     int stride = 0;
@@ -2536,14 +2563,15 @@ static size_t plane_encode(const uint8_t* src, size_t srcSize,
 
     /* from row 4 (level 2) up: below it the lanes are coded with the fast parser, whose delta lanes carry more sequences
      * (mr: +11..17% decode cycles at levels -1 and 1; from level 2 it decodes 11% faster as well as smaller) */
-    const int delta_ok = level >= 4 && getenv("LZ6_NO_PLANEDELTA") == NULL;
+    /* restricted: without LZ6SEQ_BLOCK_PLANE_DELTA no lane is tried as deltas, and the test hook below is off with it */
+    const int delta_ok = level >= 4 && (opt->blocks & LZ6SEQ_BLOCK_PLANE_DELTA) && getenv("LZ6_NO_PLANEDELTA") == NULL;
     const int delta_force = delta_ok && getenv("LZ6_PLANEDELTA_FORCE") != NULL;
     for (int i = 0; i < stride; i++) {
         for (size_t j = 0; j < plane_size; j++) plane_buf[j] = src[j * (size_t)stride + (size_t)i];
         uint8_t* payload = NULL;
         size_t csize = 0;
         int mode = 0;
-        plane_lane_code(plane_buf, plane_size, lane_ent[i], level, &payload, &csize, &mode);
+        plane_lane_code(plane_buf, plane_size, lane_ent[i], level, opt, &payload, &csize, &mode);
         /* a smooth lane (image samples, sensor values, a counter) codes smaller as byte deltas: try them when their entropy is
          * clearly lower, keep the smaller; the mode byte's bit 7 tells the decoder to sum them back up. A lane that is already
          * compressed needs the deltas to save 3% (a few percent is the price of more sequences for the decoder: x-ray's high
@@ -2559,7 +2587,7 @@ static size_t plane_encode(const uint8_t* src, size_t srcSize,
                 lane_entropy256(db, plane_size, 1, dent);
                 if (dent[0] + 77 < lane_ent[i] || delta_force) {
                     uint8_t* p2 = NULL; size_t c2 = 0; int m2 = 0;
-                    plane_lane_code(db, plane_size, dent[0], level, &p2, &c2, &m2);
+                    plane_lane_code(db, plane_size, dent[0], level, opt, &p2, &c2, &m2);
                     const size_t cost1 = payload ? csize : plane_size, cost2 = p2 ? c2 : plane_size;
                     /* a few percent is the price of more sequences for the decoder (x-ray: -0.1..-1.7% of the file, +11..26% decode) */
                     if (delta_force) {   /* test hook (planedelta.c): always code the deltas, raw or not, so the decoder's path is exercised */
@@ -2683,9 +2711,9 @@ static size_t bcj_hits(const uint8_t* p, size_t n)
 
 /* x86 ranges worth filtering in src[0..n): chunks with code-like density,
  * merged, then each kept only if a level-1 trial on its first 512 KB is
- * >= 0.5% smaller filtered. Returns the count (<= max), 0 if none. */
-static size_t compress_normal_ex(const char* src, size_t srcSize, char* dst, size_t dstCap, int level, int fast_lits);
-static int bcj_detect(const uint8_t* src, size_t n, uint32_t* rs, uint32_t* rl, size_t max)
+ * >= 0.5% smaller filtered. Returns the count (<= max), 0 if none.
+ * The trial codes its literals under opt, like the block it decides for. */
+static int bcj_detect(const uint8_t* src, size_t n, uint32_t* rs, uint32_t* rl, size_t max, const seq_opt_t* opt)
 {
     const size_t nch = (n + BCJ_CHUNK - 1) / BCJ_CHUNK;
     int nr = 0;
@@ -2711,8 +2739,8 @@ static int bcj_detect(const uint8_t* src, size_t n, uint32_t* rs, uint32_t* rl, 
         uint8_t* flt = buf; uint8_t* o1 = buf + sl; uint8_t* o2 = o1 + cap;
         memcpy(flt, src + s0, sl);
         x86_bcj(flt, sl, 1, (uint32_t)s0);
-        size_t a = compress_normal_x((const char*)(src + s0), sl, (char*)o1, cap, 1, 0, 1);
-        size_t b = compress_normal_x((const char*)flt, sl, (char*)o2, cap, 1, 0, 1);
+        size_t a = compress_normal_x((const char*)(src + s0), sl, (char*)o1, cap, 1, 0, 1, opt);
+        size_t b = compress_normal_x((const char*)flt, sl, (char*)o2, cap, 1, 0, 1, opt);
         free(buf);
         if (a == 0) a = sl;
         if (b == 0) b = sl;
@@ -2754,7 +2782,7 @@ static int block_is_noise(const uint8_t* src, size_t n)
 }
 
 static size_t compress_seq_core(const char* src, size_t srcSize,
-                                char* dst, size_t dstCap, int level) {
+                                char* dst, size_t dstCap, int level, const seq_opt_t* opt) {
     if (!src || !dst || dstCap < 64) return 0;
     if (!code_tabs_ready) code_tabs_init();
     if (level < 1) level = 9;
@@ -2774,7 +2802,7 @@ static size_t compress_seq_core(const char* src, size_t srcSize,
      * but a seed + length identifies them completely (Kolmogorov-style).
      * Only try when the block looks random — the brute-force scan below
      * is cheap per seed but 64K seeds on every file would waste time. */
-    if (srcSize >= 64) {
+    if (srcSize >= 64 && (opt->blocks & LZ6SEQ_BLOCK_PRNG)) {   /* restricted: such a block is noise, stored below */
         int shift = 0;
         int seed = detect_glibc_prng((const uint8_t*)src, srcSize, &shift);
         if (seed >= 0 && dstCap >= 8) {
@@ -2809,11 +2837,11 @@ static size_t compress_seq_core(const char* src, size_t srcSize,
     uint8_t* plane_buf = NULL;
     size_t plane_len = 0;
     int plane_decisive = 0, plane_stride = 0;
-    if (srcSize >= 16384 && (srcSize % 2) == 0) {
+    if (srcSize >= 16384 && (srcSize % 2) == 0 && (opt->blocks & LZ6SEQ_BLOCK_PLANE)) {
         plane_buf = (uint8_t*)malloc(srcSize + 64);
         if (plane_buf) {
             plane_len = plane_encode((const uint8_t*)src, srcSize,
-                                     plane_buf, srcSize + 64, level,
+                                     plane_buf, srcSize + 64, level, opt,
                                      &plane_decisive, 0, &plane_stride);
             if (plane_len == 0) { free(plane_buf); plane_buf = NULL; }
         }
@@ -2831,6 +2859,10 @@ static size_t compress_seq_core(const char* src, size_t srcSize,
      * sample) are coded both ways at the block's level and the block's stride; the shortcut is taken unless the
      * normal coding wins the sample by more than 1/16 (a 256 KB sample flatters the normal block a little). Blocks
      * under 1 MiB keep the shortcut as it was. */
+    /* restricted literals: no shortcut. Its thresholds were measured with every literal mode at hand; with fewer the
+     * lanes' blocks lose more than the normal block does (mr with raw literals only: the plane block 2.6% larger than
+     * the normal one), so both are coded and the smaller is kept. */
+    if (opt->lits != LZ6SEQ_LIT_ALL) plane_decisive = 0;
     if (plane_decisive && plane_len > 0 && srcSize >= ((size_t)1 << 20)) {
         enum { TR_CHUNK = 65536, TR_N = 4 };
         const size_t tn = (size_t)TR_CHUNK * TR_N, tcap = tn + (tn >> 1) + 65536;
@@ -2841,8 +2873,8 @@ static size_t compress_seq_core(const char* src, size_t srcSize,
                 off -= off % 4;   /* keep the lanes in phase */
                 memcpy(tb + k * TR_CHUNK, src + off, TR_CHUNK);
             }
-            const size_t tp = plane_encode(tb, tn, tb + tn, tcap, level, NULL, plane_stride, NULL);
-            const size_t tl = compress_normal((const char*)tb, tn, (char*)(tb + tn + tcap), tcap, level);
+            const size_t tp = plane_encode(tb, tn, tb + tn, tcap, level, opt, NULL, plane_stride, NULL);
+            const size_t tl = compress_normal((const char*)tb, tn, (char*)(tb + tn + tcap), tcap, level, opt);
             if (tp == 0 || (tl != 0 && tp > tl + tl / 16)) plane_decisive = 0;
             free(tb);
         }
@@ -2856,7 +2888,7 @@ static size_t compress_seq_core(const char* src, size_t srcSize,
         return plane_len;
     }
 
-    size_t normal_len = compress_normal(src, srcSize, dst, dstCap, level);
+    size_t normal_len = compress_normal(src, srcSize, dst, dstCap, level, opt);
     if (getenv("LZ6_SEQ_VERBOSE"))
         fprintf(stderr, "seq: plane=%zu normal=%zu -> %s\n", plane_len, normal_len,
                 (plane_len && plane_len < normal_len) ? "PLANE" : "NORMAL");
@@ -3629,23 +3661,30 @@ static int seq_row(int level)
     return level + 2 > LZ6HC_MAX_CLEVEL ? LZ6HC_MAX_CLEVEL : level + 2;
 }
 
-size_t LZ6_compress_seq(const char* src, size_t srcSize,
-                        char* dst, size_t dstCap, int level) {
+/* The restricted encoder: see lz6seq.h. The masks become a seq_opt_t on this stack and every function below reads it
+ * through a const pointer; the bits that have no meaning are dropped here. */
+size_t LZ6_compress_seq_opt(const char* src, size_t srcSize,
+                            char* dst, size_t dstCap, int level,
+                            unsigned blockMask, unsigned litMask) {
+    seq_opt_t o;
+    o.blocks = blockMask & LZ6SEQ_BLOCK_ALL;
+    o.lits = litMask & LZ6SEQ_LIT_ALL;
+    const seq_opt_t* const opt = &o;
     level = seq_row(level);
     if (!code_tabs_ready) code_tabs_init();   /* the BCJ trial below runs the encoder before compress_seq_core would build them */
-    if (srcSize >= 16384 && srcSize <= 0x7FFFFFFFu && dstCap > 64) {
+    if ((opt->blocks & LZ6SEQ_BLOCK_X86) && srcSize >= 16384 && srcSize <= 0x7FFFFFFFu && dstCap > 64) {
         const size_t maxr = srcSize / BCJ_CHUNK + 1;
         uint32_t* rs = (uint32_t*)malloc(maxr * 2 * sizeof(uint32_t));
         if (rs) {
             uint32_t* rl = rs + maxr;
-            const int nr = bcj_detect((const uint8_t*)src, srcSize, rs, rl, maxr);
+            const int nr = bcj_detect((const uint8_t*)src, srcSize, rs, rl, maxr, opt);
             if (nr > 0) {
                 uint8_t* tmp = (uint8_t*)malloc(srcSize);
                 const size_t hl = 1 + 4 + (size_t)(nr / 255 + 1) + (size_t)nr * 8;
                 if (tmp && dstCap > hl + 64) {
                     memcpy(tmp, src, srcSize);
                     for (int k = 0; k < nr; k++) x86_bcj(tmp + rs[k], rl[k], 1, rs[k]);
-                    const size_t r = compress_seq_core((const char*)tmp, srcSize, dst + hl, dstCap - hl, level);
+                    const size_t r = compress_seq_core((const char*)tmp, srcSize, dst + hl, dstCap - hl, level, opt);
                     free(tmp);
                     if (r > 0) {
                         uint8_t* q = (uint8_t*)dst;
@@ -3664,7 +3703,12 @@ size_t LZ6_compress_seq(const char* src, size_t srcSize,
             free(rs);
         }
     }
-    return compress_seq_core(src, srcSize, dst, dstCap, level);
+    return compress_seq_core(src, srcSize, dst, dstCap, level, opt);
+}
+
+size_t LZ6_compress_seq(const char* src, size_t srcSize,
+                        char* dst, size_t dstCap, int level) {
+    return LZ6_compress_seq_opt(src, srcSize, dst, dstCap, level, LZ6SEQ_BLOCK_ALL, LZ6SEQ_LIT_ALL);
 }
 
 /* flag 0x10: x86-filtered block, see x86_bcj */

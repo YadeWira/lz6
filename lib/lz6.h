@@ -47,10 +47,10 @@ extern "C" {
 /**************************************
 *  Version
 **************************************/
-#define LZ6_VERSION          "v2.0.2"
+#define LZ6_VERSION          "v2.1.0"
 #define LZ6_VERSION_MAJOR    2    /* for breaking interface changes  */
-#define LZ6_VERSION_MINOR    0    /* for new (non-breaking) interface capabilities */
-#define LZ6_VERSION_RELEASE  2    /* for tweaks, bug-fixes, or development */
+#define LZ6_VERSION_MINOR    1    /* for new (non-breaking) interface capabilities */
+#define LZ6_VERSION_RELEASE  0    /* for tweaks, bug-fixes, or development */
 #define LZ6_VERSION_NUMBER (LZ6_VERSION_MAJOR *100*100 + LZ6_VERSION_MINOR *100 + LZ6_VERSION_RELEASE)
 int LZ6_versionNumber (void);
 

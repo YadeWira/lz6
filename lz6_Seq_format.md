@@ -61,7 +61,7 @@ A block is at least 5 bytes. The **empty block** is the stored block `[01][isize
 | 0 | raw | `lit_count` bytes |
 | 1 | FSE order-0 | `[csize:vlq]` + rANS stream |
 | 5 | Huffman | `[csize:vlq][k:1][256 code lengths][total_bits:4][MSB-first bitstream]`. Canonical codes (see *Huffman code* below), lengths ≤ 16, lookup table of `1 ≤ k ≤ 12` bits. The bitstream is `ceil(total_bits / 8)` bytes and must fit in `csize` |
-| 7 | Huffman, 4 streams (since v1.6.8-pre) | `[csize:vlq][k:1][256 code lengths]` then 4 × `[total_bits:4][MSB-first bitstream]`, one code table. Stream `j` holds literals `j·s .. min((j+1)·s, lit_count)`, with `s = ceil(lit_count/4)`. The encoder uses it from 4096 literals up |
+| 7 | Huffman, 4 streams (since v1.6.8-pre) | `[csize:vlq][k:1][256 code lengths]` then 4 × `[total_bits:4][MSB-first bitstream]`, one code table. Stream `j` holds literals `min(j·s, lit_count) .. min((j+1)·s, lit_count)`, with `s = ceil(lit_count/4)`. A stream can be empty (5 literals: `s` = 2, the streams hold 2, 2, 1 and 0), with `total_bits` = 0 and no bytes. The encoder uses it from 4096 literals up |
 | 6 | FSE order-1, 16 contexts | `[csize:vlq][L_bits:1][16 × (L_bits:1 + 256×freq:2)][slen:4][x:4 BE][stream]`. Context = previous literal `>> 4` |
 | 3 | FSE order-1, 256 contexts | `[csize:vlq][active bitmap:32][L_bits:1][fallback table][table per active context][slen:4][x:4 BE][stream]`. Context = previous literal; inactive contexts use the fallback table |
 
@@ -101,7 +101,7 @@ The rep stack starts at `{0,0,0}`:
 
 A block is valid only if its sequences produce **exactly the declared size** (the literals-only last sequence closes it; a block whose sequences stop short is rejected, where v1.6.10-pre returned the shorter length) and the bitstream is consumed exactly.
 - The last sequence does not have to be the literals-only one: a block whose last sequence is a match that ends exactly at `isize` is valid.
-- A literals-only sequence (ml symbol 0) must be the one that completes the output; one that leaves the output short fails the block. It reads no offset bits and no ml extra bits, and leaves the rep stack alone.
+- A literals-only sequence (ml symbol 0) still has an of symbol, which is read like any other and must be in the of table; its value means nothing (the encoder writes symbol 0). Its ll may be 0: an empty literals-only sequence after a match that already completed the output is valid. A literals-only sequence must be the one that completes the output; one that leaves the output short fails the block. It reads no offset bits and no ml extra bits, and leaves the rep stack alone.
 - No sequence follows the one that completes the output with ml symbol 0: such a block is not valid and an encoder must not write it (what the reference decoder does with one is in *Decoder checks and tolerances*).
 
 **Bitstream.** It is written forward, LSB-first, and read **backward** from its last byte. The highest set bit of the last byte is an end marker. The 8 zero bytes in front keep every 8-byte load in bounds; a valid stream consumes exactly its bits and none of the padding. "Consumed exactly" means: after the last sequence, the bits read are all the bits from the one below the end marker down to bit 0 of the first bitstream byte, no fewer and no more.
@@ -123,13 +123,13 @@ A format 2 block (flags `0x20`) has the layout of a normal block with these chan
 
 **Bit-packed headers.** The Huffman and table headers below are read LSB-first (the first bit is bit 0 of the first byte), a multi-bit field with its low bit first unless said otherwise, and each ends on a byte boundary (the rest of its last byte is not examined). Two codes are used in them:
 - **Rice code** with parameter `k`: a unary quotient `q` (`q` 1-bits closed by a 0-bit), then `k` low bits, low bit first; the value is `q << k | low`.
-- **Elias gamma code** of `g >= 1`: `nb` 0-bits, a 1-bit, then the `nb` bits of `g` below its leading one, **high bit first**. `nb` is at most 8, so `g <= 511`; a ninth 0-bit fails the block.
+- **Elias gamma code** of `g >= 1`: `nb` 0-bits, a 1-bit, then the `nb` bits of `g` below its leading one, **high bit first**. `nb` is at most 8, so `g <= 511`; a ninth 0-bit fails the block. (No valid header reaches that limit: a zero run of a table is at most 193 symbols, of a Huffman header 256.)
 
 **Literal sections.** The literal modes are those of format 1, plus:
 
 | lit_mode | name | layout after `lit_count` |
 |---:|---|---|
-| 8 | literal epochs | `[size:leb]` then `[n:leb]` and `n` literal sections (any mode but 8: no nesting), in order, `1 <= n <= 256`. Their counts add up to `lit_count`; the decoder concatenates them. `size` is the byte length of what follows it (`[n:leb]` and the sections), and the last section must end **exactly** at `size`. Each section is a complete format 2 literal section `[lit_mode:1][lit_count:leb]...`, and its count may not exceed what is left of the outer `lit_count` |
+| 8 | literal epochs | `[size:leb]` then `[n:leb]` and `n` literal sections (any mode but 8: no nesting), in order, `1 <= n <= 256`. A section may have a count of 0. Their counts add up to `lit_count`; the decoder concatenates them. `size` is the byte length of what follows it (`[n:leb]` and the sections), and the last section must end **exactly** at `size`. Each section is a complete format 2 literal section `[lit_mode:1][lit_count:leb]...`, and its count may not exceed what is left of the outer `lit_count` |
 
 Modes 5 and 7 carry a **bit-packed code-length header** instead of `[k:1][256 code lengths]`, read LSB-first: `[k:4]`, then for each symbol 0..255 in order either a `0` bit and an Elias gamma code `g >= 1` for a run of `g` symbols without a code, or a `1` bit and the zigzag (`2d` for `d >= 0`, `-2d-1` for `d < 0`) of the length's difference from the previous coded length (starting at 8) as a Rice code with `k = 1` (unary quotient of 1-bits closed by a 0, then the low bit). Lengths are 1..16. The header ends on a byte boundary and the streams follow; `csize` covers both. Limits: the 4-bit `k` must be 1..12, as in format 1; the Rice quotient is at most 40; a run is at most 511 symbols (the gamma limit), so a longer stretch of symbols without a code is written as several runs; a run may not pass symbol 255. The codes are those of *Huffman code* above; only the header differs.
 

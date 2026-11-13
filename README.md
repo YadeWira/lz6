@@ -16,9 +16,11 @@ It started as a fork of [LZ5 v1.5] (itself a LZ4 derivative) and grew into its o
 - **x86 branch filter** — CALL/JMP `rel32` operands are converted to absolute addresses on detected code ranges, only where a trial shows it pays (Silesia `ooffice`, a Windows DLL: 44.4% -> 38.2% at level 15).
 - **Multithreaded command line** — `-T#` runs blocks on a worker pool for compression (the seq levels and `--fast`) and decompression (any frame). The output is identical at any thread count (see [Multithreading](#multithreading)).
 
-Current release: **v2.0.2** ([releases](https://github.com/YadeWira/lz6/releases): static Linux x86-64, win64 and win32 binaries).
+Current release: **v2.1.0** ([releases](https://github.com/YadeWira/lz6/releases): static Linux x86-64, win64 and win32 binaries).
 
-New in v2.0.2: encoder fixes with no format change (blocks that begin with incompressible data, data after long incompressible runs at `-1` to `-5`, 16-bit samples, UTF-16 text, dropped literal epochs): Silesia 0.3-0.8% smaller than v2.0.1 at every level, and far more on those inputs. v2.0.1 made `-1` compress 3-7% faster than v1.7.1.
+New in v2.1.0: `LZ6_compress_seq_opt`, which restricts the block kinds and literal modes the seq encoder writes (for decoders that implement a subset of the format), and a set of 80 test vectors in [bakeoff/seqvec](bakeoff/seqvec/) for independent decoders. No format change, and the same bytes as v2.0.2 by default.
+
+v2.0.2: encoder fixes with no format change (blocks that begin with incompressible data, data after long incompressible runs at `-1` to `-5`, 16-bit samples, UTF-16 text, dropped literal epochs): Silesia 0.3-0.8% smaller than v2.0.1 at every level, and far more on those inputs. v2.0.1 made `-1` compress 3-7% faster than v1.7.1.
 
 v2.0.0 brought **format 2** and a new level ladder. Every level is smaller than the same level of v1.7.1 (Silesia -0.3% to -1.9%, AIT -0.1% to -0.9%) and compresses faster (1% to 51% less time on one thread; -3 27%, -5 48%, -11 51%); decoding takes 7-13% more time. The entropy tables now change along a block (*table epochs*) and their headers are smaller. lz6 2.0 reads every v1.x file; v1.x refuses a 2.0 seq file with a header-version error. Details in [NEWS](NEWS) and [lz6_Seq_format.md](lz6_Seq_format.md).
 
@@ -115,6 +117,7 @@ The encode side is the price: `-13` compresses at about 0.9 MB/s (`-1` at 59 MB/
 - [bakeoff/VS_LZMA_ZPAQ.md](bakeoff/VS_LZMA_ZPAQ.md) — lz6 against xz, lzma, fast-lzma2, uf-lzma2, zpaq, zpaqfranz and RAR, per file
 - [bakeoff/](bakeoff/) — the per-version comparisons (`V16*_VS_*.md`), the benchmark scripts and the test harnesses
 - [bakeoff/fuzz/README.md](bakeoff/fuzz/README.md), `bakeoff/seqgate.sh`, `bakeoff/clitest.sh`, `bakeoff/installtest.sh` — the libFuzzer harnesses, the safety gate, the command-line tests and the install test
+- [bakeoff/seqvec/](bakeoff/seqvec/) — test vectors for decoders of the seq stream (80 blocks, manifest, a stream inspector and a hand assembler)
 - [NEWS](NEWS) — what changed in each release, including measured costs and refuted ideas
 - `lib/entropy/lz6seq.h` — the seq codec API
 - [Wiki](https://github.com/YadeWira/lz6/wiki) — architecture, seq stream format, decoder internals, development workflow, roadmap
