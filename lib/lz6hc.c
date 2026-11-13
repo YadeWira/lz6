@@ -2266,6 +2266,9 @@ FORCE_INLINE void LZ6HC_rowPrefetch(const LZ6HC_rows* r, const BYTE* p)
     LZ6_PREFETCH(r->head + row);
 }
 
+#ifndef LZ6_ROW_SKIP_MAX
+#define LZ6_ROW_SKIP_MAX 1024   /* 256 recovered 0.2% more after a long incompressible run but cost 1.2% on one corpus file and time on noisy audio */
+#endif
 FORCE_INLINE void LZ6HC_rowUpdate(LZ6HC_rows* r, const BYTE* base, U32 target, const BYTE* iLimit)
 {
     U32 idx = r->nextToUpdate;
@@ -2443,7 +2446,11 @@ static int LZ6HC_compress_row (
             if (lI && (!ml || gI > gB + 1)) { ml = lI; off = oI; start = ip; }
         }
         if (ml < 4) {
-            ip += ((size_t)(ip - anchor) >> 8) + 1;   /* accelerate through incompressible runs */
+            /* accelerate through incompressible runs, up to LZ6_ROW_SKIP_MAX bytes a step: unbounded (the run can be most
+             * of a 256 MB block) the step reached tens of KB, and since a jump over 384 bytes indexes only its last 96
+             * positions, compressible data after a long incompressible run was hardly searched (the 4 MB after 12 MB of
+             * compressed data came out 28-58% larger at levels 1 to 5) */
+            { size_t step = ((size_t)(ip - anchor) >> 8) + 1; if (step > LZ6_ROW_SKIP_MAX) step = LZ6_ROW_SKIP_MAX; ip += step; }
             continue;
         }
         /* lazy: a better match one or two bytes later wins */

@@ -2068,9 +2068,17 @@ parsed:;
         if (ls == LITSEC_ERR) {
             ls = lit_section_encode(sc.lits, lit_count, level, fast_lits, p, cap);
             if (ls == LITSEC_ERR) { free(blk); free(sc.lits); free(sc.lit_lens); free(sc.match_lens); free(sc.offsets); return 0; }
-            const size_t le = level < 4 || no_ep ? LITSEC_ERR
-                : lit_epochs_encode(sc.lits, lit_count, level, fast_lits, p + ls, cap - ls);
-            if (le != LITSEC_ERR && le < ls) { memmove(p, p + ls, le); ls = le; }
+            /* the epochs candidate gets a buffer of its own: coded into what the single section left of blk it
+             * did not fit when the literals were most of the block, and was dropped without a word (2.0.0, 2.0.1) */
+            if (level >= 4 && !no_ep && lit_count >= 2 * LIT_EPOCH_MIN) {
+                const size_t ecap = (size_t)lit_count + ((size_t)lit_count >> 4) + 65536;
+                uint8_t* const eb = (uint8_t*)malloc(ecap);
+                if (eb) {
+                    const size_t le = lit_epochs_encode(sc.lits, lit_count, level, fast_lits, eb, ecap);
+                    if (le != LITSEC_ERR && le < ls) { memcpy(p, eb, le); ls = le; }
+                    free(eb);
+                }
+            }
         }
         p += ls;
     }
@@ -2474,14 +2482,33 @@ static void plane_undelta(uint8_t* p, size_t n) {
  * full normal encode to save time. */
 static size_t plane_encode(const uint8_t* src, size_t srcSize,
                            uint8_t* dst, size_t dstCap, int level,
-                           int* decisive_out) {
+                           int* decisive_out, int force_stride, int* stride_out) {
     if (decisive_out) *decisive_out = 0;
     int stride = 0;
     unsigned lane_ent[4] = {0, 0, 0, 0};
     if ((srcSize % 4) == 0) stride = 4;
     else if ((srcSize % 2) == 0) stride = 2;
+    if (force_stride) stride = (srcSize % (size_t)force_stride) == 0 ? force_stride : 0;   /* the trial: the block's stride */
     if (!stride) return 0;
     lane_entropy256(src, srcSize, stride, lane_ent);
+    /* The stride comes from the data, not from the length: when lanes 0 and 2 look alike and so do 1 and 3 (within
+     * a quarter bit), the data has a period of 2 (16-bit samples) and stride 4 would cut each 16-bit lane in two halves
+     * with half the history each (Silesia mr, whose length is a multiple of 4: 2.5% larger at level 1, 13.6% at 13). */
+    if (stride == 4 && !force_stride) {
+        const unsigned d02 = lane_ent[0] > lane_ent[2] ? lane_ent[0] - lane_ent[2] : lane_ent[2] - lane_ent[0];
+        const unsigned d13 = lane_ent[1] > lane_ent[3] ? lane_ent[1] - lane_ent[3] : lane_ent[3] - lane_ent[1];
+        if (d02 < 64 && d13 < 64) {
+            /* ...and the merged lanes must be the same streams, not two that only share an entropy (two channels
+             * with different offsets): each stride-2 lane no worse than the mean of the two it is made of */
+            unsigned e2[4] = {0, 0, 0, 0};
+            lane_entropy256(src, srcSize, 2, e2);
+            if (e2[0] <= (lane_ent[0] + lane_ent[2]) / 2 + 16 && e2[1] <= (lane_ent[1] + lane_ent[3]) / 2 + 16) {
+                stride = 2;
+                lane_ent[0] = e2[0]; lane_ent[1] = e2[1]; lane_ent[2] = lane_ent[3] = 0;
+            }
+        }
+    }
+    if (stride_out) *stride_out = stride;
     /* The win comes from lane skew: at least one lane must be very
      * compressible (H < 5 b/B) while others stay near-incompressible. */
     unsigned min_ent = 0xFFFFFFFFu;
@@ -2554,7 +2581,8 @@ static size_t plane_encode(const uint8_t* src, size_t srcSize,
             free(payload);
         } else {
             if ((size_t)(dst_end - p) < 1 + plane_size) { free(plane_buf); return 0; }
-            w8(&p, 0);                       /* mode: raw */
+            w8(&p, use_delta ? 0x80 : 0);    /* mode: raw (as deltas only under the test hook: the flag was missing there, so a
+                                              * forced raw delta lane did not decode; the encoder never picks one by itself) */
             memcpy(p, plane_buf, plane_size);
             p += plane_size;
         }
@@ -2693,6 +2721,38 @@ static int bcj_detect(const uint8_t* src, size_t n, uint32_t* rs, uint32_t* rl, 
     return nr;
 }
 
+/* 1 when the block is noise and is better stored than parsed. Up to 256 windows of 32 KB spread evenly
+ * (the first at 0, the last ending at n: a block of up to 8 MB is covered whole), order-0 entropy of each:
+ *  - the first window at 7.9 bits per byte or less: not noise. That is all v2.0.1 looked at, so every block
+ *    it compressed is still compressed (the test cannot see repeats, e.g. two copies of a compressed file
+ *    after a header: such a block must not start being stored);
+ *  - otherwise (v2.0.1 stored the block whatever followed): noise unless the windows promise a saving of at
+ *    least 1% of the block. Deflate output with a few softer windows gives 0.2-0.5% for 15 to 900 times the
+ *    time; a block that begins inside compressed data and goes on with compressible data gives 30-50%.
+ * Integer arithmetic: the decision must not depend on the FPU. n >= 32768. */
+#define NOISE_WIN 32768u
+#define NOISE_MAX_WINS 256u
+static int block_is_noise(const uint8_t* src, size_t n)
+{
+    size_t wins = (n + NOISE_WIN - 1) / NOISE_WIN;
+    if (wins > NOISE_MAX_WINS) wins = NOISE_MAX_WINS;
+    const size_t span = n - NOISE_WIN;
+    const int64_t full = (int64_t)8 * NOISE_WIN * 65536;   /* a window at 8 bits per byte, in 1/65536 bit */
+    int64_t saving = 0;
+    for (size_t w = 0; w < wins; w++) {
+        const size_t at = wins > 1 ? (size_t)(((uint64_t)span * w) / (wins - 1)) : 0;
+        uint32_t h[256];
+        memset(h, 0, sizeof(h));
+        for (size_t i = 0; i < NOISE_WIN; i++) h[src[at + i]]++;
+        /* H * n = n log2 n - sum c log2 c, in 1/65536 bit */
+        int64_t bits = (int64_t)NOISE_WIN * elog2(NOISE_WIN);
+        for (int b = 0; b < 256; b++) if (h[b]) bits -= (int64_t)h[b] * elog2(h[b]);
+        if (w == 0 && bits * 10 <= (int64_t)79 * NOISE_WIN * 65536) return 0;
+        if (bits < full) saving += full - bits;
+    }
+    return saving * 100 < full * (int64_t)wins;
+}
+
 static size_t compress_seq_core(const char* src, size_t srcSize,
                                 char* dst, size_t dstCap, int level) {
     if (!src || !dst || dstCap < 64) return 0;
@@ -2729,26 +2789,17 @@ static size_t compress_seq_core(const char* src, size_t srcSize,
 
     /* incompressible fast-path: random/high-entropy data (testing L/P,
      * most of A) can't beat raw — skip the match finder entirely.
-     * Sample the first 32KB: H0 > 7.9 b/B means no structure to exploit. */
-    if (srcSize >= 32768) {
-        uint32_t h[256];
-        memset(h, 0, sizeof(h));
-        size_t n = srcSize < 32768 ? srcSize : 32768;
-        const uint8_t* sp = (const uint8_t*)src;
-        for (size_t i = 0; i < n; i++) h[sp[i]]++;
-        double H = 0;
-        for (int b = 0; b < 256; b++) {
-            if (!h[b]) continue;
-            double pr = (double)h[b] / (double)n;
-            H -= pr * log2(pr);
-        }
-        if (H > 7.9 && srcSize + 5 <= dstCap) {
-            uint8_t* rp = (uint8_t*)dst;
-            w8(&rp, 1);
-            w32le(&rp, (uint32_t)srcSize);
-            memcpy(rp, src, srcSize);
-            return srcSize + 5;
-        }
+     * The block is sampled whole (block_is_noise): up to 256 windows of
+     * 32 KB, which together must promise less than 1%.
+     * Until v2.0.1 only the first 32 KB were looked at, so a block that
+     * began with compressed data was stored whole (a 16 MiB piece of
+     * silesia.tar starting inside mozilla: stored instead of 54%). */
+    if (srcSize >= 32768 && srcSize + 5 <= dstCap && block_is_noise((const uint8_t*)src, srcSize)) {
+        uint8_t* rp = (uint8_t*)dst;
+        w8(&rp, 1);
+        w32le(&rp, (uint32_t)srcSize);
+        memcpy(rp, src, srcSize);
+        return srcSize + 5;
     }
 
     /* byte-plane candidate (only for large, divisible inputs).
@@ -2757,13 +2808,13 @@ static size_t compress_seq_core(const char* src, size_t srcSize,
      * the encode time. */
     uint8_t* plane_buf = NULL;
     size_t plane_len = 0;
-    int plane_decisive = 0;
+    int plane_decisive = 0, plane_stride = 0;
     if (srcSize >= 16384 && (srcSize % 2) == 0) {
         plane_buf = (uint8_t*)malloc(srcSize + 64);
         if (plane_buf) {
             plane_len = plane_encode((const uint8_t*)src, srcSize,
                                      plane_buf, srcSize + 64, level,
-                                     &plane_decisive);
+                                     &plane_decisive, 0, &plane_stride);
             if (plane_len == 0) { free(plane_buf); plane_buf = NULL; }
         }
     }
@@ -2774,6 +2825,28 @@ static size_t compress_seq_core(const char* src, size_t srcSize,
      * 4-4.5 b/B), nuking a normal pass that would have compressed 15+
      * points better with order-1 literals. Everything else: run the
      * normal pass and keep the smaller. */
+    /* ...and only when a trial agrees. A nearly free lane is also what UTF-16 text has, and there the normal block
+     * can win by far at the high levels (the lanes are coded by the fast parsers whatever the level). Four 64 KB
+     * pieces from inside the block (at 1/8, 3/8, 5/8 and 7/8: a header at the start must not weigh a quarter of the
+     * sample) are coded both ways at the block's level and the block's stride; the shortcut is taken unless the
+     * normal coding wins the sample by more than 1/16 (a 256 KB sample flatters the normal block a little). Blocks
+     * under 1 MiB keep the shortcut as it was. */
+    if (plane_decisive && plane_len > 0 && srcSize >= ((size_t)1 << 20)) {
+        enum { TR_CHUNK = 65536, TR_N = 4 };
+        const size_t tn = (size_t)TR_CHUNK * TR_N, tcap = tn + (tn >> 1) + 65536;
+        uint8_t* const tb = (uint8_t*)malloc(tn + 2 * tcap);
+        if (tb) {
+            for (size_t k = 0; k < TR_N; k++) {
+                size_t off = (size_t)(((uint64_t)(srcSize - TR_CHUNK) * (2 * k + 1)) / (2 * TR_N));
+                off -= off % 4;   /* keep the lanes in phase */
+                memcpy(tb + k * TR_CHUNK, src + off, TR_CHUNK);
+            }
+            const size_t tp = plane_encode(tb, tn, tb + tn, tcap, level, NULL, plane_stride, NULL);
+            const size_t tl = compress_normal((const char*)tb, tn, (char*)(tb + tn + tcap), tcap, level);
+            if (tp == 0 || (tl != 0 && tp > tl + tl / 16)) plane_decisive = 0;
+            free(tb);
+        }
+    }
     if (plane_len > 0 && plane_len <= dstCap && plane_decisive &&
         plane_len * 5 <= srcSize * 4) {
         if (getenv("LZ6_SEQ_VERBOSE"))

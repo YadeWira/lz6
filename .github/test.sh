@@ -36,6 +36,40 @@ for f in "$W"/in/*; do
 done
 echo "round trips: $n"
 
+# the library compresses a block that begins with incompressible bytes (until v2.0.1 its first 32 KB decided for the whole block when
+# the caller gave room for a stored block; the command line gives less room and was not affected, so this goes through -b)
+head -c 100000 "$W/in/noise" > "$W/noisetext"; cat "$W/in/text" >> "$W/noisetext"
+ts=$(wc -c < "$W/in/text")
+for o in -1 -8 --fast=2; do
+  bs=$("$CLI" -b -i1 $o "$W/noisetext" 2>&1 | tr '\r' '\n' | grep -a -E ' -> +[0-9]+ \(' | tail -1 | sed -E 's/.*-> *([0-9]+) .*/\1/')
+  [ -n "$bs" ] && [ "$bs" -lt $((100000 + ts / 2)) ] || bad "noise then text -b $o: $bs bytes of $((100000 + ts))"
+  "$CLI" $o -c "$W/noisetext" | "$CLI" -d -c | cmp -s - "$W/noisetext" || bad "round trip noise then text $o"
+done
+# encoder choices that used to depend on where the data sat in the block (v2.0.2); sizes through -b (one block, the library's room)
+bsize() { "$CLI" -b -i1 $1 "$2" 2>&1 | tr '\r' '\n' | grep -a -E ' -> +[0-9]+ \(' | tail -1 | sed -E 's/.*-> *([0-9]+) .*/\1/'; }
+python3 - "$W" <<'PY'
+import sys, random
+w = sys.argv[1]; r = random.Random(7)
+t = open(w + "/in/text", "rb").read(); n = open(w + "/in/noise", "rb").read(); b = open(w + "/in/binary", "rb").read()
+nib = lambda k: bytes(r.getrandbits(4) for _ in range(k))
+big = bytes(r.getrandbits(8) for _ in range(3000000)) + n[::-1] + n[1::2] + n[::3]   # 5.75 MB without repeats
+open(w + "/u16", "wb").write(t[:len(t) & ~1].decode("latin-1").encode("utf-16-le"))   # UTF-16 text (one lane is all zeros), length % 4 == 0
+open(w + "/nibnoisenib", "wb").write(nib(65536) + n + nib(500000))       # mostly literals, of two kinds
+open(w + "/textnoise2", "wb").write(t[:65536] + n + n)                   # high entropy everywhere but the start, and a repeat
+open(w + "/tn", "wb").write(t[:65536] + big)                             # a long incompressible run...
+open(w + "/tnb", "wb").write(t[:65536] + big + b)                        # ...and the same followed by a binary
+PY
+a=$(bsize -8 "$W/u16"); b=$(bsize -8 "$W/in/text")
+[ -n "$a" ] && [ -n "$b" ] && [ "$a" -le $((b + b / 5)) ] || bad "UTF-16 text at -8: $a bytes against $b for the same text in 8 bits"
+a=$(bsize -2 "$W/nibnoisenib"); b=$(bsize -1 "$W/nibnoisenib")
+[ -n "$a" ] && [ -n "$b" ] && [ "$a" -le $((b + b / 50)) ] || bad "noise between 4-bit symbols: $a bytes at -2, $b at -1 (literal epochs dropped)"
+a=$(bsize -1 "$W/textnoise2"); b=$(wc -c < "$W/textnoise2")
+[ -n "$a" ] && [ "$a" -le $((b * 3 / 4)) ] || bad "text, then noise twice: $a bytes of $b (the repeat was not found: block stored?)"
+a=$(bsize -3 "$W/tnb"); b=$(bsize -3 "$W/tn"); c=$(bsize -3 "$W/in/binary")
+[ -n "$a" ] && [ -n "$b" ] && [ -n "$c" ] && [ $((a - b)) -le $((c + c / 25)) ] || bad "a binary after 5.75 MB of noise at -3: $((a - b)) bytes against $c alone"
+for f in u16 nibnoisenib textnoise2 tnb; do for o in -1 -5 -8; do
+  "$CLI" $o -c "$W/$f" | "$CLI" -d -c | cmp -s - "$W/$f" || bad "round trip $f $o"
+done; done
 # the output does not depend on the thread count
 "$CLI" -1 -B3 -c "$W/in/text" > "$W/t1.lz6"; "$CLI" -1 -B3 -T4 -c "$W/in/text" > "$W/t4.lz6"
 cmp -s "$W/t1.lz6" "$W/t4.lz6" || bad "-T4 writes other bytes than one thread"

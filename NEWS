@@ -1,3 +1,36 @@
+v2.0.2
+- ENCODER FIXES, NO FORMAT CHANGE. Six places where the encoder decided for a whole block from its beginning, its length or a shortcut, found from a
+  report by zpaq-std and the audit that followed. Every stream decodes with v2.0.0 and v2.0.1; streams written by them stay valid (they were only
+  larger than needed). Silesia is 0.26% to 0.83% smaller than v2.0.1 at every level (mr 2.4% to 12%, x-ray 1.5%), AIT 0.08%; on a 166-file set
+  (1,432 file and level pairs) no output grew by more than 0.19% and none takes 3 times the time without a gain.
+- fix, library: `LZ6_compress_seq` stored a whole block when its first 32 KB looked random (order-0 entropy above 7.9 bits per byte), whatever
+  came after. A 16 MiB piece of silesia.tar that starts inside mozilla's compressed data came out stored at every level (8 MiB of it: 8,388,613
+  bytes; 4,519,344 at -1 now), and the tar in 16 MiB pieces cost 33.55% instead of 28.68% at -1. The block is now sampled whole (up to 256 windows
+  of 32 KB, in integer arithmetic): it is stored when its first window is random, as before, AND the windows together promise less than 1%. The
+  command line was not affected (it gives a block less room than a stored block needs, so the shortcut never ran there); `lz6 -b`, lzbench and
+  programs that embed the library were.
+- fix, levels -1 to -5 (the command line too): compressible data after a long incompressible run was hardly searched. The row-hash parser's
+  step through literals grew without bound inside a block (tens of KB after 12 MB without a match) and only the last 96 positions of a jump are
+  indexed: the 4 MB after 12 MB of gzip output came out 28% to 58% larger than alone. The step is capped at 1024 bytes.
+- fix, levels -2 to -13 (a defect of v2.0.0): literal epochs were dropped when the literals were most of the block: the epochs candidate was
+  coded into what the single literal section left of the buffer and did not fit. Up to 9.8% on a block of noise followed by low-entropy symbols,
+  and level -2 larger than -1 there. The candidate has its own buffer now.
+- fix, 16-bit data: the byte-plane stride came from the block's length (a multiple of 4 gave stride 4), not from the data. 16-bit samples in a
+  block whose length is a multiple of 4 had each lane cut in two: Silesia mr (9,970,564 bytes) was 2.4% larger at -1 and 12% at -7 and -13 than
+  the same file without its last 2 bytes. Stride 2 is chosen when lanes 0 and 2, and 1 and 3, are the same streams.
+- fix, UTF-16 text and other data with one nearly constant lane: a shortcut took the plane block without coding the normal one, at every level
+  (4 MiB of dickens as UTF-16: 2,112,045 bytes from level 3 to 13, the same bytes at each; 1,373,558 at -9 and 1,235,660 at -13 now). With the
+  stride fix the plane block is good there; at the high levels, where the normal block wins, a trial on four 64 KB pieces now tells.
+- fix, test hook only: with LZ6_PLANEDELTA_FORCE a raw lane was written without its delta flag and did not decode. The encoder never picks a raw
+  delta lane by itself, so no stream it wrote is affected. Found by zpaq-std.
+- spec (lz6_Seq_format.md): the 19 gaps and differences an independent implementation found (zpaq-std wrote a decoder from the spec): the order
+  of the canonical Huffman codes, the Elias gamma bit order and limits, the limits of the format 2 headers, the epoch bounds (1 to 1024 sequence
+  epochs, 1 to 256 literal epochs, no nesting), what the decoder checks and what it tolerates.
+- tests: `.github/test.sh` checks, through `-b` (one block with the library's room), noise followed by text, UTF-16 text, noise between
+  low-entropy symbols, a repeat after a compressible start, and a binary after 5.75 MB of noise; they fail on v2.0.1.
+- known, not fixed: a block with an odd length gets no plane transform (the format needs a multiple of the stride); the plane transform is all
+  or nothing for a block; the command line's content segmentation can cut a file where a later part repeats an earlier one.
+
 v2.0.1
 - level -1 compresses faster: its row-hash match finder caps the row slots at 2^21 instead of 2^22. Silesia, one thread: 6% less time than
   v2.0.0 in the library (lzbench 53.0 -> 54.8 MB/s; v1.7.1 52.3), 3-7% less than v1.7.1 through the command line (`silesia.tar`, interleaved
